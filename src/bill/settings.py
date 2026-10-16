@@ -111,8 +111,12 @@ def is_currency_code(value: str) -> bool:
 
     设置里的 ``display`` 和手动记账表单里的币种共用这一套判断——两处各写一份
     正则的话，早晚会有一处松一格。
+
+    **不 trim**：这里判的是「能不能原样拿去用」，而调用方拿到的还是原来那个值。
+    在这里宽容地把 ``" GBP "`` 放过去，那个带空格的字符串就会被当成币种存下来、
+    跟谁也对不上，而且一路不报错——要收拾空格请在调用方收拾干净。
     """
-    return bool(_CODE.match((value or "").strip().upper()))
+    return bool(_CODE.match(value or ""))
 
 
 def load() -> Settings:

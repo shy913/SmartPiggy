@@ -369,14 +369,16 @@ def create_app() -> Flask:
 
         with connection:
             account_id = repo.ensure_account(connection, draft.account_name, "manual")
-            repo.insert_manual_transaction(
+            txn_id = repo.insert_manual_transaction(
                 connection,
                 account_id=account_id,
                 transaction=draft.transaction(),
                 category=draft.category,
             )
             _autodetect_around(connection, conf, draft.occurred_at)
-        return go("transactions", month=draft.month)
+            # 刚记的这笔要是立刻被并进了别个月的组，就跳它现在待的那一页
+            month = repo.effective_month(connection, txn_id) or draft.month
+        return go("transactions", month=month)
 
     @app.get("/transactions/<int:txn_id>/edit")
     def transaction_edit(txn_id: int):
@@ -396,8 +398,10 @@ def create_app() -> Flask:
             request.form, display_currency=settings.load().display_currency
         )
         if not draft.ok:
+            # 账户那一格是只读的，不会随表单提交上来——所以拿库里的补上，
+            # 别让用户在改错一处的时候连这是哪个账户都看不见。
             return entry_page(
-                values=dict(request.form),
+                values={**entry.from_row(row), **dict(request.form)},
                 errors=draft.errors,
                 transaction=row,
                 status=400,
@@ -405,7 +409,8 @@ def create_app() -> Flask:
 
         with connection:
             repo.update_transaction(connection, txn_id, draft.fields())
-        return go("transactions", month=draft.month)
+            month = repo.effective_month(connection, txn_id) or draft.month
+        return go("transactions", month=month)
 
     @app.post("/transactions/<int:txn_id>/delete")
     def transaction_delete(txn_id: int):
@@ -459,13 +464,17 @@ def create_app() -> Flask:
     def group_update(group_id: int):
         connection = get_conn()
         with connection:
-            repo.update_group(
+            saved = repo.update_group(
                 connection,
                 group_id,
                 title=(request.form.get("title") or "").strip(),
                 category=(request.form.get("category") or "").strip(),
                 note=(request.form.get("note") or "").strip(),
             )
+            if not saved:
+                # 组已经没了（另一个标签页取消过，或者这一页放了太久）。
+                # 说「保存成功」比报错更糟：改的东西根本没人收。
+                abort(404)
         return go("groups_page")
 
     @app.get("/summary")

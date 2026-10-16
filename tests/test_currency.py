@@ -194,6 +194,21 @@ def test_bad_merge_settings_are_reported(isolated_data_dir):
             settings.load()
 
 
+@pytest.mark.parametrize(
+    "body, fragment",
+    [
+        # 带空格的币种代码必须当场报错，不能「宽容地」放过去：放过去的话，
+        # 那个带空格的值会被当成币种存下来，跟谁也对不上，而且一路不报错。
+        ('[currency]\ndisplay = " GBP "\n', "不像个币种代码"),
+        ('[currency]\ndisplay = "GBP"\nrates = { " CNY " = 9.0 }\n', "不像个币种代码"),
+    ],
+)
+def test_currency_codes_with_spaces_are_refused(isolated_data_dir, body, fragment):
+    write_settings(isolated_data_dir, body)
+    with pytest.raises(BillError, match=fragment):
+        settings.load().factors()
+
+
 def test_describe_merge_says_what_is_on(isolated_data_dir):
     """合并结果不对劲时，页面上那句话要能解释清楚现在按什么规则跑。"""
     (isolated_data_dir / "settings.toml").unlink()  # 用内置那份（GBP、12 小时）

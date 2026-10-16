@@ -330,6 +330,80 @@ def test_a_group_with_one_member_never_swallows_it(conn, book):
     assert repo.count_transactions(conn) == 3, "一笔都没少"
     assert all(row["group_id"] is None for row in repo.list_transactions(conn))
     assert repo.count_groups(conn) == 0
+    assert repo.list_groups(conn) == [], "空壳组也不该出现在合并组页上"
+
+
+def test_losing_a_rate_makes_the_group_stop_counting(conn, book, isolated_data_dir):
+    """汇率的校验不能只在建组那一刻做一次。
+
+    净额是**每次读取时**按当前汇率算的，所以把某个币种的汇率删掉之后，老的跨币种组
+    必须当场失效、退回成各笔单独显示——否则它会显示一个按 1:1 硬凑出来、却标着
+    显示币种的净额，一声不吭地把账改错。
+    """
+    rates = 'timezone = "Asia/Shanghai"\n\n[currency]\ndisplay = "GBP"\nrates = { CNY = 9.0 }\n'
+    write_settings(isolated_data_dir, rates)
+    ids = book(
+        [
+            {"direction": Direction.OUT, "amount_cents": 13_500, "currency": "CNY"},
+            {
+                "direction": Direction.IN,
+                "amount_cents": 500,
+                "currency": "GBP",
+                "occurred_at": "2026-01-05 13:30:45",
+            },
+        ]
+    )
+    with conn:
+        repo.create_group(conn, origin="manual", transaction_ids=ids)
+    assert repo.list_transactions(conn)[0]["display_cents"] == 1_000  # 1500 - 500
+    assert repo.count_groups(conn) == 1
+
+    write_settings(
+        isolated_data_dir,
+        'timezone = "Asia/Shanghai"\n\n[currency]\ndisplay = "GBP"\nrates = {}\n',
+    )
+
+    rows = repo.list_transactions(conn)
+    assert len(rows) == 2, "这一组不再合成一行"
+    assert all(row["group_id"] is None for row in rows)
+    assert repo.count_groups(conn) == 0
+    # 统计口径也回到「各种币各算各的」，没有任何 1:1 的混算
+    totals = {row["display_currency"]: row["expense"] for row in repo.month_totals(conn, "2026-01")}
+    assert totals == {"CNY": 13_500, "GBP": 0}
+
+    # 但这一组仍然露在合并组页上，说明白为什么没生效，好让人补汇率或者取消它
+    listed = repo.list_groups(conn)
+    assert len(listed) == 1
+    assert listed[0]["net_cents"] is None
+    assert listed[0]["stuck"] == "CNY"
+
+
+def test_import_reads_the_settings_once_per_batch(conn, monkeypatch):
+    """一批导入只该读一次设置文件。
+
+    时间戳是逐行写的，而 ``db.now()`` 要读设置（账本时区在那里）。一行读一次的话，
+    一份一万行的账单就是一万次读文件加一遍 TOML 解析。
+    """
+    from bill import settings
+
+    account_id, import_id = imported(conn, [])  # 先把账户和导入记录建好
+    calls = []
+    real = settings.load
+
+    def counted():
+        calls.append(1)
+        return real()
+
+    # db.now() 是通过模块属性去拿 settings.load 的，所以换掉这个属性就管用
+    monkeypatch.setattr(settings, "load", counted)
+    with conn:
+        repo.insert_rows(
+            conn,
+            account_id=account_id,
+            import_id=import_id,
+            rows=[make_row(dedup_key=f"k{index}") for index in range(5)],
+        )
+    assert len(calls) == 1
 
 
 def test_dissolving_puts_everything_back(conn, book):

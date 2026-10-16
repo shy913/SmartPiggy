@@ -79,9 +79,14 @@ def _tx_params(
     dedup_key: str,
     content_hash: str,
     raw_json: str,
+    created_at: str,
     category: str = "",
 ) -> dict:
-    """INSERT 用的参数字典。导入和手动记账共用，省得两处列名对不上。"""
+    """INSERT 用的参数字典。导入和手动记账共用，省得两处列名对不上。
+
+    ``created_at`` 由调用方算好传进来。它要读设置文件（``db.now()`` 走的是账本
+    时区），而导入是一行一行插的——放进这里就成了每行重读一遍设置文件。
+    """
     return {
         "account_id": account_id,
         "import_id": import_id,
@@ -104,7 +109,7 @@ def _tx_params(
         "dedup_key": dedup_key,
         "content_hash": content_hash,
         "raw_json": raw_json,
-        "created_at": db.now(),
+        "created_at": created_at,
     }
 
 
@@ -336,6 +341,8 @@ def insert_rows(
     """
     inserted = 0
     duplicates = 0
+    # 一批记录共用一个导入时间。放进循环里会变成每行读一次设置文件。
+    now = db.now()
 
     for row in rows:
         transaction = row.transaction
@@ -355,6 +362,7 @@ def insert_rows(
                 dedup_key=key,
                 content_hash=row.content_hash,
                 raw_json=json.dumps(transaction.raw, ensure_ascii=False),
+                created_at=now,
                 # 账单里没有「用户分类」这一列，导入进来的一律留空，
                 # 显示时回落到账单自带的 source_category。
                 category="",
@@ -440,6 +448,44 @@ def _totals(conf, prefix: str = "") -> str:
 
 
 # --------------------------------------------------------------------------
+# 「有效的组」只有一个定义
+# --------------------------------------------------------------------------
+
+# 合并组要真的算数，得同时满足这两条。三处用到它：合并后的账本（_effective_cte）、
+# 入口上显示的组数（count_groups）、合并组页（list_groups）。写歪一处就会出现
+# 「页面上说有 3 组、列表里只看见 2 行」这种不报错的错位，所以只留这一份。
+_EFFECTIVE_GROUP = "member_count >= 2 AND unconvertible = 0"
+
+
+def _convertible(conf, prefix: str = "t.") -> str:
+    """这一笔的币种换算得动吗：要么就是显示币种，要么配了汇率。
+
+    换算不动的币种在 ``_amount_in_display`` 里是**原样返回**的（全应用的规矩：
+    没汇率的币种单独成组，绝不按 1:1 混进合计）。合并组要求「各笔换算到显示币种
+    再相加」，所以只要有这样一笔，这个组就成立不了。
+    """
+    usable = [conf.display_currency, *sorted(conf.factors())]
+    codes = ", ".join(repr(code) for code in usable)
+    return f"{prefix}currency IN ({codes})"
+
+
+def _group_health_sql(conf) -> str:
+    """每组几笔成员、其中几笔换算不动。给上面那三处共用。
+
+    这里是**每次读取时**重新判的，不是只看建组那一刻：汇率是从设置里读的，
+    把某个币种的汇率删掉之后，老的那些跨币种组必须当场失效、退回成各笔单独显示，
+    而不是继续显示一个按 1:1 硬凑、却标着显示币种的净额。
+    """
+    return f"""
+    SELECT m.group_id,
+           COUNT(*) AS member_count,
+           SUM(CASE WHEN {_convertible(conf)} THEN 0 ELSE 1 END) AS unconvertible
+    FROM tx_group_members m JOIN transactions t ON t.id = m.transaction_id
+    GROUP BY m.group_id
+    """
+
+
+# --------------------------------------------------------------------------
 # 合并后的账本
 # --------------------------------------------------------------------------
 
@@ -478,9 +524,11 @@ def _effective_cte(conf) -> str:
     signed = "(CASE s.direction WHEN 'in' THEN 1 WHEN 'out' THEN -1 ELSE 0 END)"
     currency = conf.display_currency
     return f"""
-    WITH good_group AS (
-      SELECT group_id FROM tx_group_members
-      GROUP BY group_id HAVING COUNT(*) >= 2
+    WITH grp_health AS (
+      {_group_health_sql(conf)}
+    ),
+    good_group AS (
+      SELECT group_id FROM grp_health WHERE {_EFFECTIVE_GROUP}
     ),
     grp_member AS (
       SELECT m.group_id, m.transaction_id
@@ -836,6 +884,27 @@ def get_transaction(
     ).fetchone()
 
 
+def effective_month(connection: sqlite3.Connection, txn_id: int) -> str | None:
+    """这一笔在**页面上**落在哪个月。
+
+    合并之后它可能已经不在自己那个月了：组的日期取组内最早的一笔，所以刚记下的
+    这笔要是被并进上个月的某个组，页面就跳到自己那个月去了——那一页上什么都看不见，
+    看着像没记上。跳转前先问一句它现在在哪儿。
+    """
+    row = connection.execute(
+        f"""
+        {_effective_cte(settings.load())}
+        SELECT occurred_date FROM effective
+        WHERE id = ?
+           OR group_id = (
+             SELECT group_id FROM tx_group_members WHERE transaction_id = ?
+           )
+        """,
+        (txn_id, txn_id),
+    ).fetchone()
+    return row["occurred_date"][:7] if row else None
+
+
 def insert_manual_transaction(
     connection: sqlite3.Connection,
     *,
@@ -861,6 +930,7 @@ def insert_manual_transaction(
             dedup_key=f"manual:{secrets.token_hex(8)}",
             content_hash=dedup.content_hash(transaction),
             raw_json=json.dumps({"manual": True}, ensure_ascii=False),
+            created_at=db.now(),
             category=category,
         ),
     )
@@ -1098,33 +1168,44 @@ def prune_groups(connection: sqlite3.Connection) -> int:
 def count_groups(connection: sqlite3.Connection) -> int:
     """有几个组在页面上是「合起来」的。
 
-    跟 _effective_cte 里的 good_group 一个判断（成员 ≥ 2），免得入口上的数字
-    和列表里真能看到的合并行对不上。
+    跟 _effective_cte 里同一个判断，免得入口上的数字和列表里真能看到的合并行对不上。
     """
     return connection.execute(
-        """
-        SELECT COUNT(*) AS n FROM (
-          SELECT group_id FROM tx_group_members
-          GROUP BY group_id HAVING COUNT(*) >= 2
-        )
+        f"""
+        WITH grp_health AS ({_group_health_sql(settings.load())})
+        SELECT COUNT(*) AS n FROM grp_health WHERE {_EFFECTIVE_GROUP}
         """
     ).fetchone()["n"]
 
 
 def list_groups(connection: sqlite3.Connection) -> list[sqlite3.Row]:
-    """所有合并组，附净额（显示币种）和成员数。按组内最早一笔倒序。"""
+    """所有合并组，附净额（显示币种）和成员数。按组内最早一笔倒序。
+
+    这里**不**按「有效」过滤：缺汇率的组虽然不生效，也得露在页面上让人看见、
+    能取消——藏起来的话它既不在账本里，用户也不知道该拿它怎么办。
+    这种组的 ``net_cents`` 是 NULL，``stuck`` 是缺汇率的那些币种。少于两笔的
+    空壳组则直接不列：它没有任何意义，账本里也早就不认它了。
+    """
     conf = settings.load()
     signed = "(CASE s.direction WHEN 'in' THEN 1 WHEN 'out' THEN -1 ELSE 0 END)"
     conv = _amount_in_display(conf, "s.")
     return connection.execute(
         f"""
-        SELECT g.*, COUNT(m.transaction_id) AS member_count,
+        WITH grp_health AS ({_group_health_sql(conf)})
+        SELECT g.*, h.member_count, h.unconvertible,
+               CASE WHEN h.unconvertible = 0
+                    THEN SUM({signed} * ({conv})) END AS net_cents,
                MIN(s.occurred_at) AS first_at,
-               SUM({signed} * ({conv})) AS net_cents,
-               COUNT(DISTINCT s.currency) AS currency_count
+               COUNT(DISTINCT s.currency) AS currency_count,
+               (SELECT GROUP_CONCAT(DISTINCT s2.currency)
+                  FROM tx_group_members m2
+                  JOIN tx_signed s2 ON s2.id = m2.transaction_id
+                 WHERE m2.group_id = g.id AND NOT ({_convertible(conf, "s2.")})) AS stuck
         FROM tx_groups g
+        JOIN grp_health h ON h.group_id = g.id
         JOIN tx_group_members m ON m.group_id = g.id
         JOIN tx_signed s ON s.id = m.transaction_id
+        WHERE h.member_count >= 2
         GROUP BY g.id
         ORDER BY first_at DESC, g.id DESC
         """
@@ -1195,6 +1276,8 @@ def autodetect(
             # 把整次导入或整页扫描带崩。
             continue
         created += 1
+    # 万一刚才那一下是半截成功（组建了、成员没插全），别留个空壳组在库里。
+    prune_groups(connection)
     return created
 
 

@@ -536,6 +536,43 @@ def test_dissolving_something_that_is_not_there_404s(client):
     assert client.post("/groups/999/dissolve").status_code == 404
 
 
+def test_editing_something_that_is_not_there_404s_instead_of_pretending(client):
+    """组没了（另一个标签页取消过）还要说「保存成功」，改的东西就没人收了。"""
+    response = client.post(
+        "/groups/999/edit", data={"title": "x", "category": "y", "note": "z"}
+    )
+    assert response.status_code == 404
+
+
+def test_a_rejected_edit_still_shows_the_account(client):
+    """账户那一格是只读的，提交不上来；校验失败重画表单时要拿库里的补上。"""
+    client.post("/transactions/new", data=entry_form())
+    txn_id = int(re.findall(r"/transactions/(\d+)/edit", body(client.get("/transactions")))[0])
+
+    response = client.post(
+        f"/transactions/{txn_id}/edit", data=entry_form(amount="十二块")
+    )
+    assert response.status_code == 400
+    html = body(response)
+    assert "认不出" in html
+    assert 'value="手动记账"' in html, "改错一处也不该让人忘了这是哪个账户"
+    assert "海底捞" in html, "填过的内容还在"
+
+
+def test_saving_a_row_that_got_merged_takes_you_to_where_it_is(client):
+    """刚记的这笔要是立刻被并进上个月的组，跳到自己那个月是找不到它的。"""
+    record(client, direction="out", amount="120.00", occurred_at="2026-03-31T23:00:00",
+           counterparty="海底捞")
+    response = client.post(
+        "/transactions/new",
+        data=entry_form(direction="in", amount="60.00", occurred_at="2026-04-01T02:00:00",
+                        counterparty="小王转账"),
+    )
+    assert response.status_code == 303
+    assert "month=2026-03" in response.headers["Location"], "落在组所在的那个月"
+    assert "取消合并" in body(client.get(response.headers["Location"]))
+
+
 def test_group_members_can_be_edited_from_the_list(client):
     """合成行本身不能改（它不是一条记录），但组里每一笔都能单独改。"""
     aa_trio(client)

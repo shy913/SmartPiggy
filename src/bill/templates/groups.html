@@ -35,10 +35,14 @@
       <section class="group">
         <header>
           <h2>
-            {% if group.net_cents < 0 %}<span class="tag tag-out">支出</span>
+            {% if group.net_cents is none %}
+              <span class="tag tag-warn">没生效</span>
+            {% elif group.net_cents < 0 %}<span class="tag tag-out">支出</span>
             {% elif group.net_cents > 0 %}<span class="tag tag-in">收入</span>
             {% else %}<span class="tag tag-neutral">中性</span>{% endif %}
-            <span class="num">{{ group.net_cents | abs | amount }}</span> {{ display_currency }}
+            {% if group.net_cents is not none %}
+              <span class="num">{{ group.net_cents | abs | amount }}</span> {{ display_currency }}
+            {% endif %}
           </h2>
           <p class="hint">
             {{ group.first_at[:10] }} ·
@@ -46,6 +50,14 @@
             {% if group.origin == 'auto' %}自动合并{% else %}手动合并{% endif %}
             {% if group.currency_count > 1 %}· 跨 {{ group.currency_count }} 种币种，按显示汇率折算{% endif %}
           </p>
+          {% if group.net_cents is none %}
+            <p class="hint warn-text">
+              这一组现在合不起来：settings.toml 的 rates 里没有
+              {{ group.stuck }} 的汇率，而净额要先换算成同一种币才算得出来。
+              补上汇率它就自己生效，不想合了就取消合并——现在这几笔是各算各的，
+              没有按 1:1 硬凑。
+            </p>
+          {% endif %}
         </header>
 
         <ul class="members">
