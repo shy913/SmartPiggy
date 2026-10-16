@@ -660,3 +660,37 @@ def test_cross_currency_group_shows_both_amounts(client, isolated_data_dir):
     # 净额 = 55.40 − 27.75
     assert "27.65" in html
     assert "27.65" in body(client.get("/groups"))
+
+
+# --------------------------------------------------------------------------
+# 导航高亮
+# --------------------------------------------------------------------------
+
+
+def test_the_nav_marks_which_section_you_are_in(client):
+    """四个 tab 里当前那个要高亮（aria-current）。
+
+    一个区摊在好几个地址上（合并组、记一笔都在「交易记录」那条线上），漏登记
+    一处的结果是「一条都不亮」——所以这里逐个地址点名，新加的页面忘了登记
+    NAV_SECTIONS 就会在这里挂。
+    """
+    pages = {
+        "/": "汇总",
+        "/transactions": "交易记录",
+        "/transactions/new": "交易记录",
+        "/groups": "交易记录",
+        "/import": "导入账单",
+        "/imports": "导入账单",
+        "/profiles": "导入账单",
+        "/settings": "设置",
+    }
+    for path, label in pages.items():
+        marked = re.findall(
+            r'<a href="[^"]*"\s*aria-current="page">([^<]+)</a>', body(client.get(path))
+        )
+        assert marked == [label], f"{path} 高亮的是 {marked}，应该是 ['{label}']"
+
+
+def test_a_page_outside_the_nav_highlights_nothing(client):
+    """404 页不属于任何一个区——不许硬凑一个亮的出来。"""
+    assert "aria-current" not in body(client.get("/nope"))

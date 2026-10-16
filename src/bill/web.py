@@ -43,6 +43,44 @@ OPEN_ENDPOINTS = frozenset({"login_page", "login", "logout", "healthz", "static"
 
 USAGE = "用法：bill [--set-password]"
 
+# 顶部导航的四个区。当前在哪一区靠它给那一条加高亮。
+#
+# 一个区摊在好几个 endpoint 上（「记一笔」「改一笔」「合并组」都在交易记录
+# 那条线上），所以这里是按 endpoint 归并成区，而不是让模板各自去猜——
+# 新增页面时忘了在某处补一笔，页面就会「一条都不亮」，一眼看得见。
+NAV_SECTIONS = {
+    "summary": "summary",
+    "summary_legacy": "summary",
+    "transactions": "transactions",
+    "transactions_bulk": "transactions",
+    "transaction_new": "transactions",
+    "transaction_create": "transactions",
+    "transaction_edit": "transactions",
+    "transaction_update": "transactions",
+    "transaction_delete": "transactions",
+    "groups_page": "transactions",
+    "groups_scan": "transactions",
+    "group_dissolve": "transactions",
+    "group_update": "transactions",
+    "import_upload": "import",
+    "receive_import": "import",
+    "import_preview": "import",
+    "import_reprofile": "import",
+    "import_confirm": "import",
+    "import_cancel": "import",
+    "imports": "import",
+    "import_detail": "import",
+    "import_delete": "import",
+    "profiles_page": "import",
+    "settings_page": "settings",
+    "settings_save": "settings",
+}
+
+
+def nav_section(endpoint: str | None) -> str:
+    """这个 endpoint 属于哪个导航区。不在任何一区（登录页、404…）就返回空串。"""
+    return NAV_SECTIONS.get(endpoint or "", "")
+
 
 def uptime_seconds() -> int:
     return int((datetime.now(timezone.utc) - _started_at).total_seconds())
@@ -233,6 +271,7 @@ def create_app() -> Flask:
         return {
             "palette": settings.load().palette(),
             "auth_enabled": current_auth() is not None,
+            "nav": nav_section(request.endpoint),
         }
 
     @app.get("/")

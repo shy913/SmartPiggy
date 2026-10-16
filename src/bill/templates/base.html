@@ -10,11 +10,19 @@
 <body>
   <header class="site-header">
     <a class="brand" href="{{ url_for('summary') }}">记账</a>
+    {# 当前在哪一区，靠 nav（web.py 的 NAV_SECTIONS）——一条都不亮就说明
+       新加的页面忘了登记，一眼能看出来。 #}
     <nav>
-      <a href="{{ url_for('summary') }}">汇总</a>
-      <a href="{{ url_for('transactions') }}">交易记录</a>
-      <a href="{{ url_for('import_upload') }}">导入账单</a>
-      <a href="{{ url_for('settings_page') }}">设置</a>
+      {# aria-current 是给读屏软件念「当前页」的，所以写字面属性而不是
+         从变量里拼——拼出来的引号会被转义成 &#34;，浏览器认，但难读。 #}
+      <a href="{{ url_for('summary') }}"
+         {% if nav == 'summary' %}aria-current="page"{% endif %}>汇总</a>
+      <a href="{{ url_for('transactions') }}"
+         {% if nav == 'transactions' %}aria-current="page"{% endif %}>交易记录</a>
+      <a href="{{ url_for('import_upload') }}"
+         {% if nav == 'import' %}aria-current="page"{% endif %}>导入账单</a>
+      <a href="{{ url_for('settings_page') }}"
+         {% if nav == 'settings' %}aria-current="page"{% endif %}>设置</a>
       {% if auth_enabled %}
         {# 用表单 POST 而不是链接：登出改的是状态，不该被一张图、一个
            预取就顺手触发掉。 #}
