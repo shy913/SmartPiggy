@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}bill — home{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <h1>A tiny Flask site</h1>
+  <p class="lede">
+    Four routes, one in-memory list, and a JSON API — small enough to read in
+    one sitting, complete enough to poke at.
+  </p>
+  <div class="stats">
+    <div class="stat">
+      <span class="stat-value">{{ note_count }}</span>
+      <span class="stat-label">notes stored</span>
+    </div>
+    <div class="stat">
+      <span class="stat-value">{{ uptime }}s</span>
+      <span class="stat-label">uptime</span>
+    </div>
+  </div>
+  <p><a class="button" href="{{ url_for('notes') }}">Open the notes demo →</a></p>
+</section>
+
+<section class="cards">
+  <article class="card">
+    <h3>Pages</h3>
+    <p>
+      Jinja templates in <code>templates/</code> sharing one base layout, so the
+      header and footer are written once.
+    </p>
+  </article>
+  <article class="card">
+    <h3>Writes</h3>
+    <p>
+      The notes form posts, saves, and redirects — the
+      <a href="https://en.wikipedia.org/wiki/Post/Redirect/Get">PRG pattern</a>,
+      so a refresh never resubmits.
+    </p>
+  </article>
+  <article class="card">
+    <h3>JSON API</h3>
+    <p>
+      <code>GET /api/notes</code> lists them, <code>POST /api/notes</code> adds
+      one. Try: <code>curl -X POST localhost:8001/api/notes -H 'content-type: application/json' -d '{"body":"hi"}'</code>
+    </p>
+  </article>
+</section>
+{% endblock %}

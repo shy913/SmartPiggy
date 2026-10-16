@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}bill — notes{% endblock %}
+
+{% block content %}
+<h1>Notes</h1>
+<p class="lede">Stored in a Python list. Restart the server and they're gone.</p>
+
+<form class="note-form" method="post" action="{{ url_for('notes') }}">
+  <label for="body">New note</label>
+  <div class="row">
+    <input id="body" name="body" type="text" placeholder="Say something…"
+           autocomplete="off" autofocus>
+    <button type="submit">Add</button>
+  </div>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+</form>
+
+{% if notes %}
+  <ul class="notes">
+    {% for note in notes %}
+      <li class="note">
+        <div>
+          <p class="note-body">{{ note.body }}</p>
+          <p class="note-meta">#{{ note.id }} · {{ note.created }}</p>
+        </div>
+        <form method="post" action="{{ url_for('remove_note', note_id=note.id) }}">
+          <button class="link-button" type="submit"
+                  aria-label="Delete note {{ note.id }}">delete</button>
+        </form>
+      </li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <p class="empty">No notes yet — add the first one above.</p>
+{% endif %}
+{% endblock %}

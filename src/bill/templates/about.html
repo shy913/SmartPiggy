@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}bill — about{% endblock %}
+
+{% block content %}
+<h1>About</h1>
+<p class="lede">
+  A minimal example site: Flask 3, Jinja templates, one hand-written stylesheet,
+  no database and no JavaScript.
+</p>
+
+<h2>Routes</h2>
+<table class="routes">
+  <thead>
+    <tr><th>Method</th><th>Path</th><th>What it does</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>GET</td><td><code>/</code></td><td>Home page with a live note count</td></tr>
+    <tr><td>GET</td><td><code>/notes</code></td><td>List every note</td></tr>
+    <tr><td>POST</td><td><code>/notes</code></td><td>Add a note, then redirect</td></tr>
+    <tr><td>POST</td><td><code>/notes/&lt;id&gt;/delete</code></td><td>Delete one note</td></tr>
+    <tr><td>GET</td><td><code>/api/notes</code></td><td>Notes as JSON</td></tr>
+    <tr><td>POST</td><td><code>/api/notes</code></td><td>Add a note from JSON</td></tr>
+    <tr><td>GET</td><td><code>/healthz</code></td><td>Liveness check</td></tr>
+  </tbody>
+</table>
+
+<h2>Server</h2>
+<p>
+  Started <time datetime="{{ started.isoformat() }}">{{ started.isoformat(timespec="seconds") }} UTC</time>.
+  Bind address and port come from the <code>HOST</code> and <code>PORT</code>
+  environment variables, defaulting to <code>0.0.0.0:8001</code>.
+</p>
+{% endblock %}

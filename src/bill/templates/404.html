@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}bill — not found{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <h1>404</h1>
+  <p class="lede">No page at that address.</p>
+  <p><a class="button" href="{{ url_for('index') }}">Back home →</a></p>
+</section>
+{% endblock %}
