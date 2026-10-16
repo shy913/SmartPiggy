@@ -982,25 +982,35 @@ table.data .pick {
 }
 table.data .pick input { margin: 0; }
 
-/* 操作列钉在最左边：表格横向滚动时「改 / 删」还在手边。
+/* 操作列排在最后一列，同时钉在右边：表格横向滚动时「改 / 隐藏 / 删」还在手边。
+   桌面宽度下六列本来就装得进（真账本量过：表 918、表框 920），钉住是为窄屏和
+   长摘要——「对方 / 说明」那一格的字有多长是记账的人写的，指望不上。
 
    类名刻意不叫 .actions——页头那个 .actions 是 flex 容器，单元格套上同一个
    名字就被改成 display: flex、不再是 table-cell，整行跟着高一大截（45px 变 76px），
    而页面上一声不响。
 
    也不能写 width: 1%（勾选列那种压到最窄的写法）：单元格带着 overflow: hidden，
-   一给宽度就成了剪裁盒，列宽按 1% 算、按钮的字被切掉。让它按内容自己撑。 */
+   一给宽度就成了剪裁盒，列宽按 1% 算、按钮的字被切掉。让它按内容自己撑。
+   背景必须写成不透明的：钉住的格子底下会刷过别的列。 */
 table.data .row-actions {
   position: sticky;
-  left: 0;
+  right: 0;
   background: var(--panel);
-  border-right: 1px solid var(--border);
+  border-left: 1px solid var(--border);
   white-space: nowrap;
   padding-left: 0.5rem;
   padding-right: 0.5rem;
 }
 table.data thead .row-actions { background: var(--panel-hover); z-index: 2; }
 table.data tbody tr:hover .row-actions { background: var(--panel-hover); }
+/* 合并行自带底色，钉住的那一格得自己刷上同一个色——不透明版本，理由同上 */
+tr.row-group td.row-actions {
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+}
+tr.row-group:hover td.row-actions {
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+}
 
 /* 分类缩成的那个 emoji：贴着后面的文字，别让它看起来像另一列 */
 .cat-mark { margin-right: 0.35rem; }

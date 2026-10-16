@@ -739,14 +739,14 @@ def test_the_transaction_table_has_only_the_columns_a_phone_can_carry(client, bo
     """列是照着窄屏收拾过的：一列一个字段，手机上横着拉不到头。
 
     收支并进金额（+/- 加颜色），说明并进对方，分类缩成 emoji，原币种和
-    「计入合计」不留，操作挪到最前面。谁把哪一列加回来，屏幕上立刻宽出一截，
+    「计入合计」不留，操作排在最后。谁把哪一列加回来，屏幕上立刻宽出一截，
     而且这件事不会有任何报错——所以表头和顺序在这儿钉死。
     """
     book([{"direction": Direction.OUT, "amount_cents": 3250, "currency": "CNY"}])
 
     page = body(client.get("/transactions"))
     headers = [h.strip() for h in re.findall(r"<th(?:\s[^>]*)?>(.*?)</th>", page, re.S)]
-    assert headers == ["操作", "", "日期", "金额（CNY）", "对方 / 说明", "账户"]
+    assert headers == ["", "日期", "金额（CNY）", "对方 / 说明", "账户", "操作"]
 
 
 def test_the_amount_column_shows_the_sign_instead_of_a_direction_column(client, book):
@@ -801,8 +801,8 @@ def test_the_text_column_falls_back_to_the_description(client, book):
     assert '<span class="cat-mark" title="杂物">🏷️</span>退款到账' in page
 
 
-def test_the_row_buttons_are_buttons_and_the_actions_column_comes_first(client, book):
-    """「改 / 删」得看得出是按钮，而且钉在最左边。
+def test_the_row_buttons_are_buttons_and_the_actions_column_comes_last(client, book):
+    """「改 / 隐藏 / 删」得看得出是按钮，而且排在最后一列、钉在右边。
 
     它们原来是一串没有边框的灰字，手感跟旁边的文字没区别；表格横向滚动时
     那一列还留在视野里，所以要钉住（CSS 在这台机器上量不了，退一步比对规则）。
@@ -811,13 +811,14 @@ def test_the_row_buttons_are_buttons_and_the_actions_column_comes_first(client, 
 
     page = body(client.get("/transactions"))
     assert '<th class="row-actions">操作</th>' in page
+    assert re.search(r'<th class="row-actions">操作</th>\s*</tr>', page), "操作列在表头最后"
     assert 'class="button tiny"' in page and 'class="button tiny danger"' in page
 
     css = Path("src/bill/static/style.css").read_text(encoding="utf-8")
     stuck = re.search(r"(?ms)^table\.data \.row-actions \{([^}]*)\}", css)
     assert stuck, "操作列要有自己的一条规则"
-    assert re.search(r"(?m)^\s*position:\s*sticky\s*;", stuck.group(1)), "操作列钉在左边"
-    assert re.search(r"(?m)^\s*left:\s*0\s*;", stuck.group(1))
+    assert re.search(r"(?m)^\s*position:\s*sticky\s*;", stuck.group(1)), "操作列钉在右边"
+    assert re.search(r"(?m)^\s*right:\s*0\s*;", stuck.group(1))
     assert not re.search(r"(?m)^\s*display\s*:", stuck.group(1)), (
         "这一格得留在 table-cell 上。写成 flex（比如跟页头那个 .actions 撞名）"
         "就不再是表格单元格，整行高度会从 45px 涨到 76px，页面上什么都不说"
@@ -826,5 +827,5 @@ def test_the_row_buttons_are_buttons_and_the_actions_column_comes_first(client, 
     pick = re.search(r"(?ms)^table\.data \.pick \{([^}]*)\}", css)
     assert pick, "勾选列还要有条规则"
     assert not re.search(r"(?m)^\s*position:\s*sticky\s*;", pick.group(1)), (
-        "勾选列不钉了：它不再是第一列，钉着白占一条"
+        "勾选列不钉：六列本来就装得进表框，两头都钉住反而挤掉中间那几列"
     )

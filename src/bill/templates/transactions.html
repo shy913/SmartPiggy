@@ -84,12 +84,12 @@
       <table class="data tx-table">
         <thead>
           <tr>
-            <th class="row-actions">操作</th>
             <th class="pick"></th>
             <th>日期</th>
             <th class="num">金额（{{ display_currency }}）</th>
             <th>对方 / 说明</th>
             <th>账户</th>
+            <th class="row-actions">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -101,11 +101,6 @@
                  也没有「编辑」——它下面那一行才是原样的几笔。 #}
               {% set mark = tx.effective_category | category_emoji %}
               <tr class="row-group" id="row-{{ loop.index0 }}">
-                <td class="row-actions">
-                  <button type="submit" class="button tiny"
-                          formaction="{{ url_for('group_dissolve', group_id=tx.group_id) }}"
-                          formmethod="post">取消合并</button>
-                </td>
                 <td class="pick muted" title="合并净额行">合</td>
                 <td class="when">{{ tx.occurred_at | minute }}</td>
                 <td class="num {{ 'money-in' if tx.direction == 'in' else 'money-out' if tx.direction == 'out' else 'muted' }}">
@@ -114,6 +109,11 @@
                 </td>
                 <td>{% if mark %}<span class="cat-mark" title="{{ tx.effective_category }}">{{ mark }}</span>{% endif %}{{ tx.counterparty or tx.description }}</td>
                 <td class="muted">{{ tx.account_name }}</td>
+                <td class="row-actions">
+                  <button type="submit" class="button tiny"
+                          formaction="{{ url_for('group_dissolve', group_id=tx.group_id) }}"
+                          formmethod="post">取消合并</button>
+                </td>
               </tr>
               <tr class="row-group-members">
                 <td colspan="6">
@@ -145,25 +145,6 @@
             {% else %}
               {% set mark = tx.effective_category | category_emoji %}
               <tr{% if tx.hidden %} class="row-hidden"{% endif %} id="row-{{ loop.index0 }}">
-                <td class="row-actions">
-                  <a class="button tiny" href="{{ url_for('transaction_edit', txn_id=tx.id) }}">改</a>
-                  {% if tx.hidden %}
-                    <button type="submit" class="button tiny"
-                            name="anchor" value="{{ loop.index0 }}"
-                            formaction="{{ url_for('transaction_unhide', txn_id=tx.id) }}"
-                            formmethod="post">显示</button>
-                  {% else %}
-                    <button type="submit" class="button tiny"
-                            name="anchor" value="{{ loop.index0 }}"
-                            formaction="{{ url_for('transaction_hide', txn_id=tx.id) }}"
-                            formmethod="post">隐藏</button>
-                  {% endif %}
-                  <button type="submit" class="button tiny danger"
-                          name="anchor" value="{{ loop.index0 }}"
-                          formaction="{{ url_for('transaction_delete', txn_id=tx.id) }}"
-                          formmethod="post"
-                          onclick="return confirm('删掉这一笔？')">删</button>
-                </td>
                 <td class="pick">
                   {% if tx.hidden %}
                     {# 隐藏的行不给勾选框：它不进合计，也就不该能被合进一组。 #}
@@ -183,6 +164,25 @@
                   {% if tx.edited_at %}<span class="tag tag-warn" title="手改过（{{ tx.edited_at }}）">已改</span>{% endif %}
                 </td>
                 <td class="muted">{{ tx.account_name }}</td>
+                <td class="row-actions">
+                  <a class="button tiny" href="{{ url_for('transaction_edit', txn_id=tx.id) }}">改</a>
+                  {% if tx.hidden %}
+                    <button type="submit" class="button tiny"
+                            name="anchor" value="{{ loop.index0 }}"
+                            formaction="{{ url_for('transaction_unhide', txn_id=tx.id) }}"
+                            formmethod="post">显示</button>
+                  {% else %}
+                    <button type="submit" class="button tiny"
+                            name="anchor" value="{{ loop.index0 }}"
+                            formaction="{{ url_for('transaction_hide', txn_id=tx.id) }}"
+                            formmethod="post">隐藏</button>
+                  {% endif %}
+                  <button type="submit" class="button tiny danger"
+                          name="anchor" value="{{ loop.index0 }}"
+                          formaction="{{ url_for('transaction_delete', txn_id=tx.id) }}"
+                          formmethod="post"
+                          onclick="return confirm('删掉这一笔？')">删</button>
+                </td>
               </tr>
             {% endif %}
           {% endfor %}
