@@ -31,12 +31,11 @@
   {% if detected %}
     <p class="hint">
       自动认出是「{{ detected.profile.title }}」（匹配度 {{ detected.score }}）。
-      认错了就在下面换一份，会就地重新解析，不用重传文件。
+      认错了就在下面换一份，不用重传文件。
     </p>
   {% else %}
     <p class="error">
-      没能确定这是哪种账单格式。换成下面任意一份配置试试，
-      或者照 <code>bank_generic_example.toml</code> 的注释写一份自己的——
+      没能确定这是哪种账单格式。在下面选一份试试，
       <a href="{{ url_for('profiles_page') }}">列出所有列映射配置</a>。
     </p>
   {% endif %}
@@ -75,8 +74,8 @@
   <section>
     <p class="error">{{ preview.error }}</p>
     <p class="hint">
-      下面是文件开头的原始内容，照着它改配置里的列名即可；
-      <a href="{{ url_for('profiles_page') }}">这里</a>能看到每份配置现在认哪些列名。
+      下面是文件开头的原始内容。
+      <a href="{{ url_for('profiles_page') }}">列映射</a>那页能看到每份配置认哪些列名。
     </p>
     <div class="table-scroll">
       <table class="data">
@@ -205,9 +204,8 @@
   {% if counts.possible %}
     <p class="hint warn-text">
       有 {{ counts.possible }} 条的「日期 + 方向 + 金额」跟账本里已有的记录重合，
-      但订单号或文字对不上，没法确定是不是同一笔——多半是重新导出时摘要被改了
-      写法。它们<strong>会照常导入</strong>，你可以先在下面表里核对一眼，
-      标「新增」的才是确定不重复的。
+      但订单号或文字对不上。它们<strong>会照常导入</strong>，
+      下面表里标「新增」的才是确定不重复的。
     </p>
   {% endif %}
 

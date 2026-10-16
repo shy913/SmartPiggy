@@ -735,9 +735,6 @@ def by_source_category(connection: sqlite3.Connection, limit: int = 60) -> list[
 def latest_month(connection: sqlite3.Connection) -> str | None:
     """账本里最近有数据的月份（'YYYY-MM'）。空账本返回 None。
 
-    首页默认落在它上面，而不是落在「当前月」——导一份历史账单进来时，
-    当前月多半是空的，首页全是 0 会让人以为导入失败了。
-
     取的是**合并之后**的日期：合并组的日期是组内最早的一笔，最新的原始记录
     若正好是某个组里后到的那笔还款，按原始表算出来的月份在页面上可能是空的。
     """
@@ -753,7 +750,7 @@ def latest_month(connection: sqlite3.Connection) -> str | None:
 
 
 def coverage(connection: sqlite3.Connection) -> sqlite3.Row:
-    """账本覆盖的时间范围。跟交易列表同口径（合并之后），否则首页的「共 N 条」
+    """账本覆盖的时间范围。跟交易列表同口径（合并之后），否则这里的「共 N 条」
     和列表页的条数会对不上。"""
     conf = settings.load()
     return connection.execute(

@@ -209,11 +209,13 @@ def test_currency_codes_with_spaces_are_refused(isolated_data_dir, body, fragmen
         settings.load().factors()
 
 
-def test_describe_merge_says_what_is_on(isolated_data_dir):
-    """合并结果不对劲时，页面上那句话要能解释清楚现在按什么规则跑。"""
-    (isolated_data_dir / "settings.toml").unlink()  # 用内置那份（GBP、12 小时）
-    note = settings.load().describe_merge()
-    assert "12" in note and "0.5" in note and "转账" in note
+def test_merge_defaults_come_from_the_builtin_file(isolated_data_dir):
+    """用户文件里没写 [merge] 时要吃到内置那份（12 小时、容差 0.5、关键词表）。"""
+    (isolated_data_dir / "settings.toml").unlink()
+    conf = settings.load()
+    assert conf.merge_window_hours == 12
+    assert conf.merge_tolerance == 0.5
+    assert "转账" in conf.merge_keywords
 
     write_settings(isolated_data_dir, "[merge]\nenabled = false\n")
-    assert "不再自动合并" in settings.load().describe_merge()
+    assert settings.load().merge_enabled is False

@@ -10,28 +10,21 @@
   <p class="hint">
     这是 {{ transaction.occurred_at }} 那一笔（账户：{{ transaction.account_name }}，
     原币种 {{ transaction.currency }}，共 {{ transaction.display_cents | amount }} {{ display_currency }}）。
-    改不了账户和账单原文——账户决定去重的范围，账单原文要留着对账。
+    账户和账单原文改不了。
     {% if transaction.source_category %}
-      账单自带的分类是「{{ transaction.source_category }}」，没被覆盖，
+      账单自带的分类是「{{ transaction.source_category }}」，
       下面填的分类会盖在它上面。
     {% endif %}
   </p>
   {% if transaction.group_id %}
     <p class="hint">
-      这一笔在合并组里。
       {% if transaction.group_origin == 'auto' %}
-        这是自动合上的，所以改掉金额、方向、币种或时间会让它取消合并
-        （依据没了，宁可散开让你重新看，也不留一个净额被悄悄改掉的组）。
+        这一笔在自动合上的合并组里：改金额、方向、币种或时间会让它取消合并。
       {% else %}
-        这一组是你手动合的，改一笔不会取消它。
+        这一笔在你手动合的合并组里，改一笔不会取消它。
       {% endif %}
     </p>
   {% endif %}
-{% else %}
-  <p class="hint">
-    手动记的账不属于任何一份账单文件，会归到单独的账户里，也不参与账单去重——
-    手滑提交两次就是两条，跟真买了两样东西一样。
-  </p>
 {% endif %}
 
 <form class="entry" method="post"

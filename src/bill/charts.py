@@ -4,9 +4,8 @@
 第一个。图只负责让人一眼看出趋势和构成；**每个数值在页面下方的表格里都能
 读到**，所以图不是唯一的读数途径，悬停提示也只是锦上添花。
 
-配色跑过校验脚本（表面 #171a21）：蓝 #3987e5 / 红 #e66767，
-红绿色盲下的相邻分离 ΔE 19.2（目标 >= 8）。原本那对绿/红只有 2.1——
-等于红绿色盲完全分不出收入和支出，所以换掉了。
+配色按当前主题取，见 themes.py：每套主题的收入 / 支出两色都跑过色盲校验，
+柱子跟表格里那些数字用的是同一组值。
 """
 
 from __future__ import annotations
@@ -16,16 +15,12 @@ import unicodedata
 
 from markupsafe import Markup, escape
 
-__all__ = ["EXPENSE", "INCOME", "category_bars", "monthly_columns"]
+from . import themes
 
-# 收入 / 支出。跟着 style.css 里的 --in / --out 走，两边必须一致。
-INCOME = "#3987e5"
-EXPENSE = "#e66767"
+__all__ = ["category_bars", "monthly_columns"]
 
-_GRID = "#262c37"
-_AXIS = "#3a4250"
-_MUTED = "#969cb0"
-_TEXT = "#e6e8ee"
+# 颜色全部来自当前主题（见 themes.py）。图是服务端渲染的 SVG，拿不到 CSS 变量，
+# 所以配色的第二个来源就在这里——两边靠 tests/test_charts.py 比对。
 
 # 规范：柱子不超过 24px，数据端 4px 圆角、基线端方角，相邻柱之间留 2px 表面间隙。
 _MAX_BAR = 24.0
@@ -34,7 +29,13 @@ _GAP = 2.0
 
 
 def monthly_columns(
-    rows, *, width: int = 760, height: int = 236, limit: int = 12, unit: str = ""
+    rows,
+    *,
+    width: int = 760,
+    height: int = 236,
+    limit: int = 12,
+    unit: str = "",
+    theme: themes.Theme | None = None,
 ) -> Markup:
     """每月收支：每个月份一组两根柱子，共用一根零轴。
 
@@ -44,6 +45,7 @@ def monthly_columns(
     只画最近 ``limit`` 个月：月份再多柱子就细得看不出差别了，而更早的月份
     在下面的表里仍然查得到。
     """
+    theme = theme or themes.get(themes.DEFAULT_THEME)
     rows = list(rows)[-limit:]
     months = [str(row["month"]) for row in rows]
     income = [float(row["income"]) for row in rows]
@@ -77,22 +79,22 @@ def monthly_columns(
         y = y_of(tick)
         parts.append(
             f'<line x1="{left}" y1="{y:.1f}" x2="{width - right}" y2="{y:.1f}" '
-            f'stroke="{_GRID}" stroke-width="1"/>'
+            f'stroke="{theme.grid}" stroke-width="1"/>'
         )
         parts.append(
             f'<text x="{left - 8}" y="{y + 4:.1f}" text-anchor="end" '
-            f'font-size="11" fill="{_MUTED}" class="axis">{_compact(tick)}</text>'
+            f'font-size="11" fill="{theme.muted}" class="axis">{_compact(tick)}</text>'
         )
 
     parts.append(
         f'<line x1="{left}" y1="{baseline}" x2="{width - right}" y2="{baseline}" '
-        f'stroke="{_AXIS}" stroke-width="1"/>'
+        f'stroke="{theme.axis}" stroke-width="1"/>'
     )
 
     # 纵轴标明币种——换算之后金额不再是原币种，这个标注得有。
     if unit:
         parts.append(
-            f'<text x="{left}" y="{top - 6}" font-size="10" fill="{_MUTED}" '
+            f'<text x="{left}" y="{top - 6}" font-size="10" fill="{theme.muted}" '
             f'class="axis">{escape(unit)}</text>'
         )
 
@@ -105,8 +107,8 @@ def monthly_columns(
         expense_x = centre + _GAP / 2
 
         for value, x, colour, series in (
-            (income[index], income_x, INCOME, "收入"),
-            (expense[index], expense_x, EXPENSE, "支出"),
+            (income[index], income_x, theme.income, "收入"),
+            (expense[index], expense_x, theme.expense, "支出"),
         ):
             if value <= 0:
                 continue
@@ -125,14 +127,14 @@ def monthly_columns(
                 parts.append(
                     f'<text x="{_clamp_centred(x + bar_w / 2, _compact(value), 10, left, width - right):.1f}" '
                     f'y="{y_of(value) - 5:.1f}" '
-                    f'text-anchor="middle" font-size="10" fill="{_TEXT}" '
+                    f'text-anchor="middle" font-size="10" fill="{theme.text}" '
                     f'class="axis">{_compact(value)}</text>'
                 )
 
         if index % x_step == 0:
             parts.append(
                 f'<text x="{centre:.1f}" y="{baseline + 16:.1f}" text-anchor="middle" '
-                f'font-size="10" fill="{_MUTED}" class="axis">{month[2:]}</text>'
+                f'font-size="10" fill="{theme.muted}" class="axis">{month[2:]}</text>'
             )
 
     total_income = sum(income)
@@ -151,12 +153,19 @@ def monthly_columns(
     )
 
 
-def category_bars(rows, *, width: int = 760, limit: int = 10) -> Markup:
+def category_bars(
+    rows,
+    *,
+    width: int = 760,
+    limit: int = 10,
+    theme: themes.Theme | None = None,
+) -> Markup:
     """分类支出：横向条形，按金额从大到小，每条带占比。
 
     单一序列，所以只有一种颜色、也不需要图例——标题已经说了画的是什么。
     这里**不**按金额深浅上色：那等于把长度再编码一遍，白白占掉唯一的颜色通道。
     """
+    theme = theme or themes.get(themes.DEFAULT_THEME)
     everything = [row for row in rows if float(row["expense"]) > 0]
     ranked = everything[:limit]
     if not ranked:
@@ -201,16 +210,16 @@ def category_bars(rows, *, width: int = 760, limit: int = 10) -> Markup:
 
         parts.append(
             f'<text x="{label_w:.1f}" y="{y + row_h - 3:.1f}" text-anchor="end" '
-            f'font-size="{font}" fill="{_MUTED}" class="axis">{escape(text)}'
+            f'font-size="{font}" fill="{theme.muted}" class="axis">{escape(text)}'
             f"<title>{escape(name)}</title></text>"
         )
         parts.append(
-            f'<path d="{_bar_right(left, y, left + bar_w, row_h)}" fill="{EXPENSE}">'
+            f'<path d="{_bar_right(left, y, left + bar_w, row_h)}" fill="{theme.expense}">'
             f"<title>{escape(name)} 支出 {_money(value)}</title></path>"
         )
         parts.append(
             f'<text x="{left + bar_w + 8:.1f}" y="{y + row_h - 3:.1f}" '
-            f'font-size="{font}" fill="{_TEXT}" class="axis">{tail}</text>'
+            f'font-size="{font}" fill="{theme.text}" class="axis">{tail}</text>'
         )
 
     capped = f"（图中前 {len(entries)}）" if len(everything) > len(entries) else ""

@@ -21,7 +21,7 @@ from flask import (
     url_for,
 )
 
-from . import charts, config, dates, db, entry, ingest, repo, settings
+from . import charts, config, dates, db, entry, ingest, repo, settings, themes
 from .errors import BillError, ProfileError, UploadError
 from .money import format_amount
 from .profiles import load_all, validate
@@ -31,14 +31,6 @@ __all__ = ["create_app", "main"]
 
 _started_at = datetime.now(timezone.utc)
 PAGE_SIZE = 100
-
-
-def current_month() -> str:
-    """「本月」按账本统一的显示时区算，不是按服务器的时钟。
-
-    这台机器在 UTC+8 而账本显示英国时间，跨月那几小时会整整差一个月。
-    """
-    return datetime.now(settings.load().tz()).strftime("%Y-%m")
 
 
 def uptime_seconds() -> int:
@@ -100,36 +92,60 @@ def create_app() -> Flask:
 
     # ---------------------------------------------------------------- 首页
 
+    @app.context_processor
+    def inject_palette():
+        """每个页面都得知道自己在用哪套配色——``<html data-theme>`` 靠它。"""
+        return {"palette": settings.load().palette()}
+
     @app.get("/")
-    def index():
+    def summary():
+        """首页就是汇总。"""
         connection = get_conn()
-        # 默认看最近有数据的月份。导一份历史账单进来时当前月往往是空的，
-        # 默认落在当前月会让首页一片 0，看着像没导进去。
-        month = (
-            request.args.get("month")
-            or repo.latest_month(connection)
-            or current_month()
-        )
         conf = settings.load()
+        palette = conf.palette()
         currencies = repo.currencies(connection)
+        months = repo.by_month(connection)
+        categories = repo.by_source_category(connection)
+
+        # 按币种分别出图。把英镑和人民币画进同一组柱子，等于换个方式把它们相加。
+        # 月份表是倒序的（最近的在上面），画时间轴要正过来。
         return render_template(
-            "index.html",
-            month=month,
-            display_currency=conf.display_currency,
-            currency_note=conf.describe(),
-            # 首页的合计数也剔除了大额，所以这里必须同样说明一声。只在汇总页
-            # 说明的话，两页会对同一段时间给出两个数，而且谁都不解释。
-            large_note=conf.describe_large(),
-            is_current_month=month == current_month(),
-            month_totals=repo.month_totals(connection, month),
+            "summary.html",
+            months=months,
+            categories=categories,
             overall=repo.overall_totals(connection),
             currencies=currencies,
             multiple_currencies=len(currencies) > 1,
-            coverage=repo.coverage(connection),
-            merged_groups=repo.count_groups(connection),
-            imports=repo.list_imports(connection, 5),
-            uptime=uptime_seconds(),
+            display_currency=conf.display_currency,
+            large=repo.large_transactions(connection),
+            charts=[
+                {
+                    "currency": currency,
+                    "monthly": charts.monthly_columns(
+                        sorted(
+                            (
+                                row
+                                for row in months
+                                if row["display_currency"] == currency
+                            ),
+                            key=lambda row: row["month"],
+                        ),
+                        unit=currency,
+                        theme=palette,
+                    ),
+                    "categories": charts.category_bars(
+                        [row for row in categories if row["display_currency"] == currency],
+                        theme=palette,
+                    ),
+                }
+                for currency in currencies
+            ],
         )
+
+    @app.get("/summary")
+    def summary_legacy():
+        """老地址，指回首页。"""
+        return redirect(url_for("summary"), code=301)
 
     # ---------------------------------------------------------------- 导入
 
@@ -295,7 +311,6 @@ def create_app() -> Flask:
         return render_template(
             "transactions.html",
             display_currency=conf.display_currency,
-            large_note=conf.describe_large(),
             rows=rows,
             members=members,
             group_count=repo.count_groups(connection),
@@ -441,8 +456,6 @@ def create_app() -> Flask:
             members=members,
             created=request.args.get("created", type=int),
             display_currency=conf.display_currency,
-            merge_note=conf.describe_merge(),
-            merge_enabled=conf.merge_enabled,
         )
 
     @app.post("/groups/scan")
@@ -482,48 +495,41 @@ def create_app() -> Flask:
                 abort(404)
         return go("groups_page")
 
-    @app.get("/summary")
-    def summary():
-        connection = get_conn()
-        conf = settings.load()
-        currencies = repo.currencies(connection)
-        months = repo.by_month(connection)
-        categories = repo.by_source_category(connection)
+    # ---------------------------------------------------------------- 设置
 
-        # 按币种分别出图。把英镑和人民币画进同一组柱子，等于换个方式把它们相加。
-        # 月份表是倒序的（最近的在上面），画时间轴要正过来。
-        return render_template(
-            "summary.html",
-            months=months,
-            categories=categories,
-            overall=repo.overall_totals(connection),
-            currencies=currencies,
-            multiple_currencies=len(currencies) > 1,
-            display_currency=conf.display_currency,
-            currency_note=conf.describe(),
-            large_note=conf.describe_large(),
-            large=repo.large_transactions(connection),
-            charts=[
-                {
-                    "currency": currency,
-                    "monthly": charts.monthly_columns(
-                        sorted(
-                            (
-                                row
-                                for row in months
-                                if row["display_currency"] == currency
-                            ),
-                            key=lambda row: row["month"],
-                        ),
-                        unit=currency,
-                    ),
-                    "categories": charts.category_bars(
-                        [row for row in categories if row["display_currency"] == currency]
-                    ),
-                }
-                for currency in currencies
-            ],
+    def render_settings(values, errors, *, status: int = 200, saved: bool = False):
+        return (
+            render_template(
+                "settings.html",
+                values=values,
+                errors=errors,
+                saved=saved,
+                theme_choices=[themes.get(name) for name in themes.names()],
+                path=str(config.user_settings_path()),
+            ),
+            status,
         )
+
+    @app.get("/settings")
+    def settings_page():
+        return render_settings(
+            settings.as_form(settings.load()),
+            [],
+            saved=request.args.get("saved") == "1",
+        )
+
+    @app.post("/settings")
+    def settings_save():
+        conf, values, errors = settings.read_form(request.form)
+        if errors:
+            # 校验没过就把填过的原样交回去，不让人重填一遍。
+            return render_settings(values, errors, status=400)
+        try:
+            settings.save(conf)
+        except BillError as error:
+            return render_settings(values, [str(error)], status=400)
+        # Post/Redirect/Get：刷新结果页时不会把这份表单再提交一遍。
+        return go("settings_page", saved=1)
 
     # ---------------------------------------------------------------- 配置
 

@@ -5,8 +5,8 @@
 <section>
   <h1>导入账单</h1>
   <p class="lede">
-    支持支付宝、微信导出的账单，以及银行流水。文件会先在内存里解析出一份预览，
-    <strong>确认之前不会写进账本</strong>，所以格式认错了也不会污染数据。
+    支持支付宝、微信、Monzo 和银行导出的账单文件。
+    先预览、<strong>确认之后才写进账本</strong>。
   </p>
 
   <form class="upload-form" method="post" action="{{ url_for('receive_import') }}"

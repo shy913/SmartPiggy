@@ -39,13 +39,7 @@
 
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 
-<p class="hint">
-  共 {{ total }} 条，第 {{ page }} / {{ pages }} 页。
-  {% if large_note %}
-    标着「大额」的记录<strong>不计入汇总合计</strong>，它们的「计入合计」一列显示 0.00。
-    {{ large_note }}
-  {% endif %}
-</p>
+<p class="hint">共 {{ total }} 条，第 {{ page }} / {{ pages }} 页。</p>
 
 {% if rows %}
   {# 整张表包在一个表单里，是为了勾选之后能一键合并、一键改分类。
@@ -76,7 +70,7 @@
               {# 合并行：金额是组内各笔的净额，本身不是一条记录，所以不能勾选、
                  也没有「编辑」——它下面那一行才是原样的几笔。 #}
               <tr class="row-group">
-                <td class="pick muted" title="这是合并之后的净额行，不是一条记录，所以不能勾选">合</td>
+                <td class="pick muted" title="合并净额行">合</td>
                 <td>{{ tx.occurred_at }}</td>
                 <td>
                   {% if tx.direction == 'in' %}<span class="tag tag-in">收入</span>

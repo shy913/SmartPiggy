@@ -102,10 +102,11 @@ def test_both_sides_off_leaves_everything_alone(conn, isolated_data_dir, client)
     assert row["expense"] == 1000000
     assert row["income"] == 10000000
     assert repo.large_transactions(conn) == []
-    assert settings.load().describe_large() == ""
 
-    for path in ("/", "/summary", "/transactions"):
+    for path in ("/", "/transactions", "/settings"):
         assert client.get(path).status_code == 200, path
+    # 两侧都关着就没有大额这回事，页面上连那一块都不该出现
+    assert "不计入合计的大额" not in client.get("/").get_data(as_text=True)
 
 
 # ---------------------------------------------------------------- 默认值
@@ -140,9 +141,9 @@ def test_thresholds_track_the_display_currency(isolated_data_dir):
     这正是默认值最容易伤人的地方：人民币账本下 ¥2,000 的收入阈值会剔掉工资。
     """
     write_settings(isolated_data_dir, '[currency]\ndisplay = "CNY"\nrates = {}\n')
-    assert settings.load().describe_large() == (
-        "单笔支出 ≥ 500.00、收入 ≥ 2,000.00 CNY 算大额，不计入合计，单列在页面底部。"
-    )
+    conf = settings.load()
+    assert conf.large_out_cents == 50_000, "「500」按主单位读，÷100 才是分"
+    assert conf.large_in_cents == 200_000
 
 
 # ---------------------------------------------------------------- 币种
@@ -251,27 +252,24 @@ def test_transactions_page_marks_large_and_zeroes_the_counted_column(
     assert "tag-large" in body
 
 
-def test_home_and_summary_report_the_same_total(conn, isolated_data_dir, client):
-    """两页对同一段时间必须给出同一个数，而且都得说明剔了几笔。
+def test_large_rows_stay_out_of_the_total_and_are_listed_at_the_bottom(
+    conn, isolated_data_dir, client
+):
+    """首页就是汇总：合计里没有它，页面底部单独列着它。
 
-    只在汇总页剔除的话，首页会照常显示被剔除的金额，两边都不解释——那正是这个
-    项目最忌讳的「不报错的错数」。
+    只在列表里标个「大额」、合计照算的话，汇总页会给出一个虚高的数，而且
+    页面上什么都不说。
     """
     write_settings(isolated_data_dir, DISPLAY_GBP + THRESHOLDS)
     seed(conn, [(2000000, "CNY", Direction.IN), (89000, "CNY", Direction.OUT)])
 
     home = client.get("/").get_data(as_text=True)
-    summary = client.get("/summary").get_data(as_text=True)
 
-    def incomes(body: str) -> list[str]:
-        return re.findall(r'stat-value money-in">([^<]+)<', body)
-
-    # 首页有两处（本月、账本总计），汇总页一处（账本总计）。
-    assert incomes(home)[-1] == incomes(summary)[0] == "0.00"
-    assert incomes(home)[0] == "0.00"
-    assert "2,247.19" in home and "2,247.19" in summary, "被剔掉的金额也要写出来"
-    assert "1" in re.findall(r"已剔掉 (\d+) 笔", home)
-    assert "已剔掉" in summary
+    assert re.findall(r'stat-value money-in">([^<]+)<', home) == ["0.00"]
+    assert "2,247.19" in home, "被剔掉的那笔要列出来，金额看得见"
+    assert "<h2>不计入合计的大额（1 笔）</h2>" in home
+    # 它仍然在账本里：交易记录页一条不少
+    assert "2,247.19" in client.get("/transactions").get_data(as_text=True)
 
 
 def test_preview_totals_still_count_large_rows(conn, isolated_data_dir):

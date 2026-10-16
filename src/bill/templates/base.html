@@ -1,6 +1,6 @@
 {# 所有页面共用的外壳。 #}
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="{{ palette.name }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,12 +9,12 @@
 </head>
 <body>
   <header class="site-header">
-    <a class="brand" href="{{ url_for('index') }}">记账</a>
+    <a class="brand" href="{{ url_for('summary') }}">记账</a>
     <nav>
-      <a href="{{ url_for('index') }}">首页</a>
-      <a href="{{ url_for('import_upload') }}">导入账单</a>
-      <a href="{{ url_for('transactions') }}">交易记录</a>
       <a href="{{ url_for('summary') }}">汇总</a>
+      <a href="{{ url_for('transactions') }}">交易记录</a>
+      <a href="{{ url_for('import_upload') }}">导入账单</a>
+      <a href="{{ url_for('settings_page') }}">设置</a>
     </nav>
   </header>
 

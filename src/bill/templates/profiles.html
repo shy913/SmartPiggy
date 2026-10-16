@@ -3,10 +3,7 @@
 
 {% block content %}
 <h1>列映射</h1>
-<p class="lede">
-  账单格式的差异全在这几个文件里。要支持一家新银行，把模板复制到你的目录改成
-  对应的列名即可，不用改代码。
-</p>
+<p class="lede">账单格式的差异都在这几个文件里。</p>
 
 <section class="paths">
   <p>
@@ -22,9 +19,7 @@
 {% if staged and headers %}
   <section>
     <h2>刚读到的那份文件的真实表头</h2>
-    <p class="hint">
-      来自「{{ staged.filename }}」。配置里的列名对不上时，照着这里改成实际列名即可。
-    </p>
+    <p class="hint">来自「{{ staged.filename }}」。</p>
     <div class="table-scroll">
       <table class="data">
         <thead><tr><th class="row-number">列号</th><th>实际列名</th></tr></thead>

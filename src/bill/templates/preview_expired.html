@@ -5,10 +5,7 @@
 <section class="hero">
   <h1>这个预览不在了</h1>
   <p class="lede">{{ message }}</p>
-  <p class="hint">
-    预览只存在内存里，服务重启或放置超过 30 分钟就会失效。
-    已经入库的账目不受影响。
-  </p>
+  <p class="hint">已经入库的账目不受影响。</p>
   <p><a class="button" href="{{ url_for('import_upload') }}">重新上传文件 →</a></p>
 </section>
 {% endblock %}

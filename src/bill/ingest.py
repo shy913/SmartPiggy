@@ -94,7 +94,7 @@ class _Store:
     def get(self, token: str) -> StagedPreview:
         preview = self._items.get(token)
         if preview is None:
-            raise PreviewExpired("这个预览已经不在了，可能超时或者服务重启过。")
+            raise PreviewExpired("这个预览已经不在了，重新上传一次就行。")
         if time.monotonic() - preview.created_at > config.PREVIEW_TTL_SECONDS:
             self._items.pop(token, None)
             raise PreviewExpired("这个预览已经过期了，请把文件重新传一次。")
@@ -304,8 +304,8 @@ def _rebuild_notes(connection: sqlite3.Connection, preview: StagedPreview) -> No
     first = overlapping[0]
     preview.notes.append(
         f"这份文件的时间范围（{min(dates)} ~ {max(dates)}）跟 "
-        f"{first['uploaded_at'][:10]} 导入的「{first['filename']}」有重叠——"
-        "长期记账时这很正常，重叠部分的重复记录已经跳过了。"
+        f"{first['uploaded_at'][:10]} 导入的「{first['filename']}」有重叠，"
+        "重叠部分的重复记录已经跳过了。"
     )
 
 

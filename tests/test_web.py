@@ -27,9 +27,9 @@ def token_of(response) -> str:
 
 
 def test_empty_pages_render(client):
-    for path in ("/", "/import", "/transactions", "/summary", "/imports", "/profiles"):
+    for path in ("/", "/import", "/transactions", "/settings", "/imports", "/profiles"):
         assert client.get(path).status_code == 200, path
-    assert "还没有账目" in body(client.get("/"))
+    assert "还没有数据" in body(client.get("/"))
 
 
 def test_profiles_page_lists_the_builtins(client):
@@ -76,13 +76,13 @@ def test_preview_survives_a_profile_switch(client):
     # 换成对不上的配置：要明确报错，并把文件开头的原始行摊出来
     client.post(f"/import/{token}/reprofile", data={"profile": "wechat"})
     html = body(client.get(f"/import/{token}"))
-    assert "照着它改配置里的列名" in html
+    assert "文件开头的原始内容" in html
     assert "导入 3 条新记录" not in html
 
     # 换回来：错误消失，又能导入了
     client.post(f"/import/{token}/reprofile", data={"profile": "alipay"})
     html = body(client.get(f"/import/{token}"))
-    assert "照着它改配置里的列名" not in html
+    assert "文件开头的原始内容" not in html
     assert "导入 3 条新记录" in html
 
 
@@ -104,23 +104,27 @@ def test_full_import_then_browse(client):
     assert "共 1 条" in body(client.get("/transactions?q=美团"))
     assert "共 1 条" in body(client.get("/transactions?month=2026-01&direction=out"))
     assert "共 0 条" in body(client.get("/transactions?month=2026-02"))
-    assert "餐饮美食" in body(client.get("/summary"))
-    assert "2026-01" in body(client.get("/summary"))
+    assert "餐饮美食" in body(client.get("/"))
+    assert "2026-01" in body(client.get("/"))
 
 
-def test_dashboard_lands_on_the_latest_month_with_data(client):
-    """回归：默认看「当前月」的话，导一份历史账单进来首页会是一片 0，
-    看着就像没导进去。应该落在账本里最近有数据的那个月。"""
+def test_the_homepage_is_the_summary(client):
+    """首页就是汇总页：一进来要看到全账本的口径，不是某个月的。"""
     token = token_of(upload(client, alipay_csv(), "支付宝账单.csv"))
     client.post(f"/import/{token}/confirm")
 
     home = body(client.get("/"))
-    assert "2026-01 的账" in home
-    assert "12,000.00" in home
-    assert "11,967.50" in home
+    assert "<h1>汇总</h1>" in home
+    assert "累计收入" in home and "累计支出" in home and "累计结余" in home
+    assert "12,000.00" in home and "11,967.50" in home
+    # 按月那张表里也得有数据（不依赖「当前月」，因为这里根本没有这个概念）
+    assert "2026-01" in home
 
-    # 也能显式指定别的月份，哪怕是空的
-    assert "2026-09 的账" in body(client.get("/?month=2026-09"))
+
+def test_the_old_summary_url_still_lands_somewhere(client):
+    response = client.get("/summary")
+    assert response.status_code in (301, 302)
+    assert response.headers["Location"].endswith("/")
 
 
 def test_reuploading_the_same_file_imports_nothing_new(client):
@@ -152,29 +156,28 @@ def test_currencies_are_shown_separately_never_added(client):
         assert client.post(f"/import/{token}/confirm").status_code == 303
 
     home = body(client.get("/"))
-    assert "没配汇率" in home, "要说明为什么 GBP 没被并进 CNY 里"
-    assert "CNY" in home and "GBP" in home
+    assert '<h3 class="currency">CNY</h3>' in home
+    assert '<h3 class="currency">GBP</h3>' in home
+    assert "没配汇率" not in home, "分组本身就是说明，不再写一段话解释"
+    # 两个币种各自的合计分开列，不能被加成一个数
+    assert home.count("累计收入") == 2
 
-    summary = body(client.get("/summary"))
-    assert "没配汇率" in summary
-    assert "币种" in summary, "表格里要有币种列"
 
-
-def test_single_currency_pages_look_the_same_as_before(client):
-    """只有一个币种时不该冒出多余的分组标题和说明。"""
+def test_a_single_currency_gets_no_group_headings(client):
+    """只有一个币种时不该冒出多余的分组标题。"""
     token = token_of(upload(client, alipay_csv(), "支付宝账单.csv"))
     client.post(f"/import/{token}/confirm")
 
     home = body(client.get("/"))
-    assert "没配汇率" not in home
-    assert "2026-01 的账" in home
+    assert 'class="currency"' not in home
+    assert "累计收入" in home
 
 
 def test_summary_renders_charts(client):
     token = token_of(upload(client, alipay_csv(), "支付宝账单.csv"))
     client.post(f"/import/{token}/confirm")
 
-    summary = body(client.get("/summary"))
+    summary = body(client.get("/"))
     assert "<svg" in summary
     assert "每月收支" in summary
     assert "支出构成" in summary
@@ -190,7 +193,7 @@ def test_charts_are_not_shared_across_currencies(client):
         token = token_of(upload(client, data, name))
         client.post(f"/import/{token}/confirm")
 
-    summary = body(client.get("/summary"))
+    summary = body(client.get("/"))
     assert summary.count("<h4>每月收支") == 2, "每个币种一幅每月收支图"
     assert summary.count("支出构成") == 2
     assert "CNY" in summary and "GBP" in summary
@@ -229,7 +232,7 @@ def test_deleting_an_import_removes_its_transactions(client):
 
     assert client.post("/imports/1/delete").status_code == 303
     assert "没有符合条件的记录" in body(client.get("/transactions"))
-    assert "还没有账目" in body(client.get("/"))
+    assert "还没有数据" in body(client.get("/"))
 
 
 def test_an_expired_preview_is_a_polite_page_not_a_404(client):
@@ -336,8 +339,7 @@ def couple(client) -> list[int]:
 def test_empty_groups_page_renders(client):
     html = body(client.get("/groups"))
     assert "还没有合并组" in html
-    # 自动合并当前按什么规则跑，得写在页面上——合错了第一眼看的就是这里
-    assert "12" in html and "转账" in html
+    assert "重新扫描整个账本" in html
 
 
 def test_recording_a_manual_entry(client):
@@ -398,7 +400,7 @@ def test_bulk_reclassify(client):
     )
     assert response.status_code == 303
     assert "朋友聚会" in body(client.get("/transactions"))
-    assert "朋友聚会" in body(client.get("/summary"))
+    assert "朋友聚会" in body(client.get("/"))
 
 
 def test_bulk_merge_and_dissolve(client):
@@ -440,7 +442,7 @@ def test_the_auto_merge_is_visible_and_reversible(client):
 
     # 花出去 120、收回来 80：实际只花了 40，收入也不虚增
     assert "40.00" in body(client.get("/"))
-    assert "80.00" not in body(client.get("/summary"))
+    assert "80.00" not in body(client.get("/"))
 
     group_id = int(re.findall(r"/groups/(\d+)/dissolve", body(client.get("/groups")))[0])
     assert client.post(f"/groups/{group_id}/dissolve").status_code == 303

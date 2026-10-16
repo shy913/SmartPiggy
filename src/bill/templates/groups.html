@@ -6,12 +6,6 @@
 
 <h1>合并组</h1>
 
-<p class="hint">
-  AA / 拼单：一笔支出加上之后跟着来的几笔等额转入，合并成一行按 <strong>净额</strong> 算。
-  原始记录一笔都没改——这里取消合并，它们就原样回到列表里。
-</p>
-<p class="hint">{{ merge_note }}</p>
-
 {% if created is not none %}
   <p class="hint">
     {% if created %}刚扫出 {{ created }} 组新的。{% else %}扫完了，没有新的组合。{% endif %}
@@ -20,13 +14,6 @@
 
 <form method="post" action="{{ url_for('groups_scan') }}" class="scan">
   <button type="submit">重新扫描整个账本</button>
-  <span class="hint">
-    {% if merge_enabled %}
-      平时导入时会自动扫，这一下是给以前就记好的账补上，或者改了汇率/窗口之后重算。
-    {% else %}
-      设置里关掉了自动合并，这一下只按你现在的规则扫一遍，不会改变「以后导入不再自动合并」。
-    {% endif %}
-  </span>
 </form>
 
 {% if groups %}
@@ -48,14 +35,11 @@
             {{ group.first_at[:10] }} ·
             {{ group.member_count }} 笔 ·
             {% if group.origin == 'auto' %}自动合并{% else %}手动合并{% endif %}
-            {% if group.currency_count > 1 %}· 跨 {{ group.currency_count }} 种币种，按显示汇率折算{% endif %}
+            {% if group.currency_count > 1 %}· 跨 {{ group.currency_count }} 种币种{% endif %}
           </p>
           {% if group.net_cents is none %}
             <p class="hint warn-text">
-              这一组现在合不起来：settings.toml 的 rates 里没有
-              {{ group.stuck }} 的汇率，而净额要先换算成同一种币才算得出来。
-              补上汇率它就自己生效，不想合了就取消合并——现在这几笔是各算各的，
-              没有按 1:1 硬凑。
+              这一组现在合不起来：缺 {{ group.stuck }} 的汇率。现在这几笔各算各的。
             </p>
           {% endif %}
         </header>
@@ -101,8 +85,7 @@
   </div>
 {% else %}
   <p class="empty">
-    还没有合并组。导入一份账单，或者点上面的「重新扫描整个账本」看看有没有
-    符合 AA 形状的组合。
+    还没有合并组。导入一份账单，或者点上面的「重新扫描整个账本」。
   </p>
 {% endif %}
 {% endblock %}

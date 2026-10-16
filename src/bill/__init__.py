@@ -4,7 +4,7 @@
 
     uv run bill
 
-默认 http://127.0.0.1:8001，可用 HOST / PORT 覆盖。
+默认监听 0.0.0.0:8001，可用 HOST / PORT 覆盖。
 """
 
 from .web import create_app, main
