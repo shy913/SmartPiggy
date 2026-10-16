@@ -205,11 +205,11 @@ describe("交易记录页", () => {
     expect(screen.queryByTitle("")).toBeNull();
   });
 
-  it("展开合并组：主数跟组头净额一个口径，换过币种的那笔另跟一份原币金额", async () => {
-    // 组里跨币种（微信代付 + Monzo 刷卡）。主数是显示币种，加起来正好是组头
-    // 那个净额；换过币种的那笔后面再跟一份原币金额，好跟微信里那条转账对回去。
-    // 以前这两份是错位的：跟着的是**原币种**，数却是换算过的，于是印出
-    // 「-77.53 CNY」——一个英镑的数字顶着人民币的标签。
+  it("展开合并组：主数是原币金额，换算过的那笔后面再跟一份换算结果", async () => {
+    // 组里跨币种（微信代付 + Monzo 刷卡）。主数就是账单上那个数，好跟微信里
+    // 那条转账对回去；换过币种的那笔后面跟一份换算到显示币种的数，好跟组头
+    // 那个净额对得上。以前这两份是错位的：跟着的是**原币种**，数却是换算过的，
+    // 于是印出「-77.53 CNY」——一个英镑的数字顶着人民币的标签。
     draw(
       listBody({
         rows: [
@@ -260,8 +260,8 @@ describe("交易记录页", () => {
     );
     await waitFor(() => expect(screen.getByText("月亮（代付）")).toBeInTheDocument());
 
-    expect(screen.getByText("-77.53")).toBeInTheDocument();
     expect(screen.getByText("-690.00 CNY")).toBeInTheDocument();
+    expect(screen.getByText("-77.53 GBP")).toBeInTheDocument();
     // 本来就是显示币种的那笔，没有第二份。
     expect(screen.getByText("-7.92")).toBeInTheDocument();
     expect(screen.queryByText("-7.92 GBP")).toBeNull();
