@@ -112,13 +112,16 @@ def test_hiding_somebody_else_is_not_an_error_it_is_a_miss(conn, book):
     assert repo.set_hidden(conn, 99999, True) is False
 
 
-def test_the_counts_column_reads_zero_for_a_hidden_row(conn, book):
-    """「计入合计」那一列不能在页面上写一个没进合计的数——大额、中性都是这个待遇。"""
+def test_the_amount_still_reads_on_a_hidden_row(conn, book):
+    """金额照原样显示，靠灰字和「隐」交代它不算数——跟大额那个标记同一个口径。
+
+    抹成 0 反而更糟：那一笔明明花出去了，页面上却写成没花。
+    """
     ids = two_expenses(book)
     repo.set_hidden(conn, ids[0], True)
     rows = {row["id"]: row for row in repo.list_transactions(conn)}
-    assert rows[ids[0]]["display_signed_cents"] == 0
-    assert rows[ids[0]]["display_cents"] == 1230, "金额那一列还是原来的数，只是灰的"
+    assert rows[ids[0]]["display_cents"] == 1230
+    assert rows[ids[0]]["hidden"] == 1
 
 
 def test_hiding_leaves_the_identity_alone(conn, book):
@@ -241,15 +244,14 @@ def test_the_page_greys_it_out_and_takes_away_the_checkbox(client):
     assert ">显示<" in row, "行尾要能把它放回来"
 
 
-def test_the_hide_button_says_zero_in_the_counts_column(client):
+def test_the_amount_stays_put_on_the_page_for_a_hidden_row(client):
     record(client)
-    txn_id = checkbox_ids(client)[0]
-    client.post(f"/transactions/{txn_id}/hide")
+    client.post(f"/transactions/{checkbox_ids(client)[0]}/hide")
     row = re.search(
         r'<tr class="row-hidden".*?</tr>', body(client.get("/transactions")), re.S
     ).group(0)
-    assert "12.30" in row, "金额还是那个金额"
-    assert row.count("0.00") == 1, "「计入合计」那一列是 0.00"
+    assert "12.30" in row, "金额照原样写着"
+    assert "已隐藏" in row, "旁边挂着「隐」，说明它不算数"
 
 
 def test_unhiding_from_the_page_puts_it_back(client):
