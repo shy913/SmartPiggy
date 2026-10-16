@@ -22,7 +22,7 @@ import json
 
 from flask import Blueprint, current_app, g, jsonify, request, session
 
-from . import auth, config, dates, db, entry, ingest, params, repo, settings, themes
+from . import auth, categories, config, dates, db, entry, ingest, params, repo, settings, themes
 from .errors import BillError, ProfileError, UploadError
 from .profiles import load_all, validate
 
@@ -156,21 +156,28 @@ MEMBER_FIELDS = (
     "currency",
     "counterparty",
     "description",
+    "effective_category",
     "display_cents",
 )
 
 
 def transaction_rows(result) -> list[dict]:
     """交易列表的行。合并行的 id 归一成 null，跟账本行一个规矩。"""
-    return [
-        _project(item, LIST_FIELDS, null_group_id=True)
-        for item in result
-    ]
+    return [_listed(item, LIST_FIELDS, null_group_id=True) for item in result]
 
 
 def member_rows(result) -> list[dict]:
     """合并组的组员。它们是**真实记录**，id 不动。"""
-    return [_project(item, MEMBER_FIELDS) for item in result]
+    return [_listed(item, MEMBER_FIELDS) for item in result]
+
+
+def _listed(item, fields, *, null_group_id: bool = False) -> dict:
+    row = _project(item, fields, null_group_id=null_group_id)
+    # 分类在列表上退化成一个 emoji，分类名挂在 tooltip 上：这一列窄，分类名
+    # 单独占一列会让别的列跟着挤。映射表（含关键词兜底）在 `categories.py`，
+    # 在这儿算好发出去——搬到前端就等于把那张表再抄一份。
+    row["emoji"] = categories.emoji(row.get("effective_category"))
+    return row
 
 
 def _project(item, fields, *, null_group_id: bool = False) -> dict:
@@ -312,7 +319,7 @@ def list_counts(connection, query) -> tuple[int, int]:
 def transaction_list():
     conf = settings.load()
     connection = get_conn()
-    query = params.list_query(request.args, conf)
+    query = params.list_query(request.args)
     total, hidden_total = list_counts(connection, query)
 
     offset = max(request.args.get("offset", type=int) or 0, 0)
@@ -700,7 +707,7 @@ def _toggle_hidden(txn_id: int, hidden: bool):
             return _not_found("没有这一笔。")
     # 页头那两个数得服务端算准了交回去——「全表还隐藏着几笔」客户端算不出来。
     conf = settings.load()
-    query = params.list_query(request.args, conf)
+    query = params.list_query(request.args)
     total, hidden_total = list_counts(connection, query)
     return jsonify(
         hidden=hidden,

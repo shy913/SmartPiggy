@@ -146,11 +146,13 @@ export function TransactionsPage() {
           <Table>
             <THead>
               <TR>
-                {/* 勾选框在最左，操作在最右：手指从左往右扫，选完正好停在动作上。 */}
+                {/* 勾选框在最左，操作在最右：手指从左往右扫，选完正好停在动作上。
+                    金额紧跟日期——先看见「什么时候、多少钱」，再读是花在哪儿的，
+                    跟对账单上的顺序一致。 */}
                 <TH className="w-8" />
-                <TH>时间</TH>
-                <TH>对方 / 说明</TH>
+                <TH>日期</TH>
                 <NumTH>金额</NumTH>
+                <TH>对方 / 说明</TH>
                 <TH className={cn("text-right", STICKY)}>操作</TH>
               </TR>
             </THead>
@@ -370,19 +372,6 @@ function Row({
           </Link>
         )}
       </TD>
-      <TD>
-        <span className="flex flex-wrap items-center gap-2">
-          {/* 日期和这里**两处都是链接**：手机上点哪一下都进得去，不用瞄准。 */}
-          <Link className="text-accent underline" to={`/transactions/${row.id}`}>
-            {row.counterparty || row.description}
-          </Link>
-          {row.effective_category ? (
-            <span className="text-xs text-muted">{row.effective_category}</span>
-          ) : null}
-          {row.is_large ? <Tag>大额</Tag> : null}
-          {hidden ? <Tag>已隐藏</Tag> : null}
-        </span>
-      </TD>
       <NumTD
         className={
           row.direction === "in"
@@ -394,6 +383,19 @@ function Row({
       >
         {formatSigned(signed(row))}
       </NumTD>
+      <TD>
+        <span className="flex flex-wrap items-center gap-2">
+          {/* 分类退化成一个 emoji，名字挂在 tooltip 上——这一列窄，分类名单占
+              一列会让别的列跟着挤。没分类的不挂，不然每行都顶同一个记号。 */}
+          {row.emoji ? <span title={row.effective_category}>{row.emoji}</span> : null}
+          {/* 日期和这里**两处都是链接**：手机上点哪一下都进得去，不用瞄准。 */}
+          <Link className="text-accent underline" to={`/transactions/${row.id}`}>
+            {row.counterparty || row.description}
+          </Link>
+          {row.is_large ? <Tag>大额</Tag> : null}
+          {hidden ? <Tag>已隐藏</Tag> : null}
+        </span>
+      </TD>
       <TD className={cn("text-right", STICKY)}>
         <Button variant="ghost" size="sm" onClick={onHide}>
           {hidden ? "还原" : "隐藏"}
@@ -410,6 +412,9 @@ function GroupRow({ row, members }: { row: TransactionRow; members: MemberRow[] 
       <TR className="bg-accent/5">
         <TD />
         <TD className="whitespace-nowrap">{minute(row.occurred_at)}</TD>
+        <NumTD className={row.display_cents === 0 ? "text-muted" : "text-out"}>
+          {formatSigned(signed(row))}
+        </NumTD>
         <TD>
           <span className="flex flex-wrap items-center gap-2">
             <Tag tone="accent">合</Tag>
@@ -417,9 +422,6 @@ function GroupRow({ row, members }: { row: TransactionRow; members: MemberRow[] 
             <span className="text-xs text-muted">{row.member_count} 笔合计</span>
           </span>
         </TD>
-        <NumTD className={row.display_cents === 0 ? "text-muted" : "text-out"}>
-          {formatSigned(signed(row))}
-        </NumTD>
         <TD className={cn("text-right", STICKY, "bg-accent/5")}>
           {/* 合并行不是一条记录，进不了详情页——它只能去合并组页取消合并。 */}
           <Link className="text-accent underline" to="/groups">
@@ -437,10 +439,15 @@ function GroupRow({ row, members }: { row: TransactionRow; members: MemberRow[] 
               {members.map((member) => (
                 <li key={member.id} className="flex flex-wrap items-center gap-3 py-0.5">
                   <span className="text-muted">{minute(member.occurred_at)}</span>
-                  <span>{member.counterparty || member.description}</span>
-                  <span className="text-muted">
+                  <span className="tabular text-muted">
                     {formatSigned(member.direction === "out" ? -member.display_cents : member.display_cents)}
                     {member.currency !== row.currency ? ` ${member.currency}` : ""}
+                  </span>
+                  <span>
+                    {member.emoji ? (
+                      <span title={member.effective_category}>{member.emoji} </span>
+                    ) : null}
+                    {member.counterparty || member.description}
                   </span>
                 </li>
               ))}

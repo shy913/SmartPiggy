@@ -80,20 +80,9 @@ export function App() {
               </NavLink>
             ))}
           </nav>
-          {/* 列映射藏在设置那一区里：它是「账单格式对不上」时才来的地方，
-              不该跟四个日常入口抢位置。 */}
+          {/* 列映射不占主导航的位置：它是「账单格式对不上」时才来的地方，
+              入口挂在设置页和导入页上（认不出格式的预览页也会指过去）。 */}
           <div className="ml-auto flex items-center gap-2">
-            <NavLink
-              className={({ isActive }) =>
-                cn(
-                  "rounded-md px-2.5 py-1.5 text-sm transition-colors",
-                  isActive ? "bg-panel-hover text-text" : "text-muted hover:text-text",
-                )
-              }
-              to="/profiles"
-            >
-              列映射
-            </NavLink>
             {session.data?.auth_enabled ? (
               <Button
                 variant="ghost"

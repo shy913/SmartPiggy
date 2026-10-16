@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 
 import { getProfiles } from "../api/client";
 import { Card, Section } from "../components/ui/card";
@@ -58,6 +59,17 @@ export function ProfilesPage() {
           加一家银行不用改代码，写一份 TOML 放到上面那个自己的目录里就行。
         </Hint>
       </Section>
+
+      {/* 这一页不在主导航里，得留条路回去。 */}
+      <Hint>
+        <Link className="text-accent underline" to="/settings">
+          回设置 →
+        </Link>
+        {"　"}
+        <Link className="text-accent underline" to="/import">
+          回导入 →
+        </Link>
+      </Hint>
     </div>
   );
 }

@@ -79,7 +79,34 @@ function Totals({ summary }: { summary: Summary }) {
         </CurrencyBlock>
       ))}
       <NeutralHint summary={summary} />
+      <LargeHint summary={summary} />
     </Section>
+  );
+}
+
+/**
+ * 大额也只在这里交代一句：不在合计里，但钱确实花出去了。
+ *
+ * 不说的话，上面那排数看着就是「这个区间的全部」——而它少了一截，少了多少
+ * 又只能自己翻到页面底部去对。跟中性那行一样，是一句**解释口径**的话，
+ * 不是实现说明。
+ */
+function LargeHint({ summary }: { summary: Summary }) {
+  const count = summary.overall.reduce((sum, row) => sum + row.large_count, 0);
+  if (!count) return null;
+  const income = summary.overall.reduce((sum, row) => sum + row.large_income, 0);
+  const expense = summary.overall.reduce((sum, row) => sum + row.large_expense, 0);
+  const parts = [
+    income ? `收入 ${formatAmount(income)}` : "",
+    expense ? `支出 ${formatAmount(expense)}` : "",
+  ].filter(Boolean);
+  return (
+    <Hint>
+      另有 {count} 笔大额未计入合计{parts.length ? `（${parts.join("、")}）` : ""}，
+      <a className="text-accent underline" href="#large">
+        列在下面 →
+      </a>
+    </Hint>
   );
 }
 
@@ -239,6 +266,13 @@ function Months({ summary }: { summary: Summary }) {
 }
 
 function Categories({ summary }: { summary: Summary }) {
+  // 占比的分母是**同一个币种**的支出合计。跨币种凑一个分母等于把两种钱加起来，
+  // 那是这一页处处在避免的事。
+  const totals = new Map<string, number>();
+  for (const row of summary.categories) {
+    totals.set(row.display_currency, (totals.get(row.display_currency) ?? 0) + row.expense);
+  }
+
   return (
     <Section title="按分类">
       {summary.categories.length ? (
@@ -249,20 +283,27 @@ function Categories({ summary }: { summary: Summary }) {
                 <TH>分类</TH>
                 {summary.multi_currency ? <TH>币种</TH> : null}
                 <NumTH>支出</NumTH>
+                <NumTH>占比</NumTH>
                 <NumTH>收入</NumTH>
                 <NumTH>条数</NumTH>
               </TR>
             </THead>
             <TBody>
-              {summary.categories.map((row) => (
-                <TR key={`${row.category}-${row.display_currency}`}>
-                  <TD>{row.category}</TD>
-                  {summary.multi_currency ? <TD className="text-muted">{row.display_currency}</TD> : null}
-                  <NumTD className="text-out">{formatAmount(row.expense)}</NumTD>
-                  <NumTD className="text-in">{formatAmount(row.income)}</NumTD>
-                  <NumTD className="text-muted">{row.total}</NumTD>
-                </TR>
-              ))}
+              {summary.categories.map((row) => {
+                const total = totals.get(row.display_currency) ?? 0;
+                return (
+                  <TR key={`${row.category}-${row.display_currency}`}>
+                    <TD>{row.category}</TD>
+                    {summary.multi_currency ? <TD className="text-muted">{row.display_currency}</TD> : null}
+                    <NumTD className="text-out">{formatAmount(row.expense)}</NumTD>
+                    <NumTD className="text-muted">
+                      {total ? `${Math.round((row.expense / total) * 100)}%` : "—"}
+                    </NumTD>
+                    <NumTD className="text-in">{formatAmount(row.income)}</NumTD>
+                    <NumTD className="text-muted">{row.total}</NumTD>
+                  </TR>
+                );
+              })}
             </TBody>
           </Table>
         </TableScroll>
@@ -290,7 +331,7 @@ function RankingAndLarge({ summary }: { summary: Summary }) {
           <h3 className="mb-2 text-base font-semibold">开销排行</h3>
           <Ranking summary={summary} />
         </div>
-        <div>
+        <div id="large">
           <h3 className="mb-2 text-base font-semibold">
             不计入合计的大额{summary.large.length ? `（${summary.large.length} 笔）` : ""}
           </h3>

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ApiError, getSettings, saveSettings } from "../api/client";
@@ -222,6 +223,16 @@ export function SettingsPage() {
           </Button>
         </div>
       </form>
+
+      {/* 这一条不是设置项，是个跳转，所以放在「保存」之外。 */}
+      <Section title="列映射">
+        <p className="text-sm text-muted">认不出来的账单格式，加一份自己的列名配置就行。</p>
+        <Hint>
+          <Link className="text-accent underline" to="/profiles">
+            打开列映射 →
+          </Link>
+        </Hint>
+      </Section>
 
       <Hint>设置文件在 {data.path}。</Hint>
     </div>
