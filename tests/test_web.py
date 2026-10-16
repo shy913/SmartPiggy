@@ -482,6 +482,57 @@ def test_importing_an_aa_shape_merges_it_right_away(client):
     assert "取消合并" in body(client.get("/transactions"))
 
 
+def test_cross_currency_aa_merges_when_the_second_file_lands(client, isolated_data_dir):
+    """回归：跨来源的 AA 天然是**两个文件**，第二份一落地就该合上。
+
+    真实形状：英镑卡在伦敦 16:58 付了 £55.40 的晚餐，朋友两个多小时后从微信转了
+    ¥247（≈£27.75，正好一人一半）。微信那笔按北京时间记着，落在**次日凌晨**——
+    光看日期会以为它在后面一天。
+
+    自动合并只在导入那一刻扫一遍，范围是那份文件 ± 一个窗口。所以这里钉的是
+    「第二份导入时也看得见第一份那张卡上的行」：漏了的话，用户看到的就是
+    「明明对得上却没合」，还得自己去点重扫。（功能上线之前导进来的记录只能靠
+    重扫补上，那是有意留的口子，见 README，不是这条用例管的事。）
+    """
+    (isolated_data_dir / "settings.toml").write_text(
+        'timezone = "Europe/London"\n\n[currency]\ndisplay = "GBP"\nrates = { CNY = 8.9 }\n',
+        encoding="utf-8",
+    )
+
+    monzo = upload(
+        client,
+        monzo_csv(
+            [
+                ["tx_dinner", "03/10/2026", "16:58:56", "Card payment", "Happy Lamb",
+                 "🍽", "Eating out", "-55.40", "GBP", "-55.40", "GBP", "",
+                 "21 Ladywell Walk", "", "Happy Lamb Hotpot Lady Birmingham    GBR",
+                 "", "-55.40", ""],
+            ]
+        ),
+        "monzo.csv",
+    )
+    assert client.post(f"/import/{token_of(monzo)}/confirm").status_code == 303
+    assert "取消合并" not in body(client.get("/transactions")), "这时候还没有还款"
+
+    wechat = upload(
+        client,
+        wechat_xlsx(
+            [
+                ["2026-10-04 01:45:47", "微信转账", "龚必勋 (Aslan)", "微信转账", "收入",
+                 247, "零钱", "已存入零钱", "WX1001", "M1001", "转账备注:微信转账"],
+            ]
+        ),
+        "微信支付账单.xlsx",
+    )
+    confirmed = client.post(f"/import/{token_of(wechat)}/confirm")
+    assert confirmed.status_code == 303
+
+    detail = body(client.get(confirmed.headers["Location"]))
+    assert "顺手合并" in detail, "这份账单落地的同时就该认出上一份里那次 AA"
+    # 55.40 − 27.75 = 27.65 才是真实消费，收入也不再虚增那 27.75
+    assert "展开 2 笔（净额 27.65 GBP）" in body(client.get("/transactions"))
+
+
 def test_scanning_finds_aa_among_existing_records(client):
     """功能上线前就记好的账，靠「重新扫描」补上。"""
     record(client, direction="out", amount="120.00")
