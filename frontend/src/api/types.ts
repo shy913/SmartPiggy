@@ -144,6 +144,10 @@ export type MemberRow = {
   description: string;
   effective_category: string;
   display_cents: number;
+  /** `display_cents` 是哪个币种的数：跟 `currency` 不一样，就说明这个数换算过一遍，
+   *  旁边该另给一份原币金额；一样则说明它本来就是原币（没配汇率的那些币种），
+   *  再标一份只是把同一个数印两遍。 */
+  display_currency: string;
   emoji: string;
 };
 

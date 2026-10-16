@@ -11,10 +11,11 @@ import {
   unhideTransaction,
 } from "../api/client";
 import type { MemberRow, TransactionRow } from "../api/types";
+import { MemberAmount } from "../components/MemberAmount";
 import { Button } from "../components/ui/button";
 import { ErrorText, Field, Hint, Input, Tag } from "../components/ui/bits";
 import { NumTD, NumTH, Table, TableScroll, TBody, TD, TH, THead, TR } from "../components/ui/table";
-import { formatAmount, minute } from "../lib/format";
+import { formatSigned, minute } from "../lib/format";
 import { cn } from "../lib/utils";
 
 /** 一次多要多少条。跟服务端 `params.LIST_STEP` 是同一个节奏。 */
@@ -439,10 +440,7 @@ function GroupRow({ row, members }: { row: TransactionRow; members: MemberRow[] 
               {members.map((member) => (
                 <li key={member.id} className="flex flex-wrap items-center gap-3 py-0.5">
                   <span className="text-muted">{minute(member.occurred_at)}</span>
-                  <span className="tabular text-muted">
-                    {formatSigned(member.direction === "out" ? -member.display_cents : member.display_cents)}
-                    {member.currency !== row.currency ? ` ${member.currency}` : ""}
-                  </span>
+                  <MemberAmount member={member} displayCurrency={row.currency} className="text-muted" />
                   <span>
                     {member.emoji ? (
                       <span title={member.effective_category}>{member.emoji} </span>
@@ -506,13 +504,3 @@ function BulkBar({
   );
 }
 
-/**
- * 列表上的金额：正数带个 `+`，好一眼分辨方向。
- *
- * 走 `formatAmount`，**不自己除 100**：先除再拼会引入二进制浮点的尾数，
- * 而且同一笔钱在列表和汇总页会写成两个样子。
- */
-function formatSigned(cents: number): string {
-  const text = formatAmount(cents);
-  return cents > 0 ? `+${text}` : text;
-}
