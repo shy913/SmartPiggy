@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import re
+from pathlib import Path
 
 import pytest
 
@@ -694,3 +695,28 @@ def test_the_nav_marks_which_section_you_are_in(client):
 def test_a_page_outside_the_nav_highlights_nothing(client):
     """404 页不属于任何一个区——不许硬凑一个亮的出来。"""
     assert "aria-current" not in body(client.get("/nope"))
+
+
+# --------------------------------------------------------------------------
+# 筛选栏
+# --------------------------------------------------------------------------
+
+
+def test_the_month_filter_keeps_its_size_while_empty(client):
+    """还没选月份时，月份框得照样占位置。
+
+    月份框初值是空的，空的原生月份控件没有内禀宽度；样式表里那句
+    `appearance: none`（Safari 的搜索框要它）又把原生那点宽度一并拿走了，
+    于是筛选栏一打开它缩成窄窄一条，选了月份才恢复。这里守两件事：模板里
+    初次打开确实是空的，样式表里给了宽度下限。CSS 没法在这台没有浏览器的
+    机器上量宽度，所以退一步比对规则本身——谁把下限删了，这里就挂。
+    """
+    month = re.search(r'<input type="month"[^>]*>', body(client.get("/transactions")))
+    assert month, "筛选栏里应该有月份输入"
+    assert 'value=""' in month.group(0), "初次打开月份框是空的——正是当初缩没的那个状态"
+
+    css = Path("src/bill/static/style.css").read_text(encoding="utf-8")
+    rules = re.findall(r'(?m)^input\[type="month"\][^{]*\{([^}]*)\}', css)
+    assert any(re.search(r"(min-)?width\s*:", rule) for rule in rules), (
+        "input[type=\"month\"] 要有一条宽度（下限）规则，空值时才不会缩成一条"
+    )

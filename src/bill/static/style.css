@@ -415,6 +415,11 @@ input[type="month"] {
   appearance: none;
   -webkit-appearance: none;
 }
+/* 上面那条 `appearance: none` 连原生的尺度也一起拿掉了：月份框空着的时候
+   浏览器不再按「YYYY-MM」预留宽度，只按内容撑——筛选栏初次打开（还没选月份）
+   就缩成窄窄一条。给个下限，装得下日期加日历图标。 */
+input[type="month"] { min-width: 9.5rem; }
+
 input[type="text"]:focus,
 input[type="password"]:focus,
 input[type="search"]:focus,
