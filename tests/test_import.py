@@ -7,7 +7,14 @@ import pytest
 from bill import config, ingest, repo
 from bill.models import Direction
 
-from .factories import ALIPAY_ROWS, alipay_csv, alipay_zip, bank_csv, wechat_xlsx
+from .factories import (
+    ALIPAY_ROWS,
+    alipay_csv,
+    alipay_zip,
+    bank_csv,
+    monzo_csv,
+    wechat_xlsx,
+)
 
 
 def rows_by_description(plan):
@@ -320,6 +327,102 @@ def test_a_narrow_bank_row_survives(conn):
     preview = ingest.stage(conn, "明细.csv", data)
     assert len(preview.plan.rows) == 1
     assert preview.plan.rows[0].transaction.amount_cents == 8800
+
+
+def test_monzo_joins_the_separate_date_and_time_columns(conn):
+    """Monzo 把日期和时间分成两列，必须拼起来再解析——只取日期会丢掉时分秒，
+    同一天的多笔就分不出先后了。"""
+    preview = ingest.stage(conn, "monzo.csv", monzo_csv())
+    assert preview.profile_name == "monzo"
+    assert preview.error == ""
+
+    by_party = {row.transaction.counterparty: row.transaction for row in preview.plan.rows}
+    assert by_party["Tesco"].occurred_at == "2026-09-28 12:26:21"
+    assert by_party["Happy Lamb"].occurred_at == "2026-10-03 16:58:56"
+
+
+def test_monzo_sign_decides_the_direction(conn):
+    preview = ingest.stage(conn, "monzo.csv", monzo_csv())
+    by_party = {row.transaction.counterparty: row.transaction for row in preview.plan.rows}
+
+    assert by_party["Tesco"].direction is Direction.OUT
+    assert by_party["Tesco"].amount_cents == 385
+    assert by_party["Happy Lamb"].direction is Direction.OUT
+    assert by_party["Happy Lamb"].amount_cents == 5540
+    # chaps 是转入，正数就是收入
+    assert by_party[""].direction is Direction.IN
+    assert by_party[""].amount_cents == 100000
+
+
+def test_monzo_zero_amount_card_checks_become_neutral(conn):
+    """「Active card check」这类 0.00 的行不是真交易，落成中性，不进收支合计。"""
+    preview = ingest.stage(conn, "monzo.csv", monzo_csv())
+    zero_rows = [row for row in preview.plan.rows if row.transaction.amount_cents == 0]
+    assert zero_rows, "样本里应该有 0.00 的行"
+    assert all(row.transaction.direction is Direction.NEUTRAL for row in zero_rows)
+
+    income, expense = preview.totals()
+    assert income == 100000, "0.00 的行不该影响收入"
+    assert expense == 5540 + 385
+
+
+def test_monzo_carries_the_currency_column(conn):
+    preview = ingest.stage(conn, "monzo.csv", monzo_csv())
+    assert {row.transaction.currency for row in preview.plan.rows} == {"GBP"}
+    # Monzo 自己的分类留着当账单分类
+    categories = {row.transaction.source_category for row in preview.plan.rows}
+    assert {"Groceries", "Eating out", "Transfers"} <= categories
+
+
+def test_monzo_dedups_on_the_transaction_id(conn):
+    preview = ingest.stage(conn, "monzo.csv", monzo_csv())
+    assert all(row.dedup_key.startswith("id:tx_") for row in preview.plan.rows)
+
+    ingest.confirm(conn, preview.token)
+    again = ingest.stage(conn, "monzo.csv", monzo_csv())
+    assert again.counts()["new"] == 0
+    assert again.counts()["duplicate"] == len(preview.plan.rows)
+
+
+def test_a_profile_can_map_a_time_column_generically(conn, isolated_data_dir):
+    """日期时间分列不是给 Monzo 开的特例，任何配置都能用。"""
+    directory = config.user_profiles_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "split-dt.toml").write_text(
+        """
+[profile]
+name = "split-dt"
+title = "日期时间分列"
+
+[match]
+required_headers = ["Day", "Clock", "Value"]
+
+[headers]
+match_any = ["Day", "Clock", "Value"]
+
+[columns]
+date = ["Day"]
+time = ["Clock"]
+amount = ["Value"]
+direction = ["Dir"]
+
+[parse]
+date_formats = ["%Y-%m-%d %H:%M:%S"]
+""",
+        encoding="utf-8",
+    )
+
+    data = "Day,Clock,Value,Dir\n2026-05-01,09:30:15,12.00,支出\n".encode()
+    preview = ingest.stage(conn, "随便.csv", data)
+    assert preview.profile_name == "split-dt"
+    assert preview.plan.rows[0].transaction.occurred_at == "2026-05-01 09:30:15"
+
+
+def test_currency_falls_back_to_the_profile_default(conn):
+    """账单没有币种列时，用配置里声明的默认币种。"""
+    data = "交易日期,交易金额\n20260110,-88.00\n".encode()
+    preview = ingest.stage(conn, "明细.csv", data)
+    assert preview.plan.rows[0].transaction.currency == "CNY"
 
 
 def _alipay_row(when, amount, order, desc="午饭", party="美团"):

@@ -110,6 +110,17 @@ MIGRATIONS: list[list[str]] = [
         """,
         "CREATE INDEX ix_issues_import ON import_issues(import_id, level)",
     ],
+    [
+        # v2：币种。支付宝、微信是人民币，Monzo 这类海外银行不是。
+        # 没有这一列的话，汇总页会把英镑和人民币直接加在一起，
+        # 得出一个没有意义的数字——这种错还不报，最要命。
+        # 老数据（本来就都是人民币）补 'CNY' 是对的。
+        """
+        ALTER TABLE transactions
+        ADD COLUMN currency TEXT NOT NULL DEFAULT 'CNY'
+        """,
+        "CREATE INDEX ix_transactions_currency ON transactions(currency)",
+    ],
 ]
 
 

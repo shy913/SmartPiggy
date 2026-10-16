@@ -41,7 +41,7 @@
                 {% else %}<span class="tag tag-neutral">中性</span>{% endif %}
               </td>
               <td class="num {{ 'money-in' if tx.direction == 'in' else 'money-out' if tx.direction == 'out' else 'muted' }}">
-                {{ tx.amount_cents | cny }}
+                {{ tx.amount_cents | amount }}
               </td>
               <td>{{ tx.counterparty }}</td>
               <td>{{ tx.description }}</td>

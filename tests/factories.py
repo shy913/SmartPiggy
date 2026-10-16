@@ -12,10 +12,12 @@ import zipfile
 
 __all__ = [
     "ALIPAY_HEADER",
+    "MONZO_HEADER",
     "WECHAT_HEADER",
     "alipay_csv",
     "alipay_zip",
     "bank_csv",
+    "monzo_csv",
     "wechat_xlsx",
 ]
 
@@ -60,6 +62,45 @@ _ALIPAY_FOOTER = [
     "已收入:12000.00元",
     "已支出:32.50元",
 ]
+
+
+MONZO_HEADER = [
+    "Transaction ID", "Date", "Time", "Type", "Name", "Emoji", "Category",
+    "Amount", "Currency", "Local amount", "Local currency", "Notes and #tags",
+    "Address", "Receipt", "Description", "Category split", "Money Out", "Money In",
+]
+
+MONZO_ROWS = [
+    # 零金额的「Active card check」——不是真交易，该落成中性而不是被算成支出。
+    ["tx_001", "24/09/2026", "07:47:46", "Card payment", "Apple", "🍎 ", "Entertainment",
+     "0.00", "GBP", "0.00", "GBP", "Active card check", "Hollyhill Estate", "",
+     "APPLE.COM/BILL         CORK          IRL", "", "0.00", ""],
+    # 正数是收入
+    ["tx_002", "28/09/2026", "08:41:12", "chaps", "", "", "Transfers",
+     "1000.00", "GBP", "1000.00", "GBP", "TRANSFER 1K", "", "", "TRANSFER 1K", "", "", "1000.00"],
+    # 负数是支出
+    ["tx_003", "28/09/2026", "12:26:21", "Card payment", "Tesco", "🍏 ", "Groceries",
+     "-3.85", "GBP", "-3.85", "GBP", "", "Park", "",
+     "TESCO STORES 6636      BIRMINGHAM    GBR", "", "-3.85", ""],
+    ["tx_004", "03/10/2026", "16:58:56", "Card payment", "Happy Lamb", "🍽", "Eating out",
+     "-55.40", "GBP", "-55.40", "GBP", "", "21 Ladywell Walk", "",
+     "Happy Lamb Hotpot Lady Birmingham    GBR", "", "-55.40", ""],
+]
+
+
+def monzo_csv(rows: list[list[str]] | None = None) -> bytes:
+    """Monzo 导出：日期时间分列、金额带正负号、有币种列。
+
+    表头在第一行，前面没有说明行——跟支付宝、微信的形态差别很大。
+    """
+    rows = MONZO_ROWS if rows is None else rows
+    lines = [",".join(MONZO_HEADER)]
+    lines.extend(
+        ",".join('"' + cell.replace('"', '""') + '"' if "," in cell else cell for cell in row)
+        for row in rows
+    )
+    # Monzo 导出带 BOM。
+    return ("\ufeff" + "\n".join(lines) + "\n").encode("utf-8")
 
 
 def alipay_csv(

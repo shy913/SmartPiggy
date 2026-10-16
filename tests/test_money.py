@@ -7,7 +7,7 @@ from decimal import Decimal
 import pytest
 
 from bill.dates import parse_datetime
-from bill.money import format_cny, has_sub_cent, parse_amount, to_cents
+from bill.money import format_amount, has_sub_cent, parse_amount, to_cents
 
 
 @pytest.mark.parametrize(
@@ -63,8 +63,8 @@ def test_has_sub_cent_flags_what_we_would_round_away():
     "cents, expected",
     [(0, "0.00"), (1200, "12.00"), (123456, "1,234.56"), (-850, "-8.50")],
 )
-def test_format_cny(cents, expected):
-    assert format_cny(cents) == expected
+def test_format_amount(cents, expected):
+    assert format_amount(cents) == expected
 
 
 @pytest.mark.parametrize(

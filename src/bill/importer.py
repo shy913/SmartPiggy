@@ -84,7 +84,7 @@ def parse(grid: Grid, profile: Profile, *, account_id: int | None = None) -> Imp
             )
             continue
 
-        date_text = _raw(row, indexes, "date")
+        date_text = _joined_datetime(row, indexes)
         occurred_at = parse_datetime(
             date_text, profile.date_formats, default_time=profile.default_time
         )
@@ -116,6 +116,8 @@ def parse(grid: Grid, profile: Profile, *, account_id: int | None = None) -> Imp
             source_txn_id=source_txn_id,
             merchant_txn_id=_raw(row, indexes, "merchant_txn_id"),
             source_category=_raw(row, indexes, "category"),
+            # 账单自带币种列就用它的，没有就用配置里的默认值。
+            currency=(_raw(row, indexes, "currency") or profile.default_currency).upper(),
             profile_name=profile.name,
             account_id=account_id,
             raw={name: value for name, value in zip(grid.header, row)},
@@ -163,6 +165,19 @@ def _raw(row: list[str], indexes: dict[str, int], field: str) -> str:
     if index is None or index >= len(row):
         return ""
     return row[index].strip()
+
+
+def _joined_datetime(row: list[str], indexes: dict[str, int]) -> str:
+    """把日期和（如果映射了）时间拼成 ``parse_datetime`` 认得的一个字符串。
+
+    有些账单把日期和时间分成两列（Monzo 就是 ``Date`` + ``Time``），
+    而解析日期只需要一个输入，那就先拼好再交出去。
+    """
+    date_text = _raw(row, indexes, "date")
+    time_text = _raw(row, indexes, "time")
+    if date_text and time_text:
+        return f"{date_text} {time_text}"
+    return date_text
 
 
 def _is_footer(row: list[str], profile: Profile) -> bool:

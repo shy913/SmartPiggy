@@ -32,10 +32,15 @@ __all__ = [
     "validate",
 ]
 
-# [columns] 里认得的字段。amount_in/amount_out 是给「借贷分两列」的银行用的，
-# 配了它就走分列模式，不看 amount 和 sign_convention。
+# [columns] 里认得的字段。
+#
+# time 是给「日期和时间分成两列」的账单用的（Monzo 就是），映射了它就会跟
+# date 拼起来再解析。
+# amount_in/amount_out 是给「借贷分两列」的银行用的，配了它就走分列模式，
+# 不看 amount 和 sign_convention。
 FIELDS = (
     "date",
+    "time",
     "amount",
     "amount_in",
     "amount_out",
@@ -49,6 +54,7 @@ FIELDS = (
     "source_txn_id",
     "merchant_txn_id",
     "category",
+    "currency",
 )
 
 SIGN_CONVENTIONS = ("direction_column", "negative_is_out", "negative_is_in")
@@ -67,6 +73,8 @@ class Profile:
     name: str
     title: str
     kind: str = "other"
+    # 账单里没有币种列时用这个。有了币种字段，汇总才能不把英镑和人民币加在一起。
+    default_currency: str = "CNY"
     format: str = "auto"
     encoding: tuple[str, ...] = ()
     delimiter: str | None = None
@@ -195,6 +203,7 @@ def load_profile(path: Path, origin: str = "builtin") -> Profile:
         name=name,
         title=str(meta.get("title") or name),
         kind=str(meta.get("kind") or "other"),
+        default_currency=str(meta.get("currency") or "CNY").upper(),
         format=str(meta.get("format") or "auto"),
         encoding=_as_tuple(meta.get("encoding")),
         delimiter=meta.get("delimiter") or None,

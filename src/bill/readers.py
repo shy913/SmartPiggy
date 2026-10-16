@@ -42,10 +42,10 @@ ACCEPT_ATTR = ",".join(sorted(SPREADSHEET_SUFFIXES | DELIMITED_SUFFIXES | ZIP_SU
 _ZIP_MAGIC = b"PK\x03\x04"
 _DELIMITERS = (",", "\t", ";", "|")
 
-# 按顺序试。注意这里「按顺序试」只是初始顺序，真正决定用哪个的是下面的打分：
-# cp1252 / latin-1 对任何字节流都不会抛异常，要是照「第一个不报错的就用」，
-# GBK 编码的支付宝账单会被它们悄悄解成一堆乱码，还不报任何错。
-_ENCODING_CANDIDATES = ("utf-8-sig", "utf-8", "gb18030", "big5", "cp1252", "latin-1")
+# UTF-8 之外的候选。注意不能照「第一个不报错的就用」来挑：cp1252 / latin-1 对
+# 任何字节流都不抛异常，会悄悄把 GBK 账单解成乱码还不报错。所以下面要打分。
+_LEGACY_ENCODINGS = ("gb18030", "big5", "cp1252", "latin-1")
+_UTF8_BOM = b"\xef\xbb\xbf"
 
 
 @dataclass
@@ -205,17 +205,31 @@ def _choose_delimiter(text: str, declared: str | None) -> str:
 def _decode(data: bytes, declared: list[str], probes: tuple[str, ...]) -> tuple[str, str]:
     """解码，返回 (文本, 实际用的编码)。
 
-    profile 声明的编码优先试，然后是通用水梯。剩下的候选**打分**而不是取第一个
-    不报错的：得分看「表头列名命中几个」和「中文字符占比」，两项都高才像一份
-    中文账单。这正是不让 cp1252 把 GBK 文件静默解成乱码的关键。
+    判定顺序是刻意排的：
+
+    1. **合法的 UTF-8 就按 UTF-8 处理。** 这是很强的信号——真正的 GBK 字节流
+       几乎不可能碰巧组成合法 UTF-8。这一步必须排在「按字符打分」**之前**：
+       Monzo 的账单里有 emoji，那些字节被 gb18030 误解时会解出一堆汉字，于是
+       在「中文占比」这一项上反而把正确的 UTF-8 比了下去，整份文件里所有
+       非 ASCII 文字（含商家名里的重音字母）都会变乱码。
+    2. 不是 UTF-8，再按 profile 声明的编码和通用候选**打分**，得分为
+       「表头列名命中几个」+「中文字符占比」。这正是拦住 cp1252 把 GBK
+       账单静默解成乱码的地方。同分时声明的编码优先。
     """
+    if data[:3] == _UTF8_BOM:
+        return data.decode("utf-8-sig"), "utf-8-sig"
+    try:
+        return data.decode("utf-8"), "utf-8"
+    except UnicodeDecodeError:
+        pass
+
     ordered: list[str] = []
-    for candidate in (*declared, *_ENCODING_CANDIDATES):
-        if candidate and candidate not in ordered:
+    for candidate in (*declared, *_LEGACY_ENCODINGS):
+        if candidate and candidate not in ("utf-8", "utf-8-sig") and candidate not in ordered:
             ordered.append(candidate)
 
-    best: tuple[tuple[int, int], str, str] | None = None
-    for candidate in ordered:
+    best: tuple[tuple[int, int, int], str, str] | None = None
+    for rank, candidate in enumerate(ordered):
         try:
             text = data.decode(candidate)
         except (UnicodeDecodeError, LookupError):
@@ -223,11 +237,10 @@ def _decode(data: bytes, declared: list[str], probes: tuple[str, ...]) -> tuple[
         if "�" in text:
             continue
         hits = sum(1 for probe in probes if probe in text)
-        key = (hits, _cjk_count(text))
+        # 先比表头命中，再比中文占比，最后才看声明的先后（rank 小的优先）。
+        key = (hits, _cjk_count(text), -rank)
         if best is None or key > best[0]:
             best = (key, text, candidate)
-        if probes and hits == len(probes):
-            break
 
     if best is None:
         raise UploadError("这个文件解不成文本，它真的是一份 CSV 吗？")

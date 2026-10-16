@@ -366,6 +366,17 @@ tr.row-neutral td { color: var(--muted); }
 .stats.compact { gap: 0.75rem; }
 .stat-value.small { font-size: 1rem; }
 
+/* 多币种时按币种分块，避免把英镑和人民币的合计并排放在一起看串 */
+.currency-block { margin-bottom: 1.25rem; }
+.currency-block h3.currency {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-family: ui-monospace, monospace;
+  font-weight: 600;
+}
+
 /* 筛选栏 */
 .filters {
   display: flex;

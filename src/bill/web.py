@@ -23,7 +23,7 @@ from flask import (
 
 from . import config, db, ingest, repo
 from .errors import BillError, ProfileError, UploadError
-from .money import format_cny
+from .money import format_amount
 from .profiles import load_all, validate
 from .readers import ACCEPT_ATTR
 
@@ -45,7 +45,7 @@ def create_app() -> Flask:
     app = Flask(__name__)
     # 在请求体被读进内存之前就挡掉超大文件。
     app.config["MAX_CONTENT_LENGTH"] = config.MAX_BYTES
-    app.jinja_env.filters["cny"] = format_cny
+    app.jinja_env.filters["amount"] = format_amount
 
     # ---------------------------------------------------------------- 连接
 
@@ -81,12 +81,15 @@ def create_app() -> Flask:
             or repo.latest_month(connection)
             or current_month()
         )
+        currencies = repo.currencies(connection)
         return render_template(
             "index.html",
             month=month,
             is_current_month=month == current_month(),
             month_totals=repo.month_totals(connection, month),
             overall=repo.overall_totals(connection),
+            currencies=currencies,
+            multiple_currencies=len(currencies) > 1,
             coverage=repo.coverage(connection),
             imports=repo.list_imports(connection, 5),
             uptime=uptime_seconds(),
@@ -249,11 +252,14 @@ def create_app() -> Flask:
     @app.get("/summary")
     def summary():
         connection = get_conn()
+        currencies = repo.currencies(connection)
         return render_template(
             "summary.html",
             months=repo.by_month(connection),
             categories=repo.by_source_category(connection),
             overall=repo.overall_totals(connection),
+            currencies=currencies,
+            multiple_currencies=len(currencies) > 1,
         )
 
     # ---------------------------------------------------------------- 配置

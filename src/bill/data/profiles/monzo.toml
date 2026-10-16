@@ -1,0 +1,62 @@
+# Monzo（英国）导出的 CSV。
+#
+# 导出文件名形如「Monzo Data Export - CSV (Thursday, 8 October 2026).csv」，
+# 表头就是第一行，前面没有说明行，末尾也没有汇总行——比支付宝、微信干净。
+#
+# 跟国内账单的三处主要差异，本文件都处理了：
+#   1. 日期和时间**分成两列**（Date + Time）-> 见 [columns].time
+#   2. 金额带正负号，没有「收/支」列          -> 见 [parse].sign_convention
+#   3. 币种是英镑                             -> 见 [profile].currency
+
+[profile]
+name     = "monzo"
+title    = "Monzo"
+kind     = "bank"
+format   = "csv"
+# 账单里本来就有 Currency 列，这行是兜底：万一某份导出缺了那列，按英镑算。
+currency = "GBP"
+
+[match]
+filename_globs    = ["*monzo*"]
+required_headers  = ["Transaction ID", "Date", "Amount"]
+preferred_headers = ["Type", "Name", "Category", "Currency", "Money Out", "Money In"]
+
+[headers]
+# Monzo 表头在第一行，不用往前扫太多。
+scan_first_rows = 10
+match_any       = ["Transaction ID", "Date", "Time", "Amount"]
+
+[columns]
+date                 = ["Date"]
+# 单独一列的时间。映射了它就会跟 date 拼起来再解析。
+time                 = ["Time"]
+amount               = ["Amount"]
+# 没有「收/支」列，方向靠金额的正负号判断，所以这里不配 direction。
+counterparty         = ["Name"]
+counterparty_account = ["Address"]
+description          = ["Description"]
+memo                 = ["Notes and #tags"]
+payment_method       = ["Type"]
+source_txn_id        = ["Transaction ID"]
+# Monzo 自己的分类（Groceries / Eating out / Transfers …），原样留着当账单分类。
+category             = ["Category"]
+currency             = ["Currency"]
+
+[parse]
+# 英国日期是**日/月/年**，不是月/日/年。别改成 %m/%d/%Y——
+# 「01/10/2026」会从 10 月 1 号变成 1 月 10 号，而且不报任何错。
+date_formats = ["%d/%m/%Y %H:%M:%S", "%d/%m/%Y"]
+
+# 金额带正负号：负数是支出（Monzo 的约定）。
+# 零金额（「Active card check」「Balance check」这类）会被归为中性，
+# 照常入库但不算进收支合计。
+sign_convention = "negative_is_out"
+
+[dedup]
+# Transaction ID 形如 tx_0000BAj9y8F29SUAQBjeSH，全局唯一，最适合做去重键。
+id_column      = ["Transaction ID"]
+id_null_values = ["", "/", "--", "0"]
+
+[cleanup]
+footer_patterns = ['^-{4,}']
+min_columns     = 2

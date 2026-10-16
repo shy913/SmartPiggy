@@ -39,7 +39,7 @@
         <tr>
           <th>日期</th><th>收支</th><th class="num">金额</th>
           <th>交易对方</th><th>说明</th><th>账单分类</th>
-          <th>账户</th><th class="num">计入合计</th>
+          <th>账户</th><th>币种</th><th class="num">计入合计</th>
         </tr>
       </thead>
       <tbody>
@@ -52,13 +52,14 @@
               {% else %}<span class="tag tag-neutral">中性</span>{% endif %}
             </td>
             <td class="num {{ 'money-in' if tx.direction == 'in' else 'money-out' if tx.direction == 'out' else 'muted' }}">
-              {{ tx.amount_cents | cny }}
+              {{ tx.amount_cents | amount }}
             </td>
             <td>{{ tx.counterparty }}</td>
             <td>{{ tx.description }}</td>
             <td class="muted">{{ tx.source_category }}</td>
             <td class="muted">{{ tx.account_name }}</td>
-            <td class="num muted">{{ tx.signed_cents | cny }}</td>
+            <td class="muted">{{ tx.currency }}</td>
+            <td class="num muted">{{ tx.signed_cents | amount }}</td>
           </tr>
         {% endfor %}
       </tbody>

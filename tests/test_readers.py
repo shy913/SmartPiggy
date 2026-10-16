@@ -24,6 +24,26 @@ def test_gbk_is_not_silently_mangled():
     assert "�" not in text
 
 
+def test_utf8_with_non_ascii_is_not_mistaken_for_gbk():
+    """回归：Monzo 账单是 UTF-8，里面有 emoji。
+
+    那些 emoji 的字节被 gb18030 误解时会解出一堆汉字，于是在「中文占比」上
+    反而把正确的 UTF-8 比了下去，整份文件里所有非 ASCII 文字都成了乱码。
+    所以「合法 UTF-8 就是 UTF-8」这条判断必须排在按字符打分之前。
+    """
+    data = (
+        "Transaction ID,Name,Amount\n"
+        "tx_1,Apple 🍎,0.00\n"
+        "tx_2,Café Sainsbury’s,-3.85\n"
+    ).encode("utf-8")
+
+    table = read_table("monzo.csv", data, probes=("Transaction ID", "Amount"))
+    assert table.encoding == "utf-8"
+    text = "\n".join(",".join(row) for row in table.rows)
+    assert "🍎" in text
+    assert "Café Sainsbury’s" in text, "非 ASCII 的商家名不能变成乱码"
+
+
 def test_utf8_with_bom_loses_the_bom():
     line = "2026-01-05,,,x,支出,1.00,,,,,,\n"
     data = ("\ufeff" + ALIPAY_HEADER + "\n" + line).encode("utf-8")

@@ -34,7 +34,8 @@ class Direction(StrEnum):
 class Transaction:
     occurred_at: str  # 'YYYY-MM-DD HH:MM:SS'
     direction: Direction
-    amount_cents: int  # 恒为正，单位「分」
+    amount_cents: int  # 恒为正，单位是币种的最小单位（人民币的「分」、英镑的便士）
+    currency: str = "CNY"
     counterparty: str = ""
     counterparty_account: str = ""
     description: str = ""

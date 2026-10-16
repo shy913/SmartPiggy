@@ -118,11 +118,11 @@
     </div>
     <div class="stats">
       <div class="stat">
-        <span class="stat-value money-in">{{ totals[0] | cny }}</span>
+        <span class="stat-value money-in">{{ totals[0] | amount }}</span>
         <span class="stat-label">新增收入</span>
       </div>
       <div class="stat">
-        <span class="stat-value money-out">{{ totals[1] | cny }}</span>
+        <span class="stat-value money-out">{{ totals[1] | amount }}</span>
         <span class="stat-label">新增支出</span>
       </div>
     </div>
@@ -164,6 +164,7 @@
             <th>交易对方</th>
             <th>说明</th>
             <th>账单分类</th>
+            <th>币种</th>
             <th>状态</th>
           </tr>
         </thead>
@@ -179,11 +180,12 @@
                 {% else %}<span class="tag tag-neutral">中性</span>{% endif %}
               </td>
               <td class="num {{ 'money-in' if tx.direction == 'in' else 'money-out' if tx.direction == 'out' else 'muted' }}">
-                {{ tx.amount_cents | cny }}
+                {{ tx.amount_cents | amount }}
               </td>
               <td>{{ tx.counterparty }}</td>
               <td>{{ tx.description }}</td>
               <td class="muted">{{ tx.source_category }}</td>
+              <td class="muted">{{ tx.currency }}</td>
               <td>
                 {% if row.duplicate %}<span class="tag tag-dup">重复</span>
                 {% elif row.possible_duplicate %}<span class="tag tag-warn">疑似重复</span>

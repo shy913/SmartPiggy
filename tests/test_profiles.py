@@ -22,7 +22,7 @@ def probes_of(all_profiles):
 
 def test_builtin_profiles_all_load_and_validate():
     loaded = profiles.load_all()
-    assert {profile.name for profile in loaded} == {"alipay", "wechat", "example-bank"}
+    assert {profile.name for profile in loaded} == {"alipay", "wechat", "example-bank", "monzo"}
     for profile in loaded:
         assert profiles.validate(profile) == [], profile.name
 
@@ -93,7 +93,7 @@ direction = ["收/支"]
     )
 
     loaded = {profile.name: profile for profile in profiles.load_all()}
-    assert set(loaded) == {"alipay", "wechat", "example-bank"}
+    assert set(loaded) == {"alipay", "wechat", "example-bank", "monzo"}
     assert loaded["alipay"].title == "我的支付宝"
     assert loaded["alipay"].origin == "user"
 
@@ -104,7 +104,7 @@ def test_a_broken_user_profile_is_skipped_not_fatal(isolated_data_dir):
     (directory / "坏掉的.toml").write_text("这不是 = = toml", encoding="utf-8")
 
     loaded = profiles.load_all()  # 不该抛异常
-    assert {profile.name for profile in loaded} == {"alipay", "wechat", "example-bank"}
+    assert {profile.name for profile in loaded} == {"alipay", "wechat", "example-bank", "monzo"}
 
 
 @pytest.mark.parametrize(

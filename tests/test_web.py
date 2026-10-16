@@ -6,7 +6,7 @@ import io
 
 import pytest
 
-from .factories import alipay_csv, alipay_zip, bank_csv, wechat_xlsx
+from .factories import alipay_csv, alipay_zip, bank_csv, monzo_csv, wechat_xlsx
 
 
 def body(response) -> str:
@@ -142,6 +142,31 @@ def test_wechat_and_bank_both_work_through_the_ui(client):
     assert "共 6 条" in body(client.get("/transactions"))
     accounts = body(client.get("/transactions"))
     assert "微信" in accounts and "示例银行（请改）" in accounts
+
+
+def test_currencies_are_shown_separately_never_added(client):
+    """人民币和英镑不能被加成一个「累计收入」——那是个不报错的错数。"""
+    for data, name in ((wechat_xlsx(), "微信支付账单.xlsx"), (monzo_csv(), "monzo.csv")):
+        token = token_of(upload(client, data, name))
+        assert client.post(f"/import/{token}/confirm").status_code == 303
+
+    home = body(client.get("/"))
+    assert "多种币种" in home
+    assert "CNY" in home and "GBP" in home
+
+    summary = body(client.get("/summary"))
+    assert "不加在一起" in summary
+    assert "币种" in summary, "表格里要有币种列"
+
+
+def test_single_currency_pages_look_the_same_as_before(client):
+    """只有一个币种时不该冒出多余的分组标题。"""
+    token = token_of(upload(client, alipay_csv(), "支付宝账单.csv"))
+    client.post(f"/import/{token}/confirm")
+
+    home = body(client.get("/"))
+    assert "多种币种" not in home
+    assert "2026-01 的账" in home
 
 
 def test_zip_upload_works(client):

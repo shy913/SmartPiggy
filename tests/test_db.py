@@ -160,10 +160,46 @@ def test_month_totals_exclude_neutral_rows(conn):
         repo.insert_rows(conn, account_id=account_id, import_id=import_id, rows=rows)
 
     totals = repo.month_totals(conn, "2026-01")
-    assert totals["income"] == 1200000
-    assert totals["expense"] == 3250
-    assert totals["neutral_count"] == 1
-    assert totals["neutral_amount"] == 10000
+    assert len(totals) == 1, "只有一个币种时应该只有一组"
+    row = totals[0]
+    assert row["currency"] == "CNY"
+    assert row["income"] == 1200000
+    assert row["expense"] == 3250
+    assert row["neutral_count"] == 1
+    assert row["neutral_amount"] == 10000
+
+
+def test_currencies_are_never_summed_together(conn):
+    """回归：汇总页曾经把英镑和人民币直接相加。
+
+    把两种币种凑成一个「累计收入」不会报错，只会给出一个看着像真的的错数——
+    比报错更危险，所以聚合一律按币种分组。
+    """
+    account_id = _account(conn)
+    import_id = _import(conn, account_id)
+    rows = [
+        make_row(dedup_key="a", direction=Direction.IN, amount_cents=100000, currency="CNY"),
+        make_row(dedup_key="b", direction=Direction.IN, amount_cents=50000, currency="GBP"),
+        make_row(dedup_key="c", direction=Direction.OUT, amount_cents=2000, currency="GBP"),
+    ]
+    with conn:
+        repo.insert_rows(conn, account_id=account_id, import_id=import_id, rows=rows)
+
+    assert repo.currencies(conn) == ["CNY", "GBP"]
+
+    totals = {row["currency"]: row for row in repo.overall_totals(conn)}
+    assert totals["CNY"]["income"] == 100000
+    assert totals["CNY"]["expense"] == 0
+    assert totals["GBP"]["income"] == 50000
+    assert totals["GBP"]["expense"] == 2000
+    # 关键：没有任何一行是「合计」
+    assert len(totals) == 2
+
+    by_month_currencies = {row["currency"] for row in repo.by_month(conn)}
+    assert by_month_currencies == {"CNY", "GBP"}
+
+    by_category_currencies = {row["currency"] for row in repo.by_source_category(conn)}
+    assert by_category_currencies == {"CNY", "GBP"}
 
 
 def test_amount_cannot_be_stored_negative(conn):

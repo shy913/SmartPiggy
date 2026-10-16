@@ -19,6 +19,7 @@ __all__ = [
     "by_source_category",
     "coverage",
     "create_import",
+    "currencies",
     "delete_import",
     "ensure_account",
     "existing_dedup",
@@ -41,12 +42,12 @@ __all__ = [
 _INSERT_TX = """
 INSERT INTO transactions (
   account_id, import_id, occurred_at, occurred_date, direction, amount_cents,
-  counterparty, counterparty_account, description, memo, payment_method,
+  currency, counterparty, counterparty_account, description, memo, payment_method,
   status, source_txn_id, merchant_txn_id, source_category, profile_name,
   dedup_key, content_hash, raw_json, created_at
 ) VALUES (
   :account_id, :import_id, :occurred_at, :occurred_date, :direction, :amount_cents,
-  :counterparty, :counterparty_account, :description, :memo, :payment_method,
+  :currency, :counterparty, :counterparty_account, :description, :memo, :payment_method,
   :status, :source_txn_id, :merchant_txn_id, :source_category, :profile_name,
   :dedup_key, :content_hash, :raw_json, :created_at
 )
@@ -293,6 +294,7 @@ def insert_rows(
                 "occurred_date": transaction.occurred_date,
                 "direction": str(transaction.direction),
                 "amount_cents": transaction.amount_cents,
+                "currency": transaction.currency or "CNY",
                 "counterparty": transaction.counterparty,
                 "counterparty_account": transaction.counterparty_account,
                 "description": transaction.description,
@@ -352,50 +354,75 @@ COUNT(*) AS total
 """
 
 
-def month_totals(connection: sqlite3.Connection, month: str) -> sqlite3.Row:
-    """某个月（'YYYY-MM'）的收入、支出、中性金额。"""
+def month_totals(connection: sqlite3.Connection, month: str) -> list[sqlite3.Row]:
+    """某个月（'YYYY-MM'）的收入、支出、中性金额，**按币种分开**。
+
+    刻意返回一组而不是一个数：跨币种相加是没有意义的，把英镑和人民币凑成
+    一个「本月收入」只会得到一个看着像真的的错数。只有一个币种时，
+    调用方拿到的就是一条，界面看起来跟单币种没区别。
+    """
     return connection.execute(
-        f"SELECT {_TOTALS} FROM transactions WHERE occurred_date LIKE ? || '%'",
+        f"""
+        SELECT currency, {_TOTALS}
+        FROM transactions
+        WHERE occurred_date LIKE ? || '%'
+        GROUP BY currency
+        ORDER BY currency
+        """,
         (month,),
-    ).fetchone()
+    ).fetchall()
 
 
-def overall_totals(connection: sqlite3.Connection) -> sqlite3.Row:
-    return connection.execute(f"SELECT {_TOTALS} FROM transactions").fetchone()
+def overall_totals(connection: sqlite3.Connection) -> list[sqlite3.Row]:
+    return connection.execute(
+        f"""
+        SELECT currency, {_TOTALS}
+        FROM transactions
+        GROUP BY currency
+        ORDER BY currency
+        """
+    ).fetchall()
 
 
-def by_month(connection: sqlite3.Connection, limit: int = 24) -> list[sqlite3.Row]:
+def currencies(connection: sqlite3.Connection) -> list[str]:
+    rows = connection.execute(
+        "SELECT DISTINCT currency FROM transactions ORDER BY currency"
+    ).fetchall()
+    return [row["currency"] for row in rows]
+
+
+def by_month(connection: sqlite3.Connection, limit: int = 60) -> list[sqlite3.Row]:
     return connection.execute(
         """
-        SELECT substr(occurred_date, 1, 7) AS month,
+        SELECT substr(occurred_date, 1, 7) AS month, currency,
                COALESCE(SUM(CASE WHEN direction = 'in'  THEN amount_cents END), 0) AS income,
                COALESCE(SUM(CASE WHEN direction = 'out' THEN amount_cents END), 0) AS expense,
                COALESCE(SUM(CASE WHEN direction = 'neutral' THEN 1 ELSE 0 END), 0) AS neutral_count,
                COUNT(*) AS total
         FROM transactions
-        GROUP BY month
-        ORDER BY month DESC
+        GROUP BY month, currency
+        ORDER BY month DESC, currency
         LIMIT ?
         """,
         (limit,),
     ).fetchall()
 
 
-def by_source_category(connection: sqlite3.Connection, limit: int = 40) -> list[sqlite3.Row]:
-    """按账单自带的分类汇总。
+def by_source_category(connection: sqlite3.Connection, limit: int = 60) -> list[sqlite3.Row]:
+    """按账单自带的分类汇总，同样按币种分开。
 
-    这笔钱花在哪儿，账单里其实已经写了（支付宝的「交易分类」），所以先照用，
-    不做自动归类。空值归到「未分类」。
+    这笔钱花在哪儿，账单里其实已经写了（支付宝的「交易分类」、Monzo 的
+    「Category」），所以先照用，不做自动归类。空值归到「未分类」。
     """
     return connection.execute(
         """
-        SELECT COALESCE(NULLIF(source_category, ''), '未分类') AS category,
+        SELECT COALESCE(NULLIF(source_category, ''), '未分类') AS category, currency,
                COALESCE(SUM(CASE WHEN direction = 'out' THEN amount_cents END), 0) AS expense,
                COALESCE(SUM(CASE WHEN direction = 'in'  THEN amount_cents END), 0) AS income,
                COUNT(*) AS total
         FROM transactions
-        GROUP BY category
-        ORDER BY expense DESC, income DESC
+        GROUP BY category, currency
+        ORDER BY currency, expense DESC, income DESC
         LIMIT ?
         """,
         (limit,),

@@ -23,22 +23,10 @@
         账本覆盖 {{ coverage.first_day }} 至 {{ coverage.last_day }}，共
         {{ coverage.total }} 条记录。
       {% endif %}
-      中性收支（转账、还款、退款）{{ month_totals.neutral_count }} 笔，不计入下面的合计。
+      {% if multiple_currencies %}
+        账本里有多种币种，下面按币种分开列——不同币种不会相加。
+      {% endif %}
     </p>
-    <div class="stats">
-      <div class="stat">
-        <span class="stat-value money-in">{{ month_totals.income | cny }}</span>
-        <span class="stat-label">收入</span>
-      </div>
-      <div class="stat">
-        <span class="stat-value money-out">{{ month_totals.expense | cny }}</span>
-        <span class="stat-label">支出</span>
-      </div>
-      <div class="stat">
-        <span class="stat-value">{{ (month_totals.income - month_totals.expense) | cny }}</span>
-        <span class="stat-label">结余</span>
-      </div>
-    </div>
     <p>
       <a class="button" href="{{ url_for('import_upload') }}">导入账单</a>
       <a class="button ghost" href="{{ url_for('transactions', month=month) }}">看这个月的明细</a>
@@ -47,25 +35,61 @@
   </section>
 
   <section>
+    <h2>本月</h2>
+    {% if month_totals %}
+      {% for group in month_totals %}
+        <div class="currency-block">
+          {% if multiple_currencies %}<h3 class="currency">{{ group.currency }}</h3>{% endif %}
+          <div class="stats">
+            <div class="stat">
+              <span class="stat-value money-in">{{ group.income | amount }}</span>
+              <span class="stat-label">收入</span>
+            </div>
+            <div class="stat">
+              <span class="stat-value money-out">{{ group.expense | amount }}</span>
+              <span class="stat-label">支出</span>
+            </div>
+            <div class="stat">
+              <span class="stat-value">{{ (group.income - group.expense) | amount }}</span>
+              <span class="stat-label">结余</span>
+            </div>
+            <div class="stat">
+              <span class="stat-value muted">{{ group.neutral_count }}</span>
+              <span class="stat-label">中性笔数</span>
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+    {% else %}
+      <p class="empty">这个月还没有记录。</p>
+    {% endif %}
+  </section>
+
+  <section>
     <h2>账本总计</h2>
-    <div class="stats">
-      <div class="stat">
-        <span class="stat-value money-in">{{ overall.income | cny }}</span>
-        <span class="stat-label">累计收入</span>
+    {% for group in overall %}
+      <div class="currency-block">
+        {% if multiple_currencies %}<h3 class="currency">{{ group.currency }}</h3>{% endif %}
+        <div class="stats">
+          <div class="stat">
+            <span class="stat-value money-in">{{ group.income | amount }}</span>
+            <span class="stat-label">累计收入</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value money-out">{{ group.expense | amount }}</span>
+            <span class="stat-label">累计支出</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value">{{ (group.income - group.expense) | amount }}</span>
+            <span class="stat-label">累计结余</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value muted">{{ group.total }}</span>
+            <span class="stat-label">记录条数</span>
+          </div>
+        </div>
       </div>
-      <div class="stat">
-        <span class="stat-value money-out">{{ overall.expense | cny }}</span>
-        <span class="stat-label">累计支出</span>
-      </div>
-      <div class="stat">
-        <span class="stat-value">{{ (overall.income - overall.expense) | cny }}</span>
-        <span class="stat-label">累计结余</span>
-      </div>
-      <div class="stat">
-        <span class="stat-value">{{ overall.total }}</span>
-        <span class="stat-label">记录条数</span>
-      </div>
-    </div>
+    {% endfor %}
   </section>
 
   {% if imports %}

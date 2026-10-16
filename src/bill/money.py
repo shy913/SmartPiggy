@@ -10,7 +10,7 @@ import math
 import re
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
-__all__ = ["parse_amount", "to_cents", "has_sub_cent", "format_cny"]
+__all__ = ["parse_amount", "to_cents", "has_sub_cent", "format_amount"]
 
 # 货币符号、千分位、单位，出现就抹掉。
 _NOISE = ("¥", "￥", "CNY", "RMB", "元", " ", "　", " ", "\t")
@@ -92,8 +92,12 @@ def has_sub_cent(value: Decimal) -> bool:
     return value != value.quantize(_CENTS, rounding=ROUND_HALF_UP)
 
 
-def format_cny(cents: int) -> str:
-    """整数分 -> 显示用字符串。"""
+def format_amount(cents: int) -> str:
+    """币种最小单位 -> 显示用字符串。
+
+    与币种无关：人民币的「分」和英镑的便士都是 1/100，所以除了币种符号之外
+    显示方式一样。币种由界面另外标出来——它是账目的属性，不该藏进数字里。
+    """
     sign = "-" if cents < 0 else ""
     whole, fraction = divmod(abs(cents), 100)
     return f"{sign}{whole:,}.{fraction:02d}"
