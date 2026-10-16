@@ -4,8 +4,10 @@ import { Fragment, type ReactNode } from "react";
 
 import { getSummary } from "../api/client";
 import type { LedgerRow, Summary, TotalsRow } from "../api/types";
+import { CategoryChart, MonthlyChart } from "../components/charts";
 import { RangePicker } from "../components/RangePicker";
 import { Card, Section } from "../components/ui/card";
+import { useMeta } from "../App";
 import { Empty, ErrorText, Hint, Tag } from "../components/ui/bits";
 import { NumTD, NumTH, Table, TableScroll, TBody, TD, TH, THead, TR } from "../components/ui/table";
 import { day, formatAmount } from "../lib/format";
@@ -146,9 +148,52 @@ function CurrencyBlock({
   );
 }
 
-/** 图表在下一批里接上（现在是服务端画 SVG，要挪到客户端）。 */
-function Charts(_: { summary: Summary }) {
-  return null;
+/**
+ * 图按币种分开画。
+ *
+ * 把英镑和人民币画进同一组柱子，等于换个方式把它们相加——那正是这一页处处
+ * 在避免的错。月份表是倒序的（最近的在上面），画时间轴要正过来。
+ */
+function Charts({ summary }: { summary: Summary }) {
+  const meta = useMeta();
+  const theme = meta.data?.theme ?? "dark";
+
+  const groups = summary.currencies
+    .map((currency) => ({
+      currency,
+      months: summary.months
+        .filter((row) => row.display_currency === currency)
+        .slice()
+        .sort((left, right) => left.month.localeCompare(right.month)),
+      categories: summary.categories.filter((row) => row.display_currency === currency),
+    }))
+    .filter((group) => group.months.length || group.categories.length);
+
+  if (!groups.length) return null;
+
+  return (
+    <Section title="图表">
+      {groups.map((group) => (
+        <div key={group.currency} className="mb-6">
+          {summary.multi_currency ? (
+            <h3 className="mb-2 text-sm font-medium text-muted">{group.currency}</h3>
+          ) : null}
+          <Card className="mb-4">
+            <h4 className="mb-2 text-sm font-medium">
+              每月收支 <span className="text-muted">{group.currency}</span>
+            </h4>
+            <MonthlyChart rows={group.months} currency={group.currency} theme={theme} />
+          </Card>
+          <Card>
+            <h4 className="mb-2 text-sm font-medium">
+              支出构成 <span className="text-muted">按分类 · {group.currency}</span>
+            </h4>
+            <CategoryChart rows={group.categories} theme={theme} />
+          </Card>
+        </div>
+      ))}
+    </Section>
+  );
 }
 
 function Months({ summary }: { summary: Summary }) {

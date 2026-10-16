@@ -991,6 +991,10 @@ def create_app() -> Flask:
         return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
     @app.get(SHELL_PREFIX)
+    # `/app/` 要单独点一句：`<path:path>` 不匹配空串，少了这条，带尾斜杠的地址
+    # 会落到 404 上去——而那条 404 是**旧界面**的模板，于是页面上会看到旧导航、
+    # 旧提示条，看着像「新界面没生效」，实际只是这条地址没接住。
+    @app.get(f"{SHELL_PREFIX}/")
     @app.get(f"{SHELL_PREFIX}/<path:path>")
     def app_shell(path: str = ""):
         """SPA 的入口。
