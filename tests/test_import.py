@@ -180,6 +180,23 @@ description = ["摘要"]
     assert by_desc["报销"].transaction.amount_cents == 120000
 
 
+def test_previewing_writes_nothing_at_all(conn):
+    """「确认之前不会写进账本」必须字面为真。
+
+    预览是这套设计的安全阀——如果连看一眼预览都会往库里落东西，
+    那用户就没法「先看看格式认对没有」再决定要不要导。
+    """
+    ingest.stage(conn, "支付宝账单.csv", alipay_csv())
+    assert conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM imports").fetchone()[0] == 0
+
+    # 确认之后才建账户
+    preview = ingest.stage(conn, "支付宝账单.csv", alipay_csv())
+    ingest.confirm(conn, preview.token)
+    assert conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 1
+
+
 def test_an_unrecognisable_file_surfaces_an_error_instead_of_garbage(conn):
     preview = ingest.stage(conn, "随便.csv", "甲,乙,丙\n1,2,3\n".encode("utf-8"))
     assert preview.error, "认不出来就要明说"

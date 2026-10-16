@@ -23,6 +23,7 @@ __all__ = [
     "ensure_account",
     "existing_dedup",
     "finalize_import",
+    "find_account",
     "fingerprints",
     "get_import",
     "imports_overlapping",
@@ -70,6 +71,14 @@ def ensure_account(connection: sqlite3.Connection, name: str, kind: str = "other
         (clean, kind, db.utcnow()),
     )
     return int(cursor.lastrowid)
+
+
+def find_account(connection: sqlite3.Connection, name: str) -> int | None:
+    """按名字找账户，**不创建**。预览阶段用这个——那时候还不该写库。"""
+    row = connection.execute(
+        "SELECT id FROM accounts WHERE name = ?", ((name or "").strip(),)
+    ).fetchone()
+    return int(row["id"]) if row is not None else None
 
 
 def accounts(connection: sqlite3.Connection) -> list[sqlite3.Row]:

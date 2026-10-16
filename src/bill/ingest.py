@@ -221,10 +221,10 @@ def _apply_inner(
         return
 
     grid = build_grid(preview.table, index)
-    # 建账户这一步必须自己提交：连接是跟着请求走的，出了这个请求就关，
-    # 不提交的话账户行会被回滚掉，等到确认入库时外键就找不着它了。
-    with connection:
-        account_id = repo.ensure_account(connection, profile.title, profile.kind)
+    # 预览阶段只看不改：这里只**查**账户，不建。账户等 confirm 真的导入时再建，
+    # 否则「确认之前不写库」就是句空话——光看一眼预览页也会在库里留下一条账户。
+    # 账户还不存在时下面按「库里没有历史记录」处理，那正是事实。
+    account_id = repo.find_account(connection, profile.title)
 
     try:
         plan = parse(grid, profile, account_id=account_id)
@@ -233,13 +233,15 @@ def _apply_inner(
         return
 
     # 结合库里已有的数据，给每一行定最终去重键并标出重复。
+    # 账户还没建过的话就是「库里一条都没有」，空字典正是这个意思。
     pairs = [(row.dedup_key, row.content_hash) for row in plan.rows]
-    existing = repo.existing_dedup(connection, account_id)
+    existing = repo.existing_dedup(connection, account_id) if account_id else {}
     for row, (key, duplicate) in zip(plan.rows, dedup.assign(pairs, existing=existing)):
         row.dedup_key = key
         row.duplicate = duplicate
 
-    _flag_possible_duplicates(connection, account_id, plan)
+    if account_id is not None:
+        _flag_possible_duplicates(connection, account_id, plan)
 
     preview.grid = grid
     preview.plan = plan
