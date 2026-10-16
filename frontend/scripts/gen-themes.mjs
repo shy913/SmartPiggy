@@ -57,9 +57,10 @@ export type ThemeName = ${Object.keys(data.themes).map((name) => JSON.stringify(
 
 export const DEFAULT_THEME: ThemeName = ${JSON.stringify(data.default)};
 
+// 标签不在这里：它是给人看的名字，由服务端（themes.py）出，设置页从
+// /api/meta 取——两边各写一遍「深色」这种话没有意义。
 export type Theme = {
 ${VARIABLES.map(([key]) => `  ${key}: string;`).join("\n")}
-  label: string;
   mode: string;
 };
 

@@ -69,11 +69,11 @@ export function ImportDetailPage() {
           <Stat label="导入时间" value={record.uploaded_at?.slice(0, 16) ?? ""} />
           <Stat label="用的配置" value={record.profile_name} />
           <Stat label="文件里的行数" value={String(record.row_count)} />
-          <Stat label="新增" value={String(record.inserted)} />
-          <Stat label="跳过（已存在）" value={String(record.duplicates)} />
-          <Stat label="自动合并" value={String(record.merged)} />
-          <Stat label="警告" value={String(record.warnings)} />
-          <Stat label="错误" value={String(record.errors)} />
+          <Stat label="新增" value={String(record.inserted_count)} />
+          <Stat label="跳过（已存在）" value={String(record.duplicate_count)} />
+          <Stat label="自动合并" value={String(record.merged_count)} />
+          <Stat label="警告" value={String(record.warning_count)} />
+          <Stat label="错误" value={String(record.error_count)} />
         </div>
         <div className="mt-4">
           <Button

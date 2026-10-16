@@ -26,10 +26,12 @@ export function ImportsTable({ imports }: { imports: ImportRow[] }) {
                 </Link>
               </TD>
               <TD className="whitespace-nowrap text-muted">{row.uploaded_at?.slice(0, 16)}</TD>
-              <NumTD>{row.inserted}</NumTD>
-              <NumTD className="text-muted">{row.duplicates}</NumTD>
-              <NumTD className={row.errors ? "text-danger" : "text-muted"}>{row.warnings}</NumTD>
-              <NumTD className="text-muted">{row.merged}</NumTD>
+              <NumTD>{row.inserted_count}</NumTD>
+              <NumTD className="text-muted">{row.duplicate_count}</NumTD>
+              <NumTD className={row.error_count ? "text-danger" : "text-muted"}>
+                {row.warning_count}
+              </NumTD>
+              <NumTD className="text-muted">{row.merged_count}</NumTD>
             </TR>
           ))}
         </TBody>

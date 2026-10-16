@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from bill import auth
+from bill import auth, config
+from bill.errors import BillError
 
 from .api import payload
 
@@ -105,16 +106,49 @@ def test_a_form_post_cannot_reach_the_api(client, password):
     assert payload(response)["error"]["code"] == "unsupported_media_type"
 
 
-def test_the_old_pages_still_go_to_the_login_page(client, password):
-    """旧界面那一半没变：浏览器直接访问的页面还是 303 到登录页。
-
-    接口要 401、页面要跳转——两者的读者不一样，行为就该不一样。
-    """
-    response = client.get("/transactions")
-    assert response.status_code == 303
-    assert "/login" in response.headers["Location"]
-
-
 def test_healthz_stays_open(client, password):
     """部署之后唯一的存活探针，不能要登录。"""
     assert client.get("/healthz").status_code == 200
+
+
+def test_the_shell_and_its_assets_are_open(client, password):
+    """外壳里没有账目数据，数据全在 /api/*。要登录的是后者。
+
+    外壳也纳入闸门的话，没登录的人打开首页会被拽去登录页——而那个登录视图
+    本身就长在 SPA 里：先有鸡还是先有蛋。
+    """
+    assert client.get("/").status_code == 200
+    assert client.get("/transactions/12").status_code == 200
+    assert client.get("/healthz").status_code == 200
+
+
+def test_a_forged_cookie_gets_nobody_in(client, password):
+    """会话 cookie 是签名过的，不是拿密码当凭据；乱写一个进不去。"""
+    client.set_cookie("session", "logged_in=true")  # 没签名，Flask 直接当没这回事
+    assert client.get("/api/meta").status_code == 401
+
+
+def test_an_absurdly_long_password_never_reaches_scrypt(client, password):
+    """登录是**没登录的人**能直接打的接口：不能让他把几兆的「密码」搬进 scrypt。
+
+    MAX_LENGTH 管的是写，读这一侧得自己挡。
+    """
+    assert session_post(client, "x" * 200_000).status_code == 401
+
+
+def test_changing_the_password_applies_without_a_restart(client, password):
+    """跟设置一样每次请求现读：改完密码不用重启服务。"""
+    auth.write("another-good-one")
+    assert session_post(client, PASSWORD).status_code == 401
+    assert session_post(client, "another-good-one").status_code == 200
+
+
+def test_a_broken_auth_file_locks_the_api_out(client):
+    """auth.toml 读不出来时不能让接口照常放行——那等于一份坏文件就把闸门拆了。"""
+    auth.write(PASSWORD)
+    config.user_auth_path().write_text("这不是 TOML", encoding="utf-8")
+    with pytest.raises(BillError):
+        client.get("/api/meta")
+    # 而监控那一针和外壳更要拿得到：登录坏掉的时候，正是要能看出「它还在跑」。
+    assert client.get("/healthz").status_code == 200
+    assert client.get("/").status_code == 200

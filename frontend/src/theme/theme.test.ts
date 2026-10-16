@@ -86,8 +86,9 @@ describe("配色", () => {
   it("四套主题都在，而且各自带一个模式", () => {
     expect(THEME_NAMES).toEqual(["dark", "light", "dark-teal", "light-teal"]);
     for (const name of THEME_NAMES) {
+      // 标签不在这里：它是给人看的名字，由服务端出（见 tests/test_theme_sources.py）。
       expect(["dark", "light"]).toContain(THEMES[name].mode);
-      expect(THEMES[name].label.length).toBeGreaterThan(0);
+      expect(THEMES[name].bg).toMatch(/^#[0-9a-f]{6}$/i);
     }
   });
 });

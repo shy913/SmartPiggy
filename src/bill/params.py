@@ -141,7 +141,8 @@ def summary_range(conf, source) -> dict[str, str | int]:
     # 三个取值**一律填成生效值**，哪怕当前模式用不上：界面上的模式是链接，
     # 每条链都得带着另外两个值，否则从「按月」切到「按年」会发现自己手里没有
     # 年份，只能落回默认——用户看到的就是「刚切过去又被弹回来了」。
-    month = clean_month(source.get("month")) or f"{today.year:04d}-{today.month:02d}"
+    chosen = clean_month(source.get("month"))
+    month = chosen or f"{today.year:04d}-{today.month:02d}"
     year = clean_year(source.get("year")) or f"{today.year:04d}"
     days = clean_days(source.get("days"))
 
@@ -161,7 +162,10 @@ def summary_range(conf, source) -> dict[str, str | int]:
         return {**bounds, "mode": mode, "month": month, "year": year,
                 "days": days, "label": f"最近 {days} 天"}
 
-    bounds = dates.month_range(month)
+    # 挑了一个月份就是那一整月；**没挑**（打开就是这一页）则落回「当月 1 号到
+    # 今天」——跟交易记录页的 default_range 同一个落点。两处不一致的话，
+    # 同一天在汇总和列表上会得到两个不一样的「本月」，而两边都不报错。
+    bounds = dates.month_range(month) if chosen else default_range(conf)
     return {**bounds, "mode": mode, "month": month, "year": year,
             "days": days, "label": month}
 

@@ -95,9 +95,6 @@ class Settings:
     def tz(self):
         return dates.zone(self.timezone)
 
-    def palette(self) -> themes.Theme:
-        return themes.get(self.theme)
-
     def tolerance_cents(self) -> int:
         """容差换成整数分，跟账本里其他金额一个单位。"""
         return int(round(self.merge_tolerance * 100))

@@ -7,15 +7,13 @@ test_currency.py 一样，自己写 settings.toml 覆盖 conftest 那份（那�
 
 from __future__ import annotations
 
-import re
-
 import pytest
 
 from bill import repo, settings
 from bill.errors import BillError
 from bill.models import Direction, ImportPlan, ParsedRow, Transaction
 
-from .pages import whole_book
+from .api import payload
 
 DISPLAY_GBP = '[currency]\ndisplay = "GBP"\nrates = { CNY = 8.9 }\n'
 
@@ -103,12 +101,7 @@ def test_both_sides_off_leaves_everything_alone(conn, isolated_data_dir, client)
     assert row["large_count"] == 0
     assert row["expense"] == 1000000
     assert row["income"] == 10000000
-    assert repo.large_transactions(conn) == []
-
-    for path in ("/", "/transactions", "/settings"):
-        assert client.get(path).status_code == 200, path
-    # 两侧都关着就没有大额这回事，页面上连那一块都不该出现
-    assert "不计入合计的大额" not in client.get("/").get_data(as_text=True)
+    assert repo.large_transactions(conn) == [], "两侧都关着就没有大额这回事"
 
 
 # ---------------------------------------------------------------- 默认值
@@ -236,13 +229,13 @@ def test_a_month_with_nothing_but_large_rows_still_shows_up(conn, isolated_data_
     assert months[0]["total"] == 1
 
 
-def test_transactions_page_shows_large_amount_and_tags_it(
+def test_the_list_shows_the_large_amount_and_flags_it(
     conn, isolated_data_dir, client
 ):
-    """列表页上大额那笔照原样显示金额，只挂一个「大额」标记。
+    """列表上大额那笔照原样显示金额，只挂一个「大额」标记。
 
     早先另有一列「计入合计」，大额在那列写 0.00；列删了，金额列一直是原样，
-    所以不进的合计这件事全靠这个标记交代——标记要是丢了，那笔钱在页面上
+    所以「不进合计」这件事全靠这个标记交代——标记要是丢了，那笔钱在列表上
     看起来就跟算进合计的没什么两样，而且什么都不说。
     """
     write_settings(isolated_data_dir, DISPLAY_GBP + THRESHOLDS)
@@ -252,15 +245,18 @@ def test_transactions_page_shows_large_amount_and_tags_it(
     assert rows[500000]["is_large"] == 1
     assert rows[10000]["is_large"] == 0
 
-    body = client.get(whole_book()).get_data(as_text=True)
-    assert "tag-large" in body
-    assert "-5,000.00" in body, "金额照原样显示，只有旁边的标记说明它不进合计"
+    listed = payload(client.get("/api/transactions?start=&end="))["rows"]
+    flagged = {row["amount_cents"]: row["is_large"] for row in listed}
+    assert flagged == {500000: 1, 10000: 0}
+    # 金额是**换算后**的那个数：阈值比的是显示币种，列表上显示的也是它。
+    # 这两笔本来就是 GBP（就是显示币种），所以乘 1。
+    assert {row["display_cents"] for row in listed} == {500_000, 10_000}
 
 
-def test_large_rows_stay_out_of_the_total_and_are_listed_at_the_bottom(
+def test_large_rows_stay_out_of_the_total_and_are_listed_separately(
     conn, isolated_data_dir, client
 ):
-    """首页就是汇总：合计里没有它，页面底部单独列着它。
+    """合计里没有它，但它仍在账本里、单独列得出来。
 
     只在列表里标个「大额」、合计照算的话，汇总页会给出一个虚高的数，而且
     页面上什么都不说。
@@ -268,13 +264,19 @@ def test_large_rows_stay_out_of_the_total_and_are_listed_at_the_bottom(
     write_settings(isolated_data_dir, DISPLAY_GBP + THRESHOLDS)
     seed(conn, [(2000000, "CNY", Direction.IN), (89000, "CNY", Direction.OUT)])
 
-    home = client.get("/").get_data(as_text=True)
+    home = payload(client.get("/api/summary?range=all"))
+    totals = home["overall"][0]
+    assert totals["income"] == 0, "被剔掉的那笔不进合计"
+    assert totals["large_income"] == 224_719, "但它单独立着账"
 
-    assert re.findall(r'stat-value money-in">([^<]+)<', home) == ["0.00"]
-    assert "2,247.19" in home, "被剔掉的那笔要列出来，金额看得见"
-    assert "<h2>不计入合计的大额（1 笔）</h2>" in home
-    # 它仍然在账本里：交易记录页一条不少
-    assert "2,247.19" in client.get(whole_book()).get_data(as_text=True)
+    # 被判大额的是那笔**收入**（¥20,000 换算过来 £2,247.19 ≥ £2,000），
+    # 支出的 ¥890 换算过来才 £100，够不着 £500。
+    assert [row["display_cents"] for row in home["large"]] == [224_719], "金额看得见"
+
+    # 它仍然在账本里：列表页一条不少，而且标着「大额」
+    listing = payload(client.get("/api/transactions?start=&end="))
+    assert listing["total"] == 2
+    assert sum(row["is_large"] for row in listing["rows"]) == 1
 
 
 def test_preview_totals_still_count_large_rows(conn, isolated_data_dir):

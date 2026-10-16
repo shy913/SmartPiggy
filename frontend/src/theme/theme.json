@@ -2,7 +2,6 @@
   "default": "dark",
   "themes": {
     "dark": {
-      "label": "深色",
       "mode": "dark",
       "bg": "#0f1115",
       "panel": "#171a21",
@@ -22,7 +21,6 @@
       "axis": "#3a4250"
     },
     "light": {
-      "label": "浅色",
       "mode": "light",
       "bg": "#f7f8fa",
       "panel": "#ffffff",
@@ -42,7 +40,6 @@
       "axis": "#c3c9d4"
     },
     "dark-teal": {
-      "label": "深色 · 青橙",
       "mode": "dark",
       "bg": "#0f1115",
       "panel": "#171a21",
@@ -62,7 +59,6 @@
       "axis": "#3a4250"
     },
     "light-teal": {
-      "label": "浅色 · 青橙",
       "mode": "light",
       "bg": "#f7f8fa",
       "panel": "#ffffff",

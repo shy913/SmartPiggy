@@ -21,9 +21,9 @@ const client = new QueryClient({
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={client}>
-      {/* 外壳现在挂在 /app 下，跟旧界面并存；切换那一批会把它挪到根路径，
-          那时 basename 一并去掉。 */}
-      <BrowserRouter basename="/app">
+      {/* 界面就是这一个 SPA，服务端把除 /api 与 /assets 之外的地址都交回这里，
+          所以不需要 basename。 */}
+      <BrowserRouter>
         <App />
       </BrowserRouter>
     </QueryClientProvider>

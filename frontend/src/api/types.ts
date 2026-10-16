@@ -283,11 +283,11 @@ export type ImportRow = {
   profile_name: string;
   uploaded_at: string;
   row_count: number;
-  inserted: number;
-  duplicates: number;
-  errors: number;
-  warnings: number;
-  merged: number;
+  inserted_count: number;
+  duplicate_count: number;
+  error_count: number;
+  warning_count: number;
+  merged_count: number;
   coverage_start: string | null;
   coverage_end: string | null;
 };

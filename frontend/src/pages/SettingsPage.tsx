@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ApiError, getSettings, saveSettings } from "../api/client";
 import type { SettingsValues } from "../api/types";
+import { useMeta } from "../App";
 import { THEMES, THEME_NAMES } from "../theme/themes";
 import { Button } from "../components/ui/button";
 import { Section } from "../components/ui/card";
@@ -11,6 +12,7 @@ import { cn } from "../lib/utils";
 
 export function SettingsPage() {
   const client = useQueryClient();
+  const meta = useMeta();
   const [values, setValues] = useState<SettingsValues | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
@@ -61,8 +63,9 @@ export function SettingsPage() {
       >
         <Section title="配色">
           <div className="flex flex-wrap gap-2">
-            {THEME_NAMES.map((name) => {
-              const theme = THEMES[name];
+            {/* 名字与标签由服务端给（/api/meta）——「深色」这种话只写在一个地方。 */}
+            {(meta.data?.themes ?? []).map(({ name, label }) => {
+              const theme = THEMES[name as keyof typeof THEMES] ?? THEMES[THEME_NAMES[0]];
               return (
                 <button
                   key={name}
@@ -79,7 +82,7 @@ export function SettingsPage() {
                     <i className="block h-4 w-4 rounded-full" style={{ background: theme.income }} />
                     <i className="block h-4 w-4 rounded-full" style={{ background: theme.expense }} />
                   </span>
-                  {theme.label}
+                  {label}
                 </button>
               );
             })}

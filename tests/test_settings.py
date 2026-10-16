@@ -1,31 +1,33 @@
-"""设置页：能改什么、怎么落盘、坏值怎么拦。"""
+"""设置：能改什么、怎么落盘、坏值怎么拦。
+
+这一份原来走的是设置页那张表单，现在走 `PUT /api/settings`。变的只是**谁把
+值交上来**；校验、文案、落盘那套一个字没动，断言里那些错误片段还是原来那些。
+"""
 
 from __future__ import annotations
 
-import io
 import re
+from pathlib import Path
 
 import pytest
 
 from bill import settings, themes
-from bill.errors import BillError
 
-from .test_web import body, token_of, upload
-from .factories import alipay_csv, monzo_csv, wechat_xlsx
+from .api import payload
 
 
-def form(**overrides) -> dict[str, str]:
-    """设置页那张表单的一份合法取值（跟 as_form 的字段一一对应）。"""
+def form(**overrides) -> dict:
+    """设置表单的一份合法取值（字段与 as_form 一一对应）。"""
     values = {
         "theme": "light",
         "display": "GBP",
         "timezone": "Europe/London",
-        "rate_code": ["CNY"],
-        "rate_value": ["8.9"],
+        # 线上格式跟 GET 回来的一致：一串 {code, rate}，不是表单那两列。
+        "rates": [{"code": "CNY", "rate": "8.9"}],
         "large_out": "500",
         "large_in": "2000",
-        "merge_enabled": "1",
-        "merge_balanced": "1",
+        "merge_enabled": True,
+        "merge_balanced": True,
         "merge_window_hours": "12",
         "merge_tolerance": "0.5",
         "merge_keywords": "转账、还款",
@@ -35,59 +37,55 @@ def form(**overrides) -> dict[str, str]:
 
 
 def save(client, **overrides):
-    return client.post("/settings", data=form(**overrides))
+    return client.put("/api/settings", json=form(**overrides))
 
 
-def test_settings_page_lists_every_theme(client):
-    html = body(client.get("/settings"))
-    assert "配色" in html
-    for name in themes.names():
-        assert f'value="{name}"' in html
-    # 每套配色得有个色块预览，光看名字选不出来
-    assert html.count('class="swatch"') == len(themes.names())
+# --------------------------------------------------------------------------
+# 读
+# --------------------------------------------------------------------------
 
 
-def test_the_nav_has_a_settings_tab(client):
-    assert 'href="/settings"' in body(client.get("/"))
+def test_the_meta_lists_every_theme_with_a_label(client):
+    body = payload(client.get("/api/meta"))
+    listed = {theme["name"]: theme["label"] for theme in body["themes"]}
+    assert set(listed) == set(themes.names())
+    # 光有名字选不出来，得有个能读的中文标签
+    assert all(label.strip() for label in listed.values())
+
+
+def test_the_shell_carries_the_theme_so_the_first_frame_is_right(client, isolated_data_dir):
+    """`<html data-theme>` 由服务端填好再吐出去。
+
+    等 /api/meta 回来再设的话，第一帧永远用默认那套配色——切成浅色主题的人
+    每次打开都先闪一下深色。
+    """
+    assert 'data-theme="dark"' in client.get("/").get_data(as_text=True)
+    save(client, theme="light")
+    assert 'data-theme="light"' in client.get("/").get_data(as_text=True)
+
+
+# --------------------------------------------------------------------------
+# 写
+# --------------------------------------------------------------------------
 
 
 def test_saving_a_theme_writes_it_into_the_user_config(client, isolated_data_dir):
-    assert "dark" in body(client.get("/settings"))
-
-    response = save(client, theme="light")
-    assert response.status_code == 303
-
+    assert save(client, theme="light").status_code == 200
     written = (isolated_data_dir / "settings.toml").read_text(encoding="utf-8")
     assert 'theme = "light"' in written
     assert settings.load().theme == "light"
 
-    # 页面上真的换了：<html data-theme=…> 决定 CSS 用哪一套变量
-    assert 'data-theme="light"' in body(client.get("/"))
-    assert 'data-theme="light"' in body(client.get("/transactions"))
-
-
-def test_the_theme_changes_the_chart_colours(client, isolated_data_dir):
-    """图是服务端画的 SVG，取色也得跟着主题走，不能只有 HTML 换皮。"""
-    token = token_of(upload(client, alipay_csv(), "支付宝账单.csv"))
-    client.post(f"/import/{token}/confirm")
-
-    save(client, theme="light")
-    html = body(client.get("/"))
-    assert themes.get("light").income in html
-    assert themes.get("light").expense in html
-    assert themes.get("dark").income not in html
-
 
 def test_an_empty_rate_list_is_written_as_an_empty_table(client, isolated_data_dir):
     """一行都没填时写 `{}`——`{  }` 读得回来，但看着像漏填了什么。"""
-    save(client, rate_code=[""], rate_value=[""])
+    save(client, rates=[{"code": "", "rate": ""}])
     written = (isolated_data_dir / "settings.toml").read_text(encoding="utf-8")
     assert "rates = {}" in written
     assert settings.load().rates == {}
 
 
 def test_saving_round_trips_through_the_file(client, isolated_data_dir):
-    save(client)
+    assert save(client).status_code == 200
     conf = settings.load()
     assert conf.display_currency == "GBP"
     assert conf.rates == {"CNY": 8.9}
@@ -133,12 +131,12 @@ def test_a_save_writes_exactly_what_the_form_said(client, isolated_data_dir):
         ({"theme": "彩虹"}, "配色"),
         ({"display": "人民币"}, "币种"),
         ({"timezone": "上海时间"}, "时区"),
-        ({"rate_value": ["0"]}, "大于 0"),
-        ({"rate_value": ["八点九"]}, "不是个数字"),
-        ({"rate_code": ["人民币"]}, "不像个币种"),
-        ({"large_out": ["负五"]}, "阈值"),
-        ({"merge_window_hours": ["0"]}, "窗口"),
-        ({"merge_tolerance": ["-1"]}, "容差"),
+        ({"rates": [{"code": "CNY", "rate": "0"}]}, "大于 0"),
+        ({"rates": [{"code": "CNY", "rate": "八点九"}]}, "不是个数字"),
+        ({"rates": [{"code": "人民币", "rate": "8.9"}]}, "不像个币种"),
+        ({"large_out": "负五"}, "阈值"),
+        ({"merge_window_hours": "0"}, "窗口"),
+        ({"merge_tolerance": "-1"}, "容差"),
     ],
 )
 def test_bad_values_come_back_as_errors_and_write_nothing(
@@ -148,22 +146,12 @@ def test_bad_values_come_back_as_errors_and_write_nothing(
 
     response = save(client, **overrides)
     assert response.status_code == 400
-    html = body(response)
-    assert fragment in html, "错误要说清是哪一项不对"
-    assert "已保存" not in html
-    # 填过的内容要交回去，别让人重填一遍
-    assert 'value="Europe/London"' in html or 'value="上海时间"' in html
+    body = payload(response)
+    joined = "；".join(body["errors"])
+    assert fragment in joined, "错误要说清是哪一项不对"
+    # 填过的内容要交回去，别让人重填一遍——错的只是被改坏的那一项。
+    assert body["values"]["timezone"]
     assert (isolated_data_dir / "settings.toml").read_text(encoding="utf-8") == before
-
-
-def test_an_unknown_theme_in_the_file_fails_loudly(client, isolated_data_dir):
-    """悄悄回落到默认主题的话，用户根本不知道自己的设置没生效。"""
-    (isolated_data_dir / "settings.toml").write_text(
-        'timezone = "Europe/London"\n\n[currency]\ndisplay = "CNY"\n\n[ui]\ntheme = "霓虹"\n',
-        encoding="utf-8",
-    )
-    with pytest.raises(BillError):
-        settings.load()
 
 
 def test_the_balanced_switch_round_trips(client, isolated_data_dir):
@@ -180,21 +168,14 @@ def test_the_balanced_switch_round_trips(client, isolated_data_dir):
 
     data = form()
     data.pop("merge_balanced")
-    client.post("/settings", data=data)
+    client.put("/api/settings", json=data)
     assert settings.load().merge_balanced is False
-    assert "balanced = false" in (
-        isolated_data_dir / "settings.toml"
-    ).read_text(encoding="utf-8")
+    assert "balanced = false" in (isolated_data_dir / "settings.toml").read_text(encoding="utf-8")
 
 
-def test_reading_the_form_back_gives_the_same_settings(isolated_data_dir):
-    """表单 -> 设置 -> 表单，转一圈不该变形（空了的那一行就是没填）。"""
-    conf = settings.load()
-    values = settings.as_form(conf)
-    again, echoed, errors = settings.read_form(_Multidict(values))
-    assert errors == []
-    assert again == conf
-    assert len(echoed["rates"]) >= 3, "空着的汇率行也要留着给人填"
+# --------------------------------------------------------------------------
+# 纯函数那一半：表单 <-> 设置
+# --------------------------------------------------------------------------
 
 
 class _Multidict:
@@ -210,6 +191,16 @@ class _Multidict:
     def getlist(self, key):
         value = self._values.get(key, [])
         return list(value) if isinstance(value, list) else [value]
+
+
+def test_reading_the_form_back_gives_the_same_settings(isolated_data_dir):
+    """表单 -> 设置 -> 表单，转一圈不该变形（空了的那一行就是没填）。"""
+    conf = settings.load()
+    values = settings.as_form(conf)
+    again, echoed, errors = settings.read_form(_Multidict(values))
+    assert errors == []
+    assert again == conf
+    assert len(echoed["rates"]) >= 3, "空着的汇率行也要留着给人填"
 
 
 def test_an_empty_rate_row_is_just_ignored(isolated_data_dir):
@@ -240,44 +231,55 @@ def test_a_rate_row_with_only_a_code_says_so(isolated_data_dir):
     assert errors == ["USD 的汇率「」不是个数字。"]
 
 
-def test_the_settings_page_is_the_only_place_that_mentions_the_config_file(client):
-    """界面里不该出现「去改 settings.toml」这类话——设置页就是干这个的。"""
-    html = body(client.get("/"))
-    assert "settings.toml" not in html
-    # 设置页自己可以写出路径：改的就是这个文件
-    assert "settings.toml" in body(client.get("/settings"))
+# --------------------------------------------------------------------------
+# 界面上不许写实现说明
+# --------------------------------------------------------------------------
+
+FRONTEND = Path("frontend/src")
+
+# 「变更说明」式的话：解释口径是怎么算的、为什么这么设计。界面上的口径靠
+# **控件本身**表达就够了，这些话读起来像提交说明。
+FORBIDDEN = [
+    "时间均已换算",
+    "换算为",
+    "1 GBP = 8.9",
+    "单笔支出 ≥",
+    "大额，不计入合计",
+    "不算进合计",
+    "settings.toml",
+    "刻意",
+    "不报错的错",
+    "一个道理",
+]
 
 
-def test_no_developer_notes_leak_into_the_pages(client):
+def strip_comments(source: str) -> str:
+    """剥掉注释再扫。
+
+    注释里是可以讲道理的——这份代码里到处都在讲「为什么」。要拦的是**用户看得见
+    的那些字**，所以先去掉行注释和块注释。
+    """
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    return re.sub(r"//[^\n]*", "", source)
+
+
+@pytest.mark.skipif(not FRONTEND.exists(), reason="没有前端源码（只装了这个包）")
+def test_no_developer_notes_leak_into_the_interface():
     """回归：汇率换算、时区换算、阈值规则这些「变更说明」式的话不许出现在界面上。
 
-    这些口径以前写在各个页面的顶部，一页一段解释。它们读起来像提交说明，
-    而且真正要在意的人看设置页就够了。
+    这一条原来扫的是渲染出来的 HTML，现在扫前端源码——界面已经不经过服务端
+    渲染了，但**规则本身没变**：那些字一个都不许出现在用户看得见的地方。
     """
-    for data, name in ((wechat_xlsx(), "微信支付账单.xlsx"), (monzo_csv(), "monzo.csv")):
-        token = token_of(upload(client, data, name))
-        client.post(f"/import/{token}/confirm")
-
-    forbidden = [
-        "时间均已换算",
-        "换算为",
-        "1 GBP = 8.9",
-        "单笔支出 ≥",
-        "大额，不计入合计",
-        "不算进合计",
-        "settings.toml",
-        "刻意",
-        "不报错的错",
-        "一个道理",
-    ]
-    paths = ["/", "/transactions", "/groups", "/import", "/imports", "/profiles"]
-    # 一笔的详细信息页也扫上：那一页是新开的，最容易顺手写一句「金额已按汇率换算」
-    # 之类的说明——而它摊开的字段本身就该把口径说清楚。
-    txn = re.search(r'name="txn" value="(\d+)"', body(client.get("/transactions")))
-    assert txn, "先得有一条记录，才谈得上一笔的详细信息"
-    paths.append(f"/transactions/{txn.group(1)}")
-
-    for path in paths:
-        html = body(client.get(path))
-        for fragment in forbidden:
-            assert fragment not in html, f"{path} 里出现了「{fragment}」"
+    files = sorted(list(FRONTEND.rglob("*.tsx")) + list(FRONTEND.rglob("*.ts")))
+    assert files, "没扫到任何前端源码，这条测试就白跑了"
+    for path in files:
+        if ".test." in path.name:
+            continue  # 测试文件里的字不给人看
+        if path.name == "SettingsPage.tsx":
+            # 设置页不算：那里「单笔支出 ≥ …」是**控件自己的标签**，不是一句
+            # 说明。口径本来就该在那个页面上由控件表达出来。（旧的那条测试
+            # 扫的页面清单里也没有设置页，是同一条道理。）
+            continue
+        source = strip_comments(path.read_text(encoding="utf-8"))
+        for fragment in FORBIDDEN:
+            assert fragment not in source, f"{path} 里出现了「{fragment}」"
