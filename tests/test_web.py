@@ -773,6 +773,8 @@ def test_the_text_column_falls_back_to_the_description(client, book):
 
     分类缩成的 emoji 贴在文字**前面**，因为它顶替的就是原来那一列；认不出的
     分类也不留空，空着会被读成「这笔没有分类」。
+
+    那一格整个是点进详细信息的入口（a.row-link），所以 emoji 在前、链接在后。
     """
     book(
         [
@@ -796,9 +798,17 @@ def test_the_text_column_falls_back_to_the_description(client, book):
     )
 
     page = body(client.get("/transactions"))
-    assert '<span class="cat-mark" title="Eating out">🍜</span>Starbucks' in page
+    assert re.search(
+        r'<span class="cat-mark" title="Eating out">🍜</span>'
+        r'<a class="row-link"[^>]*>Starbucks</a>',
+        page,
+    )
     assert "拿铁" not in page, "有对方就不露说明，两行字在窄屏上都要折行"
-    assert '<span class="cat-mark" title="杂物">🏷️</span>退款到账' in page
+    assert re.search(
+        r'<span class="cat-mark" title="杂物">🏷️</span>'
+        r'<a class="row-link"[^>]*>退款到账</a>',
+        page,
+    )
 
 
 def test_the_row_buttons_are_buttons_and_the_actions_column_comes_last(client, book):

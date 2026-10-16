@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import re
 
 import pytest
 
@@ -247,7 +248,14 @@ def test_no_developer_notes_leak_into_the_pages(client):
         "不报错的错",
         "一个道理",
     ]
-    for path in ("/", "/transactions", "/groups", "/import", "/imports", "/profiles"):
+    paths = ["/", "/transactions", "/groups", "/import", "/imports", "/profiles"]
+    # 一笔的详细信息页也扫上：那一页是新开的，最容易顺手写一句「金额已按汇率换算」
+    # 之类的说明——而它摊开的字段本身就该把口径说清楚。
+    txn = re.search(r'name="txn" value="(\d+)"', body(client.get("/transactions")))
+    assert txn, "先得有一条记录，才谈得上一笔的详细信息"
+    paths.append(f"/transactions/{txn.group(1)}")
+
+    for path in paths:
         html = body(client.get(path))
         for fragment in forbidden:
             assert fragment not in html, f"{path} 里出现了「{fragment}」"

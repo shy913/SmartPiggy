@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}记账 — {{ tx.counterparty or tx.description or "一笔记录" }}{% endblock %}
+
+{# 一行「名字 — 值」。空着的照样留一行：字段凭空不见比留个横杠更难解释。 #}
+{% macro field(label, value) %}
+  <dt>{{ label }}</dt>
+  <dd>{% if value %}{{ value }}{% else %}<span class="muted">—</span>{% endif %}</dd>
+{% endmacro %}
+
+{% block content %}
+<p class="breadcrumb">
+  <a href="{{ url_for('transactions', month=tx.occurred_date[:7]) }}">← 交易记录</a>
+</p>
+
+<h1>{{ tx.counterparty or tx.description or "一笔记录" }}</h1>
+
+<p class="lede amount-lead {{ 'money-in' if tx.direction == 'in' else 'money-out' if tx.direction == 'out' else 'muted' }}">
+  {{ '+' if tx.direction == 'in' else '-' if tx.direction == 'out' else '' }}{{ tx.display_cents | amount }}
+  <span class="muted">{{ display_currency }}</span>
+</p>
+
+<p class="tags-row">
+  {% if tx.direction == 'in' %}<span class="tag tag-in">收入</span>
+  {% elif tx.direction == 'out' %}<span class="tag tag-out">支出</span>
+  {% else %}<span class="tag tag-neutral">中性</span>{% endif %}
+  {% if tx.is_large %}<span class="tag tag-large">大额</span>{% endif %}
+  {% if tx.hidden %}<span class="tag tag-hidden">已隐藏</span>{% endif %}
+  {% if tx.edited_at %}<span class="tag tag-warn">已改</span>{% endif %}
+  {% if tx.group_id %}<span class="tag tag-neutral">在一组合并组里</span>{% endif %}
+</p>
+
+{# 这里得用 div：p 里放 form，浏览器会把 p 提前合上，那几个表单就跑到
+   flex 容器外面去了——三个按钮会竖成一列，而页面上什么都不说。 #}
+<div class="actions">
+  <a class="button" href="{{ url_for('transaction_edit', txn_id=tx.id) }}">改</a>
+  <form method="post"
+        action="{{ url_for('transaction_unhide' if tx.hidden else 'transaction_hide', txn_id=tx.id) }}">
+    {# 在这一页上按的，就回这一页——别把人甩回列表再自己找回来。 #}
+    <input type="hidden" name="back" value="detail">
+    <button type="submit" class="button ghost">{{ '显示' if tx.hidden else '隐藏' }}</button>
+  </form>
+  <form method="post" action="{{ url_for('transaction_delete', txn_id=tx.id) }}"
+        onsubmit="return confirm('删掉这一笔？删了就没了。')">
+    <button type="submit" class="button ghost danger">删除</button>
+  </form>
+</div>
+
+<section>
+  <h2>金额与时间</h2>
+  <dl class="fields">
+    {{ field("时间", tx.occurred_at) }}
+    {{ field("收支", {'in': '收入', 'out': '支出', 'neutral': '中性'}[tx.direction]) }}
+    {{ field("金额", (tx.amount_cents | amount) ~ " " ~ tx.currency) }}
+    {{ field(display_currency ~ " 金额", (tx.display_cents | amount) ~ " " ~ display_currency) }}
+    {{ field("隐藏", "已隐藏" if tx.hidden else "否") }}
+  </dl>
+</section>
+
+<section>
+  <h2>对方与说明</h2>
+  <dl class="fields">
+    {{ field("交易对方", tx.counterparty) }}
+    {{ field("对方账号", tx.counterparty_account) }}
+    {{ field("说明", tx.description) }}
+    {{ field("备注", tx.memo) }}
+    {{ field("支付方式", tx.payment_method) }}
+    {{ field("状态", tx.status) }}
+  </dl>
+</section>
+
+<section>
+  <h2>分类</h2>
+  <dl class="fields">
+    {{ field("账单自带", tx.source_category) }}
+    {{ field("手改的", tx.category) }}
+    {{ field("现在算的", tx.effective_category) }}
+  </dl>
+</section>
+
+<section>
+  <h2>来源</h2>
+  <dl class="fields">
+    {{ field("账户", tx.account_name) }}
+    {{ field("交易单号", tx.source_txn_id) }}
+    {{ field("商户单号", tx.merchant_txn_id) }}
+    {% if record %}
+      {{ field("来自", record.filename) }}
+      {{ field("导入时间", record.uploaded_at) }}
+      {{ field("账单来源", record.profile_name) }}
+    {% else %}
+      {{ field("来自", "手动记的一笔") }}
+    {% endif %}
+    {% if tx.group_id %}
+      {{ field("合并组", tx.group_title or "（没有标题）") }}
+    {% endif %}
+  </dl>
+  {% if record %}
+    <p class="hint">
+      <a href="{{ url_for('import_detail', import_id=record.id) }}">看这次导入</a>
+    </p>
+  {% endif %}
+  {% if tx.group_id %}
+    <p class="hint">
+      <a href="{{ url_for('groups_page') }}">去合并组页</a>
+    </p>
+  {% endif %}
+</section>
+
+{% if record and raw %}
+  <section>
+    <h2>账单原文</h2>
+    <div class="table-scroll">
+      <table class="data raw">
+        <tbody>
+          {% for name, value in raw.items() %}
+            <tr><th>{{ name }}</th><td>{{ value }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endif %}
+{% endblock %}

@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% block title %}记账 — 交易记录{% endblock %}
 
+{% import "_transaction_rows.html" as rows_tpl %}
+
 {% block content %}
 <h1>交易记录</h1>
 
@@ -60,9 +62,7 @@
 
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 
-<p class="hint">
-  共 {{ total }} 条{% if hidden_total %}，其中 {{ hidden_total }} 条已隐藏{% endif %}。
-</p>
+<p class="hint">{{ hint }}</p>
 
 {% if rows %}
   {# 整张表包在一个表单里，是为了勾选之后能一键合并、一键改分类。
@@ -70,7 +70,10 @@
      这样既是一条合法的 HTML，也不用为此上 JS。
 
      没有 JS 就没有「全选本页」：批量操作只作用于手勾的那些行。隐藏的行连勾选框
-     都没有——它是「不算数」的那一档，合进合并组里会让净额和笔数对不上。 #}
+     都没有——它是「不算数」的那一档，合进合并组里会让净额和笔数对不上。
+
+     行本身在 _transaction_rows.html：底下的脚本要把改完状态的那一行整个换掉，
+     两边得是同一份 markup。 #}
   <form method="post" action="{{ url_for('transactions_bulk') }}">
     <input type="hidden" name="month" value="{{ filters.month }}">
     <input type="hidden" name="direction" value="{{ filters.direction }}">
@@ -93,99 +96,9 @@
           </tr>
         </thead>
         <tbody>
-          {% for tx in rows %}
-            {# 每一行都带个行号 id：底下的「继续下滑加载更多」跳到下一段的第一行，
-               点完停在原地，而不是被甩回页首。 #}
-            {% if tx.group_id %}
-              {# 合并行：金额是组内各笔的净额，本身不是一条记录，所以不能勾选、
-                 也没有「编辑」——它下面那一行才是原样的几笔。 #}
-              {% set mark = tx.effective_category | category_emoji %}
-              <tr class="row-group" id="row-{{ loop.index0 }}">
-                <td class="pick muted" title="合并净额行">合</td>
-                <td class="when">{{ tx.occurred_at | minute }}</td>
-                <td class="num {{ 'money-in' if tx.direction == 'in' else 'money-out' if tx.direction == 'out' else 'muted' }}">
-                  {{ '+' if tx.direction == 'in' else '-' if tx.direction == 'out' else '' }}{{ tx.display_cents | amount }}
-                  {% if tx.is_large %}<span class="tag tag-large">大额</span>{% endif %}
-                </td>
-                <td>{% if mark %}<span class="cat-mark" title="{{ tx.effective_category }}">{{ mark }}</span>{% endif %}{{ tx.counterparty or tx.description }}</td>
-                <td class="muted">{{ tx.account_name }}</td>
-                <td class="row-actions">
-                  <button type="submit" class="button tiny"
-                          formaction="{{ url_for('group_dissolve', group_id=tx.group_id) }}"
-                          formmethod="post">取消合并</button>
-                </td>
-              </tr>
-              <tr class="row-group-members">
-                <td colspan="6">
-                  <details>
-                    <summary>展开 {{ tx.member_count }} 笔（净额 {{ tx.display_cents | amount }} {{ display_currency }}）</summary>
-                    <ul class="members">
-                      {% for member in members.get(tx.group_id, []) %}
-                        <li>
-                          <span class="muted">{{ member.occurred_at }}</span>
-                          {% if member.direction == 'in' %}<span class="tag tag-in">收入</span>
-                          {% elif member.direction == 'out' %}<span class="tag tag-out">支出</span>
-                          {% else %}<span class="tag tag-neutral">中性</span>{% endif %}
-                          {# 组员显示的是**原始**金额和币种（账单上就是这么写的）；
-                             跨币种时补一个换算值，免得以为净额是拿原始数字加出来的。 #}
-                          <span class="num {{ 'money-in' if member.direction == 'in' else 'money-out' if member.direction == 'out' else 'muted' }}">{{ member.amount_cents | amount }}</span>
-                          <span class="muted">{{ member.currency }}</span>
-                          {% if member.currency != display_currency %}
-                            <span class="muted">≈ {{ member.display_cents | amount }} {{ display_currency }}</span>
-                          {% endif %}
-                          {{ member.counterparty or member.description }}
-                          {# 组内每一笔都是真记录，也能单独改；自动组被改了金额之类会解散。 #}
-                          <a class="link-button" href="{{ url_for('transaction_edit', txn_id=member.id) }}">改</a>
-                        </li>
-                      {% endfor %}
-                    </ul>
-                  </details>
-                </td>
-              </tr>
-            {% else %}
-              {% set mark = tx.effective_category | category_emoji %}
-              <tr{% if tx.hidden %} class="row-hidden"{% endif %} id="row-{{ loop.index0 }}">
-                <td class="pick">
-                  {% if tx.hidden %}
-                    {# 隐藏的行不给勾选框：它不进合计，也就不该能被合进一组。 #}
-                    <span class="tag tag-hidden" title="已隐藏">隐</span>
-                  {% else %}
-                    <input type="checkbox" name="txn" value="{{ tx.id }}"
-                           aria-label="选中这一笔">
-                  {% endif %}
-                </td>
-                <td class="when">{{ tx.occurred_at | minute }}</td>
-                <td class="num {{ 'money-in' if tx.direction == 'in' else 'money-out' if tx.direction == 'out' else 'muted' }}">
-                  {{ '+' if tx.direction == 'in' else '-' if tx.direction == 'out' else '' }}{{ tx.display_cents | amount }}
-                  {% if tx.is_large %}<span class="tag tag-large">大额</span>{% endif %}
-                </td>
-                <td>
-                  {% if mark %}<span class="cat-mark" title="{{ tx.effective_category }}">{{ mark }}</span>{% endif %}{{ tx.counterparty or tx.description }}
-                  {% if tx.edited_at %}<span class="tag tag-warn" title="手改过（{{ tx.edited_at }}）">已改</span>{% endif %}
-                </td>
-                <td class="muted">{{ tx.account_name }}</td>
-                <td class="row-actions">
-                  <a class="button tiny" href="{{ url_for('transaction_edit', txn_id=tx.id) }}">改</a>
-                  {% if tx.hidden %}
-                    <button type="submit" class="button tiny"
-                            name="anchor" value="{{ loop.index0 }}"
-                            formaction="{{ url_for('transaction_unhide', txn_id=tx.id) }}"
-                            formmethod="post">显示</button>
-                  {% else %}
-                    <button type="submit" class="button tiny"
-                            name="anchor" value="{{ loop.index0 }}"
-                            formaction="{{ url_for('transaction_hide', txn_id=tx.id) }}"
-                            formmethod="post">隐藏</button>
-                  {% endif %}
-                  <button type="submit" class="button tiny danger"
-                          name="anchor" value="{{ loop.index0 }}"
-                          formaction="{{ url_for('transaction_delete', txn_id=tx.id) }}"
-                          formmethod="post"
-                          onclick="return confirm('删掉这一笔？')">删</button>
-                </td>
-              </tr>
-            {% endif %}
-          {% endfor %}
+          {# 行号是给 id="row-N" 用的：底下「继续下滑加载更多」跳到下一段的第一行，
+             动手之后也落回原来那一行。 #}
+          {% for tx in rows %}{{ rows_tpl.row(tx, loop.index0, members, display_currency) }}{% endfor %}
         </tbody>
       </table>
     </div>
@@ -208,11 +121,74 @@
     <p class="more">
       <a class="button ghost"
          href="{{ url_for('transactions', month=filters.month, direction=filters.direction, account=filters.account or '', q=filters.q, hidden=filters.hidden, limit=next_limit) }}#row-{{ limit }}">
-        继续下滑加载更多（还有 {{ remaining }} 条）
+        继续下滑加载更多（还有 <span class="more-count">{{ remaining }}</span> 条）
       </a>
     </p>
   {% endif %}
 {% else %}
   <p class="empty">没有符合条件的记录。</p>
 {% endif %}
+
+{# 全站唯一的一段 <script>。隐藏 / 还原本身只要一两毫秒，慢的是「提交完再整页
+   重画一遍」——一笔一笔收拾的时候，每一下都要等一整个来回，而这页还长。
+   这里把它接过来：POST 照旧发给那个表单的地址，回来只换掉这一行、页头那一行字，
+   和底下那个「还有几条」。
+
+   这是一层加法，不是替代：脚本没跑（关掉了、或者 fetch 不成）就退回原来那条
+   303 回列表的路。 #}
+<script>
+(function () {
+  var form = document.querySelector('form[action$="/bulk"]');
+  var hint = document.querySelector("p.hint");
+  if (!form || !hint) return;
+
+  var fallingBack = false;
+
+  form.addEventListener("submit", function (event) {
+    var button = event.submitter;
+    var action = (button && button.getAttribute("formaction")) || "";
+    if (fallingBack || !/(^|\/)(hide|unhide)$/.test(action)) return;
+    event.preventDefault();
+
+    var row = button.closest("tr");
+    var body = new URLSearchParams();
+    ["month", "direction", "account", "q", "hidden", "limit"].forEach(function (name) {
+      var field = form.querySelector('input[name="' + name + '"]');
+      if (field) body.set(name, field.value);
+    });
+    body.set("anchor", button.value || "");
+
+    fetch(action, {
+      method: "POST",
+      headers: { Accept: "application/json" },
+      body: body
+    })
+      .then(function (response) {
+        return response.ok ? response.json() : Promise.reject(response.status);
+      })
+      .then(function (data) {
+        if (data.keep) {
+          row.outerHTML = data.row;
+        } else {
+          row.remove();
+        }
+        hint.textContent = data.hint;
+
+        var counter = document.querySelector(".more-count");
+        if (counter) {
+          var shown = document.querySelectorAll("tbody tr:not(.row-group-members)").length;
+          var rest = data.total - shown;
+          if (rest > 0) counter.textContent = rest;
+          else counter.closest("p.more").remove();
+        }
+      })
+      .catch(function () {
+        // 这儿要是直接 form.submit()，按下去那个按钮的 formaction 会被丢掉，
+        // 请求落到批量操作上去。再点一次同一个按钮，放它走正常提交。
+        fallingBack = true;
+        button.click();
+      });
+  });
+})();
+</script>
 {% endblock %}

@@ -659,7 +659,7 @@ tr.row-hidden td { color: var(--muted); }
   color: var(--text);
 }
 .button.tiny:hover { background: var(--border); filter: none; }
-.button.tiny.danger { color: var(--danger); }
+.button.danger { color: var(--danger); }
 
 /* 紧凑版统计块：页头那一排（条数、已勾选几笔）。磁贴按内容宽，不摊满一整行 */
 .stats.compact {
@@ -1014,6 +1014,38 @@ tr.row-group:hover td.row-actions {
 
 /* 分类缩成的那个 emoji：贴着后面的文字，别让它看起来像另一列 */
 .cat-mark { margin-right: 0.35rem; }
+
+/* 点进一笔详细信息的那个入口：日期和「对方 / 说明」。
+   它铺满一整格，要是照着链接那样上色加下划线，整张表就成了一条条蓝线；
+   但一点提示都不给，又没人知道能点。所以照原样上色，只在指上去时划线。 */
+a.row-link { color: inherit; }
+a.row-link:hover { text-decoration: underline; }
+
+/* 一笔的详细信息页：一行「名字 — 值」。
+   第一列按最长的那个名字撑开，值那一列吃满剩下的宽度。 */
+.fields {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.5rem 1.4rem;
+  margin: 0;
+  font-size: 0.88rem;
+}
+.fields dt { color: var(--muted); }
+.fields dd { margin: 0; overflow-wrap: anywhere; }
+
+/* 详细信息页抬头那一行标签（收入 / 大额 / 已隐藏 / 已改…） */
+.tags-row { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; margin: 0 0 0.9rem; }
+.amount-lead { font-size: 1.3rem; font-weight: 600; margin-bottom: 0.6rem; }
+
+/* 详细信息页最底下那张「账单原文」：左边是账单里的列名，窄、灰、不折行 */
+table.data.raw th {
+  text-align: left;
+  font-weight: 400;
+  color: var(--muted);
+  white-space: nowrap;
+  vertical-align: top;
+}
+table.data.raw td { white-space: normal; overflow-wrap: anywhere; }
 
 /* 合并行：金额是净额，本身不是一条记录，用底色和上边框跟真记录分开 */
 tr.row-group td { background: color-mix(in srgb, var(--accent) 7%, transparent); }

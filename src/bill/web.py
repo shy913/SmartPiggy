@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import getpass
+import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -78,6 +79,7 @@ NAV_SECTIONS = {
     "transaction_edit": "transactions",
     "transaction_update": "transactions",
     "transaction_delete": "transactions",
+    "transaction_detail": "transactions",
     "transaction_hide": "transactions",
     "transaction_unhide": "transactions",
     "groups_page": "transactions",
@@ -498,6 +500,58 @@ def create_app() -> Flask:
 
     # ---------------------------------------------------------------- 账目
 
+    # 列表页那几个筛选条件、页头两个数、那一行字，GET 和「隐藏」那一下共用一份。
+    # 各写一份的话，改的时候只要漏一处，两处就会各说各话——而「共 N 条 / 其中
+    # M 条已隐藏」正是拿来解释「列表数含隐藏、汇总数不含」那个差的。
+
+    def list_query(source) -> dict:
+        """从查询串或表单里取那几个筛选字段。认不出的 hidden 落回「照常列出」。"""
+        hidden = (source.get("hidden") or "").strip()
+        if hidden not in ("0", "1"):
+            hidden = ""
+        return {
+            "month": (source.get("month") or "").strip(),
+            "direction": (source.get("direction") or "").strip(),
+            "account_id": _as_int(source.get("account") or ""),
+            "search": (source.get("q") or "").strip(),
+            "hidden": hidden,
+            # limit 是「这一段给到哪」，不是页大小，所以只往上加：链接里手改出来的
+            # 小数不至于把列表缩成一条。
+            "limit": max(source.get("limit", type=int) or LIST_STEP, LIST_STEP),
+        }
+
+    def list_counts(connection, query) -> tuple[int, int]:
+        """（符合条件的条数，其中隐藏的条数）。两个数同一个口径，都是全表。
+
+        隐藏那一档不能只数页面上渲染出来的行：一段 200 条以上的列表上会写成个
+        偏小的数，被隐的那笔要是正好不在这段里，页面上干脆什么都不说。
+        """
+        common = {
+            "month": query["month"] or None,
+            "account_id": query["account_id"],
+            "direction": query["direction"] or None,
+            "search": query["search"] or None,
+        }
+        total = repo.count_transactions(
+            connection, **common, hidden=query["hidden"] or None
+        )
+        if query["hidden"] == "1":
+            return total, total  # 这一档整页都是隐藏的
+        if query["hidden"] == "0":
+            return total, 0  # 这一档一条隐藏的都不列
+        return total, repo.count_transactions(connection, **common, hidden="1")
+
+    def list_hint(total: int, hidden_total: int) -> str:
+        """页头那一行字。
+
+        字写在服务端，是因为「隐藏」那一下（见 transactions.html 里那段 JS）不重载
+        页面，得拿同一条字回去把页头换掉——写两遍迟早会写歪一处。
+        """
+        line = f"共 {total} 条"
+        if hidden_total:
+            line += f"，其中 {hidden_total} 条已隐藏"
+        return line + "。"
+
     def back_to_list(**extra):
         """回到列表页，把原来的筛选条件带上。
 
@@ -523,33 +577,16 @@ def create_app() -> Flask:
     @app.get("/transactions")
     def transactions():
         connection = get_conn()
-        month = request.args.get("month") or ""
-        direction = request.args.get("direction") or ""
-        account_id = request.args.get("account", type=int)
-        search = (request.args.get("q") or "").strip()
-        hidden = (request.args.get("hidden") or "").strip()
-        if hidden not in ("0", "1"):
-            hidden = ""
-        # limit 是「这一段给到哪」，不是页大小，所以只往上加：链接里手改出来的
-        # 小数不至于把列表缩成一条。
-        limit = max(request.args.get("limit", LIST_STEP, type=int), LIST_STEP)
-
-        total = repo.count_transactions(
-            connection,
-            month=month or None,
-            account_id=account_id,
-            direction=direction or None,
-            search=search or None,
-            hidden=hidden or None,
-        )
+        query = list_query(request.args)
+        total, hidden_total = list_counts(connection, query)
         rows = repo.list_transactions(
             connection,
-            month=month or None,
-            account_id=account_id,
-            direction=direction or None,
-            search=search or None,
-            hidden=hidden or None,
-            limit=limit,
+            month=query["month"] or None,
+            account_id=query["account_id"],
+            direction=query["direction"] or None,
+            search=query["search"] or None,
+            hidden=query["hidden"] or None,
+            limit=query["limit"],
             offset=0,
         )
         # 合并行只带锚点那一笔的文字，要看全组成员得另外取——而且只取这一段
@@ -562,25 +599,6 @@ def create_app() -> Flask:
             members.setdefault(member["group_id"], []).append(member)
 
         accounts = repo.accounts(connection)
-        # 「共 N 条，其中 M 条已隐藏」里 N 是全表口径（total），所以 M 也得是——
-        # 只数这一段渲染出来的行，超过一段时 M 就是个偏小的数，而这行字正好是拿来
-        # 解释「列表数含隐藏、汇总数不含」那个差的，写小了就等于把差解释错了。
-        # 三档各算各的：只看隐藏那一档整页都是；不列出那一档一条都不在页面上；
-        # 默认那一档要单问一次全表的数。
-        if hidden == "1":
-            hidden_total = total
-        elif hidden == "0":
-            hidden_total = 0
-        else:
-            hidden_total = repo.count_transactions(
-                connection,
-                month=month or None,
-                account_id=account_id,
-                direction=direction or None,
-                search=search or None,
-                hidden="1",
-            )
-
         return render_template(
             "transactions.html",
             display_currency=conf.display_currency,
@@ -590,24 +608,55 @@ def create_app() -> Flask:
             accounts=accounts,
             categories=repo.transaction_categories(connection),
             total=total,
+            hint=list_hint(total, hidden_total),
             # 筛选栏收起来之后，得让人一眼看出这一屏是筛过的——不然看着就像全部
             # 记录，而汇总和它又对不上。所以把这些条件明写在可以点开的标题旁边。
             active_filters=active_filter_labels(
-                accounts, month=month, direction=direction,
-                account_id=account_id, search=search, hidden=hidden,
+                accounts,
+                month=query["month"],
+                direction=query["direction"],
+                account_id=query["account_id"],
+                search=query["search"],
+                hidden=query["hidden"],
             ),
-            limit=limit,
+            limit=query["limit"],
             remaining=max(total - len(rows), 0),
-            next_limit=limit + LIST_STEP,
-            hidden_total=hidden_total,
+            next_limit=query["limit"] + LIST_STEP,
             error=(request.args.get("error") or "").strip() or None,
             filters={
-                "month": month,
-                "direction": direction,
-                "account": account_id,
-                "q": search,
-                "hidden": hidden,
+                "month": query["month"],
+                "direction": query["direction"],
+                "account": query["account_id"],
+                "q": query["search"],
+                "hidden": query["hidden"],
             },
+        )
+
+    @app.get("/transactions/<int:txn_id>")
+    def transaction_detail(txn_id: int):
+        """一笔的详细信息：只读，把库里存着的都摊开。
+
+        跟列表页是两个用途：列表是拿来扫的，这里是拿来对账的——账单原文、
+        换算前后的金额、订单号、手改前后的分类，都在这上面。
+        """
+        connection = get_conn()
+        row = repo.get_transaction(connection, txn_id)
+        if row is None:
+            abort(404)
+        try:
+            raw = json.loads(row["raw_json"] or "{}")
+        except ValueError:
+            raw = {}
+        return render_template(
+            "transaction_detail.html",
+            tx=row,
+            raw=raw if isinstance(raw, dict) else {},
+            record=(
+                repo.get_import(connection, row["import_id"])
+                if row["import_id"]
+                else None
+            ),
+            display_currency=settings.load().display_currency,
         )
 
     @app.post("/transactions/bulk")
@@ -727,7 +776,40 @@ def create_app() -> Flask:
         with connection:
             if not repo.set_hidden(connection, txn_id, hidden):
                 abort(404)
-        return back_to_list()
+        # 详情页上按的，就回详情页——别把人甩回列表再自己找回来。
+        if (request.form.get("back") or "") == "detail":
+            return go("transaction_detail", txn_id=txn_id)
+        if "application/json" not in (request.headers.get("Accept") or ""):
+            return back_to_list()
+        # 页面上那一行自己重画，不再整页重载（见 transactions.html 里那段 JS）。
+        # 所以页头那两个数得服务端算准了交回去——「全表还隐藏着几笔」客户端算不出来。
+        query = list_query(request.form)
+        total, hidden_total = list_counts(connection, query)
+        row = repo.get_transaction(connection, txn_id)
+        if row is None:
+            abort(404)
+        return jsonify(
+            {
+                "hidden": hidden,
+                "total": total,
+                # 当前这一档排不排得下它。排不下就把那一行从页面上撤掉，
+                # 不然「只看隐藏」里还原一笔，它还会赖在页面上不走。
+                "keep": not (
+                    (query["hidden"] == "0" and hidden)
+                    or (query["hidden"] == "1" and not hidden)
+                ),
+                "hint": list_hint(total, hidden_total),
+                # 这一行整份重画：勾选框、标签、按钮文案都在 _transaction_rows.html
+                # 那一份里，客户端只管换，不自己拼 markup。
+                "row": render_template(
+                    "_transaction_row.html",
+                    tx=row,
+                    index=_as_int(request.form.get("anchor") or ""),
+                    members={},
+                    display_currency=settings.load().display_currency,
+                ),
+            }
+        )
 
     # 隐藏 / 取消隐藏拆成两条路径，而不是一条带个开关字段：这两个动作都是从
     # 那张大表单里用 formaction 提交的，走两条路径就不用再为它各塞一个隐藏字段。
