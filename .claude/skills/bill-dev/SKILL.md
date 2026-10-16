@@ -44,9 +44,13 @@ cd /root/bill && ./deploy.sh --restart
 ```bash
 ps -eo pid,cmd | grep "[v]env/bin/bill"     # 认准 PID（可能不止一个）
 kill <pid>
-cd /root/bill && setsid nohup .venv/bin/bill >> ~/.local/share/bill/bill.log 2>&1 < /dev/null &
+cd /root/bill && setsid --fork .venv/bin/bill >> ~/.local/share/bill/bill.log 2>&1 < /dev/null &
 sleep 2 && curl -s localhost:8001/healthz
 ```
+
+`setsid` 后面的 **`--fork` 别省**。少了它，setsid 常常直接 exec 成那个服务进程，
+服务就成了当前 shell 的子进程；在终端里手敲没事（提示符照回来），但**写进脚本**
+就会挂在末尾不退——踩过一次：产物早换好了、页面也好好的，脚本却一直不返回。
 
 **别用 `pkill -f 'venv/bin/bill'` 收这个进程。** 模式匹配认字符串不认进程：
 `pkill -f '\.venv/bin/bill'` 会连你自己这条命令的 shell 一起杀掉（命令行里就带着
