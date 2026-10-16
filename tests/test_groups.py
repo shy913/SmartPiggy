@@ -69,7 +69,8 @@ def test_an_equal_pair_is_not_an_aa():
     """微信账单里常见的一对等额收支——同一天借了 38.5 又还回来 38.5。
 
     按「支出 = 人均份额 × 人数」算，38.5 分成两份并不等于 38.5，所以不会被合。
-    这是有意留住的边界：退款和还款长得像，但退款不是 AA。
+    这是有意留住的边界：退款和还款长得像，但退款不是 AA——它归下面那条
+    「收支平衡」的规则管（见 detect）。
     """
     rows = [
         row(1, "out", 3_850),
@@ -243,3 +244,111 @@ def test_bigger_split_wins_when_errors_tie():
     assert [(candidate.anchor_id, candidate.member_ids, candidate.deviation) for candidate in found] == [
         (1, (3, 4), 0)
     ]
+
+
+# --------------------------------------------------------------------------
+# 收支平衡：一笔支出 + 之后一笔跟它等额的收入
+# --------------------------------------------------------------------------
+
+
+def test_an_equal_pair_is_balanced():
+    """−£4.49 之后五小时 +£4.49：钱原封不动回来了，净额是 0。"""
+    rows = [
+        row(1, "out", 449, at="2026-03-01 09:00:00"),
+        row(2, "in", 449, at="2026-03-01 14:00:00", text="转账回来"),
+    ]
+    found = groups.balanced(rows, keywords=PAYBACK)
+    assert [
+        (candidate.anchor_id, candidate.member_ids, candidate.deviation, candidate.kind)
+        for candidate in found
+    ] == [(1, (2,), 0, "balance")]
+
+
+def test_balanced_needs_the_payback_look():
+    """跟 AA 共用那道过滤：收款得看起来像钱回来了，否则形状巧合一合就错。"""
+    rows = [
+        row(1, "out", 449, at="2026-03-01 09:00:00", text="Tesco"),
+        row(2, "in", 449, at="2026-03-01 14:00:00", text="ACME PAYROLL"),
+    ]
+    assert groups.balanced(rows, keywords=PAYBACK) == []
+    assert len(groups.balanced(rows, keywords=())) == 1
+
+
+def test_balanced_tolerance_is_inclusive():
+    rows = [
+        row(1, "out", 449, at="2026-03-01 09:00:00"),
+        row(2, "in", 499, at="2026-03-01 14:00:00", text="转账"),
+    ]
+    assert len(groups.balanced(rows, tolerance_cents=50, keywords=PAYBACK)) == 1
+    assert groups.balanced(rows, tolerance_cents=49, keywords=PAYBACK) == []
+
+
+def test_balanced_window_and_direction():
+    """收款早了不算，出了窗口也不算——跟 AA 同一个窗口。"""
+    early = [
+        row(1, "out", 449, at="2026-03-01 09:00:00"),
+        row(2, "in", 449, at="2026-03-01 08:00:00", text="转账"),
+    ]
+    assert groups.balanced(early, keywords=PAYBACK) == []
+
+    late = [
+        row(1, "out", 449, at="2026-03-01 09:00:00"),
+        row(2, "in", 449, at="2026-03-01 21:00:01", text="转账"),  # 12 小时多一秒
+    ]
+    assert groups.balanced(late, window_hours=12, keywords=PAYBACK) == []
+
+
+def test_balanced_is_one_to_one_only():
+    """£120 的支出后面跟着三笔 £40：那是几个人各摊一份的形状，不是收支平衡。
+
+    同一批行按 AA 读会得到「自己那一份 £30」，按平衡读会得到 0——两个都不算错，
+    所以这条规则干脆不碰它，交给手动合并（见模块文档）。
+    """
+    rows = [
+        row(1, "out", 12_000),
+        row(2, "in", 4_000, at="2026-03-01 20:00:00", text="转账"),
+        row(3, "in", 4_000, at="2026-03-01 21:00:00", text="转账"),
+        row(4, "in", 4_000, at="2026-03-01 22:00:00", text="转账"),
+    ]
+    assert groups.balanced(rows, keywords=PAYBACK) == []
+    assert [candidate.kind for candidate in groups.detect(rows, keywords=PAYBACK)] == ["aa"]
+
+
+def test_balanced_ignores_neutral_and_claimed_rows():
+    neutral = [
+        row(1, "out", 449, at="2026-03-01 09:00:00"),
+        row(2, "neutral", 449, at="2026-03-01 14:00:00", text="转账"),
+    ]
+    assert groups.balanced(neutral, keywords=PAYBACK) == []
+
+    claimed = [
+        row(1, "out", 449, at="2026-03-01 09:00:00"),
+        row(2, "in", 449, at="2026-03-01 14:00:00", text="转账", grouped=True),
+    ]
+    assert groups.balanced(claimed, keywords=PAYBACK) == []
+
+
+def test_one_repayment_cannot_serve_both_rules():
+    """两笔支出都想要同一笔收款时，一起判、一起分：分头判会各自都以为自己拿到了。
+
+    −£80 想吃掉那笔 £40（AA：两人各半），−£40 想跟它配成一次收支平衡。
+    £40 跟 −£40 分毫不差，比「正好是另一笔的一半」更像钱绕了一圈回来。
+    """
+    rows = [
+        row(3, "in", 4_000, at="2026-03-01 13:00:00", text="转账"),
+        row(1, "out", 8_000, at="2026-03-01 11:00:00"),
+        row(2, "out", 4_000, at="2026-03-01 12:00:00"),
+    ]
+    found = groups.detect(rows, keywords=PAYBACK)
+    assert [(candidate.anchor_id, candidate.member_ids, candidate.kind) for candidate in found] == [
+        (2, (3,), "balance")
+    ]
+
+
+def test_detect_can_be_turned_off_for_balanced_pairs():
+    rows = [
+        row(1, "out", 449, at="2026-03-01 09:00:00"),
+        row(2, "in", 449, at="2026-03-01 14:00:00", text="转账"),
+    ]
+    assert groups.detect(rows, keywords=PAYBACK, balanced_merge=False) == []
+    assert len(groups.detect(rows, keywords=PAYBACK)) == 1

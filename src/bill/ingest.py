@@ -350,7 +350,7 @@ def confirm(connection: sqlite3.Connection, token: str) -> int:
 
         repo.save_issues(connection, import_id, plan.issues)
 
-        # AA 合并的自动检测放在同一个事务里：要么「导入 + 合并」一起成功，
+        # 合并的自动检测放在同一个事务里：要么「导入 + 合并」一起成功，
         # 要么都不发生，不会留下导进来了却没检测的半截状态。
         #
         # 范围往外放宽一个窗口：判定一笔支出是不是 AA，要用到它**之后**的收款，

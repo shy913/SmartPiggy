@@ -111,6 +111,26 @@ def test_full_import_then_browse(client):
     assert "2026-01" in body(client.get("/"))
 
 
+def test_the_summary_keeps_neutral_rows_out_of_the_totals(client):
+    """中性行不在汇总页占一块地方。
+
+    它们不是收支，摆成一排数字里的一格、或者在页面中间列成一张表，读起来都像
+    「有一块账没算进去」。只在总计下面留一行灰字，带个入口。
+    """
+    token = token_of(upload(client, alipay_csv(), "支付宝账单.csv"))
+    client.post(f"/import/{token}/confirm")
+
+    home = body(client.get("/"))
+    assert '<span class="stat-label">中性记录</span>' not in home, "总计里不该有这一格"
+    assert "<h2>中性记录</h2>" not in home, "也不该单独成块"
+    assert "中性笔数" not in home, "按月那张表里也不列"
+    # 账本总计本身的四格还在
+    assert "累计收入" in home and "累计结余" in home
+    # 留一行灰字，指得出它们在哪
+    assert "另有 1 笔中性记录未计入合计" in home
+    assert 'href="/transactions?direction=neutral"' in home
+
+
 def test_the_homepage_is_the_summary(client):
     """首页就是汇总页：一进来要看到全账本的口径，不是某个月的。"""
     token = token_of(upload(client, alipay_csv(), "支付宝账单.csv"))

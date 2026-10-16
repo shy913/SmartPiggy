@@ -10,7 +10,7 @@
   </p>
 {% endif %}
 
-{# 收入、支出、结余只统计「收/支」明确的行；中性行与大额另有块。 #}
+{# 收入、支出、结余只统计「收/支」明确的行；中性行与大额另有交代。 #}
 <section>
   <h2>账本总计</h2>
   {% for group in overall %}
@@ -20,11 +20,21 @@
         <div class="stat"><span class="stat-value money-in">{{ group.income | amount }}</span><span class="stat-label">累计收入</span></div>
         <div class="stat"><span class="stat-value money-out">{{ group.expense | amount }}</span><span class="stat-label">累计支出</span></div>
         <div class="stat"><span class="stat-value">{{ (group.income - group.expense) | amount }}</span><span class="stat-label">累计结余</span></div>
-        <div class="stat"><span class="stat-value muted">{{ group.neutral_count }}</span><span class="stat-label">中性记录</span></div>
         <div class="stat"><span class="stat-value muted">{{ group.total }}</span><span class="stat-label">记录条数</span></div>
       </div>
     </div>
   {% endfor %}
+
+  {# 中性行（转账、还款、退款这些「不计收支」的）只在这里留一行灰字。
+     它们不是收支，摆进上面那排数里、或者在下面逐笔列成一张表，都会让这一页
+     看起来像「有一块账没算进去」——真正的情况是那一块本来就不该进来。 #}
+  {% set neutral_total = overall | sum(attribute='neutral_count') %}
+  {% if neutral_total %}
+    <p class="hint">
+      另有 {{ neutral_total }} 笔中性记录未计入合计，
+      <a href="{{ url_for('transactions', direction='neutral') }}">逐笔看 →</a>
+    </p>
+  {% endif %}
 </section>
 
 {% if months %}
@@ -60,7 +70,7 @@
             <th>月份</th>
             {% if multiple_currencies %}<th>币种</th>{% endif %}
             <th class="num">收入</th><th class="num">支出</th>
-            <th class="num">结余</th><th class="num">中性笔数</th><th class="num">总条数</th>
+            <th class="num">结余</th><th class="num">总条数</th>
           </tr>
         </thead>
         <tbody>
@@ -71,7 +81,6 @@
               <td class="num money-in">{{ row.income | amount }}</td>
               <td class="num money-out">{{ row.expense | amount }}</td>
               <td class="num">{{ (row.income - row.expense) | amount }}</td>
-              <td class="num muted">{{ row.neutral_count }}</td>
               <td class="num muted">{{ row.total }}</td>
             </tr>
           {% endfor %}
@@ -111,34 +120,8 @@
   {% endif %}
 </section>
 
-{# 中性行单列：转账、还款、退款这些「不计收支」的行不混进上面的合计。 #}
-{% if overall | selectattr('neutral_count') | list %}
-  <section>
-    <h2>中性记录</h2>
-    <div class="table-scroll">
-      <table class="data">
-        <thead>
-          <tr>
-            {% if multiple_currencies %}<th>币种</th>{% endif %}
-            <th class="num">条数</th><th class="num">金额合计</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for group in overall if group.neutral_count %}
-            <tr>
-              {% if multiple_currencies %}<td class="muted">{{ group.display_currency }}</td>{% endif %}
-              <td class="num muted">{{ group.neutral_count }}</td>
-              <td class="num muted">{{ group.neutral_amount | amount }}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    <p class="hint">
-      <a href="{{ url_for('transactions', direction='neutral') }}">在交易记录里逐笔看 →</a>
-    </p>
-  </section>
-{% endif %}
+{# 中性行不在这一页单独成块：它们不是收支，也不该被读成「有一块账没算进去」。
+   要逐笔看就去交易记录那一页按「中性」筛——入口在账本总计下面那一行灰字里。 #}
 
 {# 单笔到阈值的大额单列在页面最底部。它们**在账本里**，只是不进上面的合计。 #}
 {% if large %}

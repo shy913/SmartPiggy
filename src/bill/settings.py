@@ -1,4 +1,4 @@
-"""本地设置：配色、汇率换算、时区、大额阈值、AA 合并。
+"""本地设置：配色、汇率换算、时区、大额阈值、合并。
 
 跟列映射一样走 TOML：内置一份默认值，用户目录里放一份同名文件就整体覆盖它。
 **设置页保存时写的就是用户目录那份**（见 `save`），改了下次请求就生效，不用重启。
@@ -83,6 +83,8 @@ class Settings:
     large_in_cents: int = DEFAULT_LARGE_IN * 100
     # 导入后自动检测并合并 AA。
     merge_enabled: bool = True
+    # 顺带把「收支平衡」的两笔（一笔支出 + 之后一笔等额收入）也合上，净额是 0。
+    merge_balanced: bool = True
     # 收款落在支出之后多少小时内算同一次。
     merge_window_hours: float = DEFAULT_WINDOW_HOURS
     # 每笔收款与「人均份额」允许差多少（显示币种的单位，不是分）。
@@ -200,6 +202,7 @@ def load() -> Settings:
             large_out_cents=large_out,
             large_in_cents=large_in,
             merge_enabled=bool(merge.get("enabled", True)),
+            merge_balanced=bool(merge.get("balanced", True)),
             merge_window_hours=window,
             merge_tolerance=tolerance,
             merge_keywords=keywords,
@@ -229,6 +232,7 @@ def as_form(conf: Settings) -> dict[str, Any]:
         "large_out": _major(conf.large_out_cents),
         "large_in": _major(conf.large_in_cents),
         "merge_enabled": conf.merge_enabled,
+        "merge_balanced": conf.merge_balanced,
         "merge_window_hours": f"{conf.merge_window_hours:g}",
         "merge_tolerance": f"{conf.merge_tolerance:g}",
         "merge_keywords": "、".join(conf.merge_keywords),
@@ -291,6 +295,7 @@ def read_form(data) -> tuple[Settings | None, dict[str, Any], list[str]]:
     large_in = _form_threshold(values["large_in"], "收入", errors)
 
     enabled = bool(data.get("merge_enabled"))
+    balanced_merge = bool(data.get("merge_balanced"))
     try:
         window = float(values["merge_window_hours"] or DEFAULT_WINDOW_HOURS)
         if window <= 0:
@@ -326,6 +331,7 @@ def read_form(data) -> tuple[Settings | None, dict[str, Any], list[str]]:
             large_out_cents=large_out,
             large_in_cents=large_in,
             merge_enabled=enabled,
+            merge_balanced=balanced_merge,
             merge_window_hours=window,
             merge_tolerance=tolerance,
             merge_keywords=keywords,
@@ -353,6 +359,7 @@ def _echo(data) -> dict[str, Any]:
         "large_out": (data.get("large_out") or "").strip(),
         "large_in": (data.get("large_in") or "").strip(),
         "merge_enabled": bool(data.get("merge_enabled")),
+        "merge_balanced": bool(data.get("merge_balanced")),
         "merge_window_hours": (data.get("merge_window_hours") or "").strip(),
         "merge_tolerance": (data.get("merge_tolerance") or "").strip(),
         "merge_keywords": (data.get("merge_keywords") or "").strip(),
@@ -407,8 +414,10 @@ out = {large_out}
 in = {large_in}
 
 [merge]
-# AA / 拼单：一笔支出加上之后跟着来的几笔等额转入，合并成一行按净额算。
+# 合并：一笔支出加上之后跟着来的收款，合并成一行按净额算。
 enabled = {merge_enabled}
+# 收支平衡：一笔支出之后一笔跟它等额的收入，净额是 0，也一起合上。
+balanced = {merge_balanced}
 window_hours = {merge_window}
 tolerance = {merge_tolerance}
 # 转入要像「别人还你钱」才参与自动合并。留空 = 关掉这道过滤。
@@ -432,6 +441,7 @@ def render_toml(conf: Settings) -> str:
         large_out=_major(conf.large_out_cents),
         large_in=_major(conf.large_in_cents),
         merge_enabled="true" if conf.merge_enabled else "false",
+        merge_balanced="true" if conf.merge_balanced else "false",
         merge_window=f"{conf.merge_window_hours:g}",
         merge_tolerance=f"{conf.merge_tolerance:g}",
         merge_keywords=keywords,

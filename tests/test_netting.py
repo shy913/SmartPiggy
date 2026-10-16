@@ -604,6 +604,59 @@ def test_autodetect_only_looks_at_the_given_window(conn, book):
         assert repo.autodetect(conn, since="2026-03-01 00:00:00", until="2026-03-03 00:00:00") == 1
 
 
+def balanced_pair(book):
+    """一笔支出 + 五小时后原额转回来。"""
+    return book(
+        [
+            {"direction": Direction.OUT, "amount_cents": 3_850, "counterparty": "Tesco"},
+            {
+                "direction": Direction.IN,
+                "amount_cents": 3_850,
+                "occurred_at": "2026-01-05 18:30:45",
+                "description": "转账备注:微信转账",
+            },
+        ]
+    )
+
+
+def test_autodetect_merges_a_balanced_pair(conn, book):
+    """−£38.50 之后五小时 +£38.50：钱原封不动绕了一圈，净额是 0。
+
+    合上之后这一行变成中性：收入、支出两头都不该再记着这笔钱。
+    """
+    balanced_pair(book)
+    with conn:
+        assert repo.autodetect(conn) == 1
+
+    row = repo.list_transactions(conn)[0]
+    assert row["direction"] == "neutral"
+    assert row["amount_cents"] == 0
+    totals = repo.month_totals(conn, "2026-01")[0]
+    assert totals["income"] == 0 and totals["expense"] == 0
+
+    with conn:
+        assert repo.autodetect(conn) == 0, "已经入组的行不再参与"
+    assert repo.count_transactions(conn) == 1
+
+
+def test_balanced_pairs_can_be_turned_off(conn, book, isolated_data_dir):
+    """关掉它，AA 那条路照常——两条规则各有一个开关。"""
+    (isolated_data_dir / "settings.toml").write_text(
+        'timezone = "Asia/Shanghai"\n\n[currency]\ndisplay = "CNY"\nrates = {}\n'
+        "\n[large]\nout = 0\nin = 0\n\n[merge]\nbalanced = false\n",
+        encoding="utf-8",
+    )
+    balanced_pair(book)
+    with conn:
+        assert repo.autodetect(conn) == 0
+    assert repo.count_transactions(conn) == 2
+
+    # 同一份设置下，一次 AA 照常合上
+    dinner(book)
+    with conn:
+        assert repo.autodetect(conn) == 1
+
+
 # --------------------------------------------------------------------------
 # 跨币种
 # --------------------------------------------------------------------------
