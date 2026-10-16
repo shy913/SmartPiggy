@@ -64,6 +64,11 @@ _started_at = datetime.now(timezone.utc)
 # endpoint 是 None）也不例外——宁可让 404 也先走一趟登录页。
 OPEN_ENDPOINTS = frozenset({"login_page", "login", "logout", "healthz", "static"})
 
+# 接口那边不登录也能打的几个。同样**逐个点名**，而且只点登录本身：
+# 「问一句我登没登」「登录」「退出」，除此之外一律 401。
+# （SPA 的页面外壳是另一回事，见下面 require_login 里的说明。）
+OPEN_API_ENDPOINTS = frozenset({"api.session_state", "api.login", "api.logout"})
+
 USAGE = "用法：bill [--set-password]"
 
 # 顶部导航的四个区。当前在哪一区靠它给那一条加高亮。
@@ -195,11 +200,56 @@ def create_app() -> Flask:
             g.auth = auth.load()
         return g.auth
 
-    attempts = auth.Attempts()
+    # 跟接口共用一个计数器：两处各持一个的话，同一台机器上的失败次数会被算成
+    # 两份，锁得比该锁的松。（旧的那个登录页在下一批里就删掉了，现在先共用着。）
+    app.extensions[api.ATTEMPTS_KEY] = auth.Attempts()
+    attempts = app.extensions[api.ATTEMPTS_KEY]
+
+    @app.before_request
+    def api_needs_json():
+        """改状态的接口只收 ``Content-Type: application/json``。
+
+        这是一层**零成本的加料**，不是全部依靠：会话 cookie 是 SameSite=Lax，
+        跨站的表单提交本来就带不上它。加这条是因为跨站 ``<form>`` 只能发出
+        form-urlencoded / multipart / text-plain 三种，JSON 它发不出来——于是
+        又堵掉一条路，代价是零。
+
+        注册在 ``require_login`` **之前**：先按内容类型挡掉，再谈登录。反过来的话，
+        一个跨站表单会先被当成「没登录」而放过去走另一条分支的语义。
+        """
+        if not request.path.startswith("/api/") or request.method not in (
+            "POST",
+            "PUT",
+            "PATCH",
+        ):
+            return None
+        # 没有请求体的 POST（隐藏、扫描、取消预览、确认）按路径就说明了意图，
+        # 没有东西可以被跨站伪造。要求它们也带个 JSON 头，只会让一整类正常的
+        # 请求平白收到 415。
+        if not request.content_length:
+            return None
+        # 上传是唯一带文件的入口，只能走 multipart，单独放行。
+        if request.endpoint == api.UPLOAD_ENDPOINT:
+            return None
+        if request.mimetype not in api.JSON_ONLY:
+            return jsonify(
+                error={"code": "unsupported_media_type", "message": "这个接口只收 JSON。"}
+            ), 415
+        return None
 
     @app.before_request
     def require_login():
         """没登录就先去登录页，并记下本来要去哪。"""
+        # 接口走另一条路：303 到登录页对 SPA 来说是一坨 HTML，``response.json()``
+        # 当场抛，屏幕上就是白屏。它要的是 401 加一个能认出来的 code。
+        if request.path.startswith("/api/"):
+            if request.endpoint in OPEN_API_ENDPOINTS:
+                return None
+            conf = current_auth()
+            if conf is None or session.get("logged_in"):
+                return None
+            return api.unauthenticated()
+
         # 先看开放名单，再读配置：那几页不该因为 auth.toml 读不出来而跟着 500——
         # 恰恰是登录坏掉的时候，登录页的那张样式表更要拿得到。
         if request.endpoint in OPEN_ENDPOINTS:

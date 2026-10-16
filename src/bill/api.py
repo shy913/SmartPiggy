@@ -20,14 +20,37 @@ from __future__ import annotations
 
 import json
 
-from flask import Blueprint, g, jsonify, request, session
+from flask import Blueprint, current_app, g, jsonify, request, session
 
-from . import auth, config, db, entry, ingest, params, repo, settings, themes
+from . import auth, config, dates, db, entry, ingest, params, repo, settings, themes
+from .errors import BillError, ProfileError, UploadError
 from .profiles import load_all, validate
 
 blueprint = Blueprint("api", __name__, url_prefix="/api")
 
-__all__ = ["blueprint", "get_conn", "current_auth", "list_counts"]
+__all__ = ["blueprint", "get_conn", "current_auth", "list_counts", "attempts"]
+
+# 猜密码的失败计数挂在 ``app.extensions`` 上，而不是这个模块的全局变量：
+# 全局的话它就成了**进程级**状态，一次进程里建两个 app（测试就是这么干的）
+# 会共用同一个计数器，前面用例试错几次，后面的用例就撞上 429——一个跟被测行为
+# 毫无关系的失败。挂在 app 上，生产里仍然是「一个进程一个计数器」，测试里
+# 每个 app 一份，两边都对。
+ATTEMPTS_KEY = "bill.attempts"
+
+
+def attempts() -> auth.Attempts:
+    """这次请求所属 app 的失败计数。"""
+    return current_app.extensions[ATTEMPTS_KEY]
+
+# 改状态的接口只收这几种 Content-Type。
+#
+# 这是一层**零成本的加料**，不是 CSRF 的全部依靠：会话 cookie 是 SameSite=Lax，
+# 跨站的表单提交本来就带不上它。再加这条是因为跨站 ``<form>`` 只能发出
+# form-urlencoded / multipart / text-plain 三种，而 JSON 它发不出来——于是
+# 「必须带 Content-Type: application/json」等于又堵掉一条路，代价是零。
+# 上传是唯一带文件的入口，只能走 multipart，单独放行。
+JSON_ONLY = {"application/json"}
+UPLOAD_ENDPOINT = "api.create_import"
 
 
 # --------------------------------------------------------------------------
@@ -387,8 +410,506 @@ def profiles_page():
 
 
 # --------------------------------------------------------------------------
+# 登录
+# --------------------------------------------------------------------------
+
+def _login_error(message: str, status: int):
+    return jsonify(error={"code": "unauthenticated", "message": message}), status
+
+
+@blueprint.post("/session")
+def login():
+    """没设密码时没有这回事，直接说成功——跟旧界面「没设密码就没有登录页」一致。"""
+    conf = current_auth()
+    if conf is None:
+        return jsonify(ok=True, auth_enabled=False)
+
+    body = request.get_json(silent=True) or {}
+    password = body.get("password") if isinstance(body, dict) else ""
+    source = request.remote_addr or "?"
+
+    # **先验密码，再数失败。** 这道闸门是给猜密码的人设的，不该把输对了密码的
+    # 那个人一起锁在门外：账本只有这一个密码，没有第二把钥匙。
+    if conf.check(password or ""):
+        attempts().clear(source)
+        session.clear()  # 换一个新的会话，不接着用登录之前那一个
+        session["logged_in"] = True
+        session.permanent = True
+        return jsonify(ok=True, auth_enabled=True)
+
+    attempts().failed(source)
+    wait = attempts().waiting(source)
+    if wait > 0:
+        return _login_error(f"密码错的次数太多了，等 {int(wait) + 1} 秒再试。", 429)
+    return _login_error("密码不对。", 401)
+
+
+@blueprint.delete("/session")
+def logout():
+    session.clear()
+    return "", 204
+
+
+# --------------------------------------------------------------------------
+# 表单适配
+# --------------------------------------------------------------------------
+
+class JsonForm:
+    """把一份 JSON 对象包成表单适配器。
+
+    ``settings.read_form`` 和 ``entry.read`` 收的都是 werkzeug 的 multidict
+    （``get`` / ``getlist``）。包一层比把那两处改成两套接口便宜得多——而且
+    **校验和文案全都留在了原处**，那才是表单行为真正的所在（哪一句提示对应
+    哪一种填错，测试逐条盯着）。
+
+    复选框从 JSON 来的是布尔：表单里「勾上」才有这个字段，所以 ``False``
+    要还原成「没有」，不然 ``bool(data.get(...))`` 永远为真。
+    """
+
+    def __init__(self, data: dict | None):
+        self._data = data if isinstance(data, dict) else {}
+
+    def get(self, key, default=None):
+        value = self._data.get(key, default)
+        if isinstance(value, bool):
+            return "on" if value else None
+        return value
+
+    def getlist(self, key):
+        value = self._data.get(key)
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        return [str(value)]
+
+    def __contains__(self, key) -> bool:
+        return key in self._data
+
+
+def _body() -> dict:
+    data = request.get_json(silent=True)
+    return data if isinstance(data, dict) else {}
+
+
+# --------------------------------------------------------------------------
+# 记一笔 / 改一笔
+# --------------------------------------------------------------------------
+
+def _form_payload(connection, values, errors, *, transaction=None) -> dict:
+    """表单回显：填过的东西原样交回去，不让人重填一遍。"""
+    return {
+        "values": values,
+        "errors": errors,
+        "transaction": row(transaction),
+        # 「回到交易记录」落在这一笔**现在待的那个月**上：它可能已经被并进别个月
+        # 的组（组落在最早那一笔上），照它自己的日期回，落在的是空屏。
+        "back_month": (
+            repo.effective_month(connection, transaction["id"]) if transaction else None
+        ),
+        "accounts": _account_rows(connection),
+        "currencies": repo.transaction_currencies(connection),
+        "categories": repo.transaction_categories(connection),
+        "display_currency": settings.load().display_currency,
+    }
+
+
+@blueprint.post("/transactions")
+def transaction_create():
+    connection = get_conn()
+    conf = settings.load()
+    draft = entry.read(JsonForm(_body()), display_currency=conf.display_currency)
+    if not draft.ok:
+        return (
+            jsonify(
+                error={"code": "validation", "message": "；".join(draft.errors)},
+                **_form_payload(connection, _body(), draft.errors),
+            ),
+            400,
+        )
+
+    with connection:
+        account_id = repo.ensure_account(connection, draft.account_name, "manual")
+        txn_id = repo.insert_manual_transaction(
+            connection,
+            account_id=account_id,
+            transaction=draft.transaction(),
+            category=draft.category,
+        )
+        _autodetect_around(connection, conf, draft.occurred_at)
+        # 刚记的这笔要是立刻被并进了别个月的组，就报它现在待的那个月
+        month = repo.effective_month(connection, txn_id) or draft.month
+    return jsonify(id=txn_id, month=month), 201
+
+
+@blueprint.patch("/transactions/<int:txn_id>")
+def transaction_update(txn_id: int):
+    connection = get_conn()
+    found = repo.get_transaction(connection, txn_id)
+    if found is None:
+        return _not_found("没有这一笔。")
+
+    fields = _body()
+    draft = entry.read(JsonForm(fields), display_currency=settings.load().display_currency)
+    if not draft.ok:
+        # 账户那一格是只读的，不会随表单提交上来——拿库里的补上，别让用户在改错
+        # 一处的时候连这是哪个账户都看不见。
+        return (
+            jsonify(
+                error={"code": "validation", "message": "；".join(draft.errors)},
+                **_form_payload(
+                    connection, {**entry.from_row(found), **fields}, draft.errors,
+                    transaction=found,
+                ),
+            ),
+            400,
+        )
+
+    with connection:
+        repo.update_transaction(connection, txn_id, draft.fields())
+        month = repo.effective_month(connection, txn_id) or draft.month
+    return jsonify(id=txn_id, month=month)
+
+
+@blueprint.delete("/transactions/<int:txn_id>")
+def transaction_delete(txn_id: int):
+    connection = get_conn()
+    with connection:
+        if not repo.delete_transaction(connection, txn_id):
+            return _not_found("没有这一笔。")
+    return "", 204
+
+
+def _toggle_hidden(txn_id: int, hidden: bool):
+    connection = get_conn()
+    with connection:
+        if not repo.set_hidden(connection, txn_id, hidden):
+            return _not_found("没有这一笔。")
+    # 页头那两个数得服务端算准了交回去——「全表还隐藏着几笔」客户端算不出来。
+    conf = settings.load()
+    query = params.list_query(request.args, conf)
+    total, hidden_total = list_counts(connection, query)
+    return jsonify(
+        hidden=hidden,
+        total=total,
+        hidden_total=hidden_total,
+        # 当前这一档排不排得下它。排不下就把那一行从列表里撤掉，不然「只看隐藏」
+        # 里还原一笔，它还会赖在列表上不走。
+        keep=not (
+            (query["hidden"] == "0" and hidden)
+            or (query["hidden"] == "1" and not hidden)
+        ),
+        hint=params.list_hint(total, hidden_total),
+    )
+
+
+@blueprint.post("/transactions/<int:txn_id>/hide")
+def transaction_hide(txn_id: int):
+    return _toggle_hidden(txn_id, True)
+
+
+@blueprint.delete("/transactions/<int:txn_id>/hidden")
+def transaction_unhide(txn_id: int):
+    return _toggle_hidden(txn_id, False)
+
+
+def _autodetect_around(connection, conf, moment: str) -> int:
+    """手动记一笔之后，顺手看一眼这附近有没有 AA。
+
+    范围只在那一笔前后各一个窗口，不扫全库——手动记一笔不该顺带把整个账本重算一遍。
+    """
+    if not conf.merge_enabled or not moment:
+        return 0
+    reach = conf.merge_window_hours
+    return repo.autodetect(
+        connection,
+        since=dates.shift(moment, hours=-reach),
+        until=dates.shift(moment, hours=reach),
+    )
+
+
+@blueprint.patch("/transactions")
+def transactions_bulk_reclassify():
+    """勾选之后把分类一起改掉。"""
+    ids = [value for value in map(params.as_int, _body().get("transaction_ids") or []) if value]
+    if not ids:
+        return _error("validation", "先在左边勾选几笔。", 400)
+    with get_conn() as connection:
+        changed = repo.reclassify(connection, ids, (_body().get("category") or "").strip())
+    return jsonify(changed=changed)
+
+
+# --------------------------------------------------------------------------
+# 合并组
+# --------------------------------------------------------------------------
+
+@blueprint.post("/groups")
+def group_create():
+    """把勾选的几笔合成一组。"""
+    ids = [value for value in map(params.as_int, _body().get("transaction_ids") or []) if value]
+    if not ids:
+        return _error("validation", "先在左边勾选几笔。", 400)
+    connection = get_conn()
+    try:
+        with connection:
+            group_id = repo.create_group(connection, origin="manual", transaction_ids=ids)
+    except BillError as error:
+        # 「已经并进别组了」「有币种没配汇率」这些是**冲突**，不是填错了：请求本身
+        # 没问题，是当前状态不允许。前端据此提示，而不是当表单错误去标红字段。
+        return _error("conflict", str(error), 409)
+    return jsonify(group_id=group_id), 201
+
+
+@blueprint.post("/groups/scan")
+def groups_scan():
+    """把整个账本重新扫一遍，补检测用。"""
+    connection = get_conn()
+    with connection:
+        created = repo.autodetect(connection)
+    return jsonify(created=created)
+
+
+@blueprint.delete("/groups/<int:group_id>")
+def group_dissolve(group_id: int):
+    connection = get_conn()
+    with connection:
+        if not repo.dissolve_group(connection, group_id, veto=True):
+            return _not_found("没有这一组，可能已经被取消了。")
+    return "", 204
+
+
+@blueprint.patch("/groups/<int:group_id>")
+def group_update(group_id: int):
+    body = _body()
+    connection = get_conn()
+    with connection:
+        saved = repo.update_group(
+            connection,
+            group_id,
+            title=(body.get("title") or "").strip(),
+            category=(body.get("category") or "").strip(),
+            note=(body.get("note") or "").strip(),
+        )
+    if not saved:
+        # 组已经没了（另一个标签页取消过，或者这一页放了太久）。说「保存成功」
+        # 比报错更糟：改的东西根本没人收。
+        return _not_found("没有这一组，可能已经被取消了。")
+    return jsonify(ok=True)
+
+
+# --------------------------------------------------------------------------
+# 设置
+# --------------------------------------------------------------------------
+
+def _rates_to_form(values: dict) -> dict:
+    """把 ``rates: [{code, rate}]`` 摊成 ``rate_code`` / ``rate_value`` 两列。
+
+    GET 回来的就是 ``rates`` 这个形状，PUT 也收同一个形状——线上格式对称，
+    前端不用记两套。往下交给 ``settings.read_form`` 时再还原成它认的那两列，
+    校验逻辑一个字都不用动。
+    """
+    data = dict(values)
+    entries = data.pop("rates", None)
+    if isinstance(entries, list):
+        data["rate_code"] = [
+            str(item.get("code", "")) for item in entries if isinstance(item, dict)
+        ]
+        data["rate_value"] = [
+            str(item.get("rate", "")) for item in entries if isinstance(item, dict)
+        ]
+    return data
+
+
+@blueprint.put("/settings")
+def settings_save():
+    body = _body()
+    conf, values, errors = settings.read_form(JsonForm(_rates_to_form(body)))
+    if errors:
+        # 校验没过就把填过的原样交回去，不让人重填一遍。
+        return jsonify(error={"code": "validation", "message": "；".join(errors)},
+                       errors=errors, values=values), 400
+    try:
+        settings.save(conf)
+    except BillError as error:
+        return _error("validation", str(error), 400)
+    return jsonify(saved=True, values=values)
+
+
+# --------------------------------------------------------------------------
+# 导入：上传 → 预览 → 确认
+# --------------------------------------------------------------------------
+
+def _preview_payload(preview) -> dict:
+    """预览体。
+
+    ``rows`` 按 ``config.PREVIEW_ROWS`` 截断，并明说截了——十万行的账单整个塞进
+    JSON 里，先撑不住的是浏览器。``counts`` / ``totals`` 仍然是**全量**的，
+    所以「导进来几条」这个数不受截断影响。
+    """
+    detected = preview.detected
+    rows = preview.rows(config.PREVIEW_ROWS)
+    income, expense = preview.totals()
+    issues = preview.plan.issues if preview.plan else []
+    seen: dict[str, int] = {}
+    grouped: list[dict] = []
+    for issue in issues:
+        seen[issue.code] = seen.get(issue.code, 0) + 1
+        if seen[issue.code] <= 10:
+            grouped.append(
+                {
+                    "code": issue.code,
+                    "level": issue.level,
+                    "message": issue.message,
+                    "row_number": issue.row_number,
+                }
+            )
+    return {
+        "token": preview.token,
+        "filename": preview.filename,
+        "size_bytes": preview.size_bytes,
+        "profile_name": preview.profile_name,
+        "error": preview.error,
+        "notes": list(preview.notes),
+        "detected": (
+            {"name": detected.profile.name, "score": detected.score, "confident": True}
+            if detected
+            else None
+        ),
+        "candidates": [
+            {
+                "name": candidate.profile.name,
+                "score": candidate.score,
+                "confident": candidate.confident,
+            }
+            for candidate in preview.candidates
+        ],
+        "profiles": [{"name": profile.name, "title": profile.title} for profile in load_all()],
+        # 认不出表头时把文件开头摊出来——这就是用户拿去改配置的信息。
+        "raw_preview": [
+            {"row_number": number, "cells": cells}
+            for number, cells in preview.raw_preview(15)
+        ],
+        "counts": preview.counts(),
+        "totals": {"income": income, "expense": expense},
+        "issues": grouped,
+        "issues_total": len(issues),
+        "rows": [
+            {
+                "row_number": parsed.row_number,
+                "status": parsed.status,
+                "duplicate": parsed.duplicate,
+                "possible_duplicate": parsed.possible_duplicate,
+                "occurred_at": parsed.transaction.occurred_at,
+                "direction": str(parsed.transaction.direction),
+                "amount_cents": parsed.transaction.amount_cents,
+                "currency": parsed.transaction.currency,
+                "counterparty": parsed.transaction.counterparty,
+                "description": parsed.transaction.description,
+                "source_category": parsed.transaction.source_category,
+            }
+            for parsed in rows
+        ],
+        "max_rows": config.PREVIEW_ROWS,
+        "truncated": (preview.plan is not None and len(preview.plan.rows) > config.PREVIEW_ROWS),
+    }
+
+
+@blueprint.post("/imports")
+def create_import():
+    """收下文件，先解析一遍给用户看。**这一步还不写库。**"""
+    file = request.files.get("file")
+    if file is None or not file.filename:
+        return _error("validation", "请先选一个账单文件。", 400)
+    try:
+        preview = ingest.stage(get_conn(), file.filename, file.read())
+    except UploadError as error:
+        return _error("validation", str(error), 400)
+    return jsonify(preview=_preview_payload(preview)), 201
+
+
+def _expired(message: str):
+    """预览没了：410 而不是 404。
+
+    它是**曾经存在、现在过期**的东西，不是「你找错了地址」。前端据此显示
+    「重新上传一次就行」＋一个回上传页的按钮，而不是一个干巴巴的找不到。
+    """
+    return _error("preview_expired", message, 410)
+
+
+@blueprint.get("/imports/previews/<token>")
+def import_preview(token: str):
+    try:
+        preview = ingest.store.get(token)
+    except ingest.PreviewExpired as error:
+        return _expired(str(error))
+    return jsonify(preview=_preview_payload(preview))
+
+
+@blueprint.post("/imports/previews/<token>/profile")
+def import_reprofile(token: str):
+    """换一个列映射重新解析。文件还在暂存区里，不用重传。"""
+    name = (_body().get("profile") or "").strip()
+    try:
+        if name:
+            ingest.reprofile(get_conn(), token, name)
+        preview = ingest.store.get(token)
+    except ingest.PreviewExpired as error:
+        return _expired(str(error))
+    except ProfileError as error:
+        # 这份配置本身有问题：把它记在预览上，让页面照常显示、并说明为什么。
+        ingest.store.get(token).error = str(error)
+        preview = ingest.store.get(token)
+    return jsonify(preview=_preview_payload(preview))
+
+
+@blueprint.post("/imports/previews/<token>/confirm")
+def import_confirm(token: str):
+    try:
+        import_id = ingest.confirm(get_conn(), token)
+    except ingest.PreviewExpired as error:
+        return _expired(str(error))
+    except BillError as error:
+        return _error("validation", str(error), 400)
+    return jsonify(import_id=import_id), 201
+
+
+@blueprint.delete("/imports/previews/<token>")
+def import_cancel(token: str):
+    ingest.store.drop(token)
+    return "", 204
+
+
+@blueprint.delete("/imports/<int:import_id>")
+def import_delete(import_id: int):
+    connection = get_conn()
+    with connection:
+        if not repo.delete_import(connection, import_id):
+            return _not_found("没有这一次导入。")
+    return "", 204
+
+
+# --------------------------------------------------------------------------
 # 错误
 # --------------------------------------------------------------------------
 
+def _error(code: str, message: str, status: int):
+    """统一的错误体。
+
+    ``message`` 用的是各自领域里原来那串中文，一个字都没改——那些提示语是
+    校验结果的一部分，测试逐条盯着。
+    """
+    return jsonify(error={"code": code, "message": message}), status
+
+
 def _not_found(message: str):
-    return jsonify(error={"code": "not_found", "message": message}), 404
+    return _error("not_found", message, 404)
+
+
+def unauthenticated():
+    """没登录时接口回的那个响应。
+
+    接口**不能**像旧页面那样 303 跳到登录页：SPA 收到的是一个 303，跟着去
+    拿回来的是一整页 HTML，``response.json()`` 直接抛，屏幕上就是白屏。它要的
+    是一个能认出来的 ``code``，好据此弹登录视图。
+    """
+    return _error("unauthenticated", "先登录。", 401)
