@@ -28,10 +28,15 @@ README 里没有的：怎么干活、怎么上线、哪里容易改坏。
 服务是个**手起的后台进程**，没有 systemd：
 
 ```bash
-pkill -f '\.venv/bin/bill'; sleep 1
-(cd /root/bill && nohup .venv/bin/python .venv/bin/bill >> ~/.local/share/bill/bill.log 2>&1 &)
+ps -eo pid,cmd | grep "[v]env/bin/bill"     # 认准 PID（可能不止一个）
+kill <pid>
+cd /root/bill && setsid nohup .venv/bin/bill >> ~/.local/share/bill/bill.log 2>&1 < /dev/null &
 sleep 2 && curl -s localhost:8001/healthz
 ```
+
+**别用 `pkill -f 'venv/bin/bill'` 收这个进程。** 模式匹配认字符串不认进程：
+`pkill -f '\.venv/bin/bill'` 会连你自己这条命令的 shell 一起杀掉（命令行里就带着
+这串），剩下的部分根本不执行 —— 服务停在那儿没人起。**一律按 pid kill。**
 
 `/healthz` 不需要登录，是唯一能拿来做存活检查的入口（另一个免登录的是登录页）。
 日志追加在 `~/.local/share/bill/bill.log`。
