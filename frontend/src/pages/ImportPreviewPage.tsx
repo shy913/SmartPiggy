@@ -115,6 +115,13 @@ export function ImportPreviewPage() {
             <ErrorText>{error}</ErrorText>
           </div>
         ) : null}
+        {data.error || !data.detected ? (
+          <Hint>
+            <Link className="text-accent underline" to="/profiles">
+              到列映射里对一下列名 →
+            </Link>
+          </Hint>
+        ) : null}
       </Card>
 
       {data.error && data.raw_preview.length ? (

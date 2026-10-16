@@ -65,6 +65,13 @@ export function ImportPage() {
         ) : null}
       </Card>
 
+      <Hint>
+        认不出这份格式？{" "}
+        <Link className="text-accent underline" to="/profiles">
+          到列映射里对一下列名 →
+        </Link>
+      </Hint>
+
       <Section title="最近导入">
         {recent.data?.imports.length ? (
           <>
