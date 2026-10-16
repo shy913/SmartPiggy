@@ -546,12 +546,12 @@ _EFFECTIVE_COLUMNS = """
     amount_cents, currency, counterparty, counterparty_account, description,
     memo, payment_method, status, source_txn_id, merchant_txn_id,
     source_category, category, effective_category, profile_name, dedup_key,
-    content_hash, raw_json, created_at, edited_at, signed_cents,
+    content_hash, raw_json, created_at, edited_at, hidden, signed_cents,
     group_id, member_count
 """
 
 
-def _effective_cte(conf) -> str:
+def _effective_cte(conf, *, include_hidden: bool = False) -> str:
     """前缀式 CTE：``WITH ... effective AS (...)``，接上调用方自己的 SELECT。
 
     两个必须一起做的防守：
@@ -561,10 +561,19 @@ def _effective_cte(conf) -> str:
        而且不报错。残留的空壳组由 prune_groups 回收。
     2. **逐列显式命名、两边列数一致**。UNION ALL 是按位置对齐的，写 ``SELECT t.*``
        会在以后给表加列时让这条查询直接炸掉，而且炸得很晚。
+
+    ``include_hidden``：**隐藏的行默认不进这份账本**，所以所有统计（合计、图表、
+    大额、币种清单）天然把它排除在外，不用每个查询各记一次。只有交易记录页要
+    显式传 True——那一页得让隐藏的行以灰字露脸，否则隐藏完就再也找不回来、
+    也没法还原。
+
+    合并组不受这个开关影响：隐藏一笔时它所在的组已经散掉了（见 set_hidden），
+    所以组里不会有隐藏的成员，净额和成员数不会各说各话。
     """
     conv = _amount_in_display(conf, "s.")
     signed = "(CASE s.direction WHEN 'in' THEN 1 WHEN 'out' THEN -1 ELSE 0 END)"
     currency = conf.display_currency
+    only_visible = "" if include_hidden else "AND t.hidden = 0"
     return f"""
     WITH grp_health AS (
       {_group_health_sql(conf)}
@@ -594,12 +603,13 @@ def _effective_cte(conf) -> str:
                t.category,
                COALESCE(NULLIF(t.category, ''), t.source_category) AS effective_category,
                t.profile_name, t.dedup_key, t.content_hash, t.raw_json,
-               t.created_at, t.edited_at, t.signed_cents,
+               t.created_at, t.edited_at, t.hidden, t.signed_cents,
                NULL AS group_id, 1 AS member_count
         FROM tx_signed t
         WHERE NOT EXISTS (
           SELECT 1 FROM grp_member m WHERE m.transaction_id = t.id
         )
+        {only_visible}
         UNION ALL
         -- 合成行顶着哪一个成员的身份显示：优先那笔支出，再取最早的一笔。
         -- 组内可能跨账户，账户和分类都取它，好让按账户筛选、支出构成都还对得上。
@@ -618,7 +628,7 @@ def _effective_cte(conf) -> str:
                a.payment_method, a.status, a.source_txn_id, a.merchant_txn_id,
                a.source_category, g.category,
                COALESCE(NULLIF(g.category, ''), NULLIF(a.category, ''), a.source_category),
-               a.profile_name, '', '', '{{}}', g.created_at, NULL,
+               a.profile_name, '', '', '{{}}', g.created_at, NULL, 0,
                z.net,
                g.id, z.member_count
         FROM tx_groups g
@@ -827,10 +837,14 @@ def list_transactions(
     account_id: int | None = None,
     direction: str | None = None,
     search: str | None = None,
+    hidden: str | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[sqlite3.Row]:
-    where, params = _transaction_filters(month, account_id, direction, search)
+    """列表。``hidden`` 三档：None = 连隐藏的也列出来，'0' = 不含隐藏，'1' = 只看隐藏。"""
+    where, params = _transaction_filters(
+        month, account_id, direction, search, hidden
+    )
     params.extend([limit, offset])
 
     # 列表上显示的是换算后的金额；原币种和原金额仍留在 t.currency /
@@ -841,7 +855,7 @@ def list_transactions(
     large = _is_large(conf, "t.")
     return connection.execute(
         f"""
-        {_effective_cte(conf)}
+        {_effective_cte(conf, include_hidden=hidden != "0")}
         SELECT t.*, a.name AS account_name,
                {amount} AS display_cents,
                -- 大额不进合计这件事，列表页上只靠 is_large 那个标记交代：
@@ -864,14 +878,17 @@ def count_transactions(
     account_id: int | None = None,
     direction: str | None = None,
     search: str | None = None,
+    hidden: str | None = None,
 ) -> int:
     """跟 list_transactions 同源同过滤：一个合并组算一条。两处对不上的话，
-    「共 N 条」和列表行数、以及页数就会各说各话。"""
+    「共 N 条」和列表行数就会各说各话。"""
     conf = settings.load()
-    where, params = _transaction_filters(month, account_id, direction, search)
+    where, params = _transaction_filters(
+        month, account_id, direction, search, hidden
+    )
     return connection.execute(
         f"""
-        {_effective_cte(conf)}
+        {_effective_cte(conf, include_hidden=hidden != "0")}
         SELECT COUNT(*) AS n FROM effective t WHERE {where}
         """,
         params,
@@ -883,6 +900,7 @@ def _transaction_filters(
     account_id: int | None,
     direction: str | None,
     search: str | None,
+    hidden: str | None = None,
 ) -> tuple[str, list]:
     clauses = ["1 = 1"]
     params: list = []
@@ -895,6 +913,10 @@ def _transaction_filters(
     if direction in ("in", "out", "neutral"):
         clauses.append("t.direction = ?")
         params.append(direction)
+    # 「不含隐藏」那一档用不着这一条：隐藏的行在 _effective_cte 里就已经不在了，
+    # 留一条空跑的条件只会让人猜哪边在起作用。所以只给「只看隐藏」加。
+    if hidden == "1":
+        clauses.append("t.hidden = 1")
     if search:
         # 商品、对方、备注三处一起搜——用户记不住自己当时写的哪个字段。
         clauses.append(
@@ -1057,6 +1079,30 @@ def delete_transaction(connection: sqlite3.Connection, txn_id: int) -> bool:
     return cursor.rowcount > 0
 
 
+def set_hidden(connection: sqlite3.Connection, txn_id: int, hidden: bool) -> bool:
+    """把一笔标成隐藏 / 取消隐藏。返回有没有改到这一笔。
+
+    隐藏不是删除：原始金额、币种、去重键、内容指纹一个字都不动，所以重新导入
+    同一份账单时它照样比得中，**不会又插一遍**。改的只是「算不算数」——不进
+    合计、不进图表、不进大额。也**不**盖 edited_at：那一列说的是「分类手改过」，
+    跟算不算数是两件事，混用一个标记会让界面上写着「已改」的一笔看上去像被
+    改了内容。
+
+    隐藏一笔会把**它所在的合并组散掉**。净额是几笔凑出来的一个数，抽掉其中一笔，
+    「这组几笔」和「净额多少」就再也对不上——那正是这个项目最想避免的那种静默
+    错位。与其在两者之间挑一个，不如让那几笔原样各算各的；还原之后想再合起来，
+    重新勾一次就行。
+    """
+    if hidden:
+        _dissolve_groups_touching(connection, "m.transaction_id = ?", (txn_id,))
+        prune_groups(connection)
+    cursor = connection.execute(
+        "UPDATE transactions SET hidden = ? WHERE id = ?",
+        (1 if hidden else 0, txn_id),
+    )
+    return cursor.rowcount > 0
+
+
 def reclassify(
     connection: sqlite3.Connection, txn_ids: Sequence[int], category: str
 ) -> int:
@@ -1132,6 +1178,16 @@ def create_group(
     ).fetchone()["n"]
     if alive != len(ids):
         raise BillError("勾选的记录里有已经不在了的，刷新页面再试。")
+
+    # 隐藏的行不参与合并。它是「不算数」的那一档，合进来的话净额里一半算一半不算，
+    # 而分组页上还写着「N 笔」——两个数一对不上就成了那种不报错的错。界面上隐藏的
+    # 行本来就没有勾选框，这条是给别的调用方兜底的。
+    gone = connection.execute(
+        f"SELECT COUNT(*) AS n FROM transactions WHERE id IN ({marks}) AND hidden = 1",
+        ids,
+    ).fetchone()["n"]
+    if gone:
+        raise BillError(f"勾选的记录里有 {gone} 笔已经隐藏了，先取消隐藏再合。")
 
     taken = connection.execute(
         f"""
@@ -1363,7 +1419,8 @@ def _detect_rows(
 ) -> list[groups.Row]:
     """给检测器准备输入：只带判断要用的字段，金额先换算到显示币种。"""
     conv = _amount_in_display(conf, "t.")
-    clauses = ["t.direction IN ('in', 'out')"]
+    # 隐藏的行不参与检测：合出来的组会带一个不算数的成员，净额和成员数就对不上了。
+    clauses = ["t.direction IN ('in', 'out')", "t.hidden = 0"]
     params: list = []
     if since:
         clauses.append("t.occurred_at >= ?")

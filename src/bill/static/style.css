@@ -626,11 +626,17 @@ table.data th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .tag-large   { color: var(--muted);   border-color: var(--border); }
 .tag-ok      { color: var(--muted);   border-color: var(--border); }
 .tag-dup     { color: var(--muted);   border-color: var(--border); opacity: 0.7; }
+.tag-hidden  { color: var(--muted);   border-color: var(--border); opacity: 0.7; }
 .tag-warn    { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, var(--border)); }
 
 /* 重复行压暗一点，扫一眼就能看出哪些不会入库 */
 tr.row-dup td { opacity: 0.55; }
 tr.row-neutral td { color: var(--muted); }
+
+/* 隐藏的行灰字。它是**另一种不算数**，跟中性、大额同一档，所以走同一个 muted；
+   差别在于勾选列里挂着「隐」、行尾挂着「显示」。
+   这条要压得住 money-in / money-out——那两个是给真的收支上色的。 */
+tr.row-hidden td { color: var(--muted); }
 
 /* 次级按钮 */
 .button.ghost {
@@ -778,8 +784,39 @@ tr.row-neutral td { color: var(--muted); }
   min-height: 2.4rem;
 }
 
-/* 翻页 */
-.pager { display: flex; gap: 0.6rem; margin-top: 1rem; }
+/* 筛选栏能收起来。挑完条件就把地方让给记录，条件本身挪到标题那一行——
+   收起之后页面上要是只写「筛选」两个字，这一屏看着就跟全部记录一样了。 */
+.filter-panel {
+  margin-bottom: 1rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.filter-panel > summary {
+  padding: 0.7rem 1.15rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.filter-panel > summary::marker { color: var(--muted); }
+.filter-state {
+  margin-left: 0.5rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.filter-panel[open] > summary { border-bottom: 1px solid var(--border); }
+/* 里头的 form 还是那一套横排，只是它现在嵌在面板里：面板已经有了边框和底色，
+   再叠一层就成了框里套框。 */
+.filter-panel > .filters {
+  padding: 0.9rem 1.15rem 1rem;
+  margin-bottom: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* 「继续下滑加载更多」：不分页，点一下把下一段接在表后面 */
+.more { margin: 1rem 0 0; }
 
 /* 预览页底部的确认操作 */
 .commit {
@@ -1076,7 +1113,7 @@ ul.members .num { font-variant-numeric: tabular-nums; }
 .card,
 .chart-card,
 .table-scroll,
-.filters,
+.filter-panel,
 .entry,
 .note-form,
 .paths,

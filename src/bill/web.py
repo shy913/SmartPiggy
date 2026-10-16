@@ -45,7 +45,15 @@ from .readers import ACCEPT_ATTR
 __all__ = ["create_app", "main"]
 
 _started_at = datetime.now(timezone.utc)
-PAGE_SIZE = 100
+
+# 交易记录页一次列多少条。这一页不分页——「下一页」会把人从刚才那一屏拽走，
+# 而账目是要一路翻着看的。改成一次给一段，底下挂一个「继续下滑加载更多」，
+# 点一下这一段接着往下长，位置不动。
+#
+# 本地应用没有 JS（全站唯一的那点内联 JS 是几处删除确认），所以做不到「滚到底
+# 自动取下一段」：那要么得上 IntersectionObserver，要么得有个能追加行的接口。
+# 一次给 200 条，日常一个月的账一屏就到底了，多数情况一下都不用点。
+LIST_STEP = 200
 
 # 不登录也能进的地方：登录页自己，加一个给监控用的 /healthz（只回 uptime，
 # 不带任何账目数据），加静态文件——登录页的样式表就在那儿。
@@ -70,6 +78,8 @@ NAV_SECTIONS = {
     "transaction_edit": "transactions",
     "transaction_update": "transactions",
     "transaction_delete": "transactions",
+    "transaction_hide": "transactions",
+    "transaction_unhide": "transactions",
     "groups_page": "transactions",
     "groups_scan": "transactions",
     "group_dissolve": "transactions",
@@ -96,6 +106,40 @@ def nav_section(endpoint: str | None) -> str:
 
 def uptime_seconds() -> int:
     return int((datetime.now(timezone.utc) - _started_at).total_seconds())
+
+
+_DIRECTION_WORDS = {"in": "收入", "out": "支出", "neutral": "中性"}
+_HIDDEN_WORDS = {"0": "不含隐藏", "1": "只看隐藏"}
+
+
+def active_filter_labels(
+    accounts, *, month="", direction="", account_id=None, search="", hidden=""
+) -> list[str]:
+    """当前生效的筛选条件，写成几个短标签。
+
+    筛选栏是能收起来的，收起来之后页面上就只剩一个标题——不把这些条件明写出来，
+    这一屏看着就跟全部记录一模一样，而合计数又是按筛过的算的，两边对不上还
+    找不到原因。账户写名字不写 id：id 是给人看的表格里最没用的一种数。
+
+    顺序跟着筛选栏里那几个控件走，读到的和看到的对得上。
+    """
+    labels = []
+    if month:
+        labels.append(month)
+    if account_id:
+        labels.append(
+            next(
+                (row["name"] for row in accounts if row["id"] == account_id),
+                "账户已不在",
+            )
+        )
+    if word := _DIRECTION_WORDS.get(direction):
+        labels.append(word)
+    if word := _HIDDEN_WORDS.get(hidden):
+        labels.append(word)
+    if search:
+        labels.append(f"搜「{search}」")
+    return labels
 
 
 def _as_int(value: str) -> int | None:
@@ -462,7 +506,7 @@ def create_app() -> Flask:
         """
         still = {
             name: value
-            for name in ("month", "direction", "account", "q", "page")
+            for name in ("month", "direction", "account", "q", "hidden", "limit")
             if (value := (request.form.get(name) or "").strip())
         }
         return go("transactions", **still, **extra)
@@ -474,7 +518,12 @@ def create_app() -> Flask:
         direction = request.args.get("direction") or ""
         account_id = request.args.get("account", type=int)
         search = (request.args.get("q") or "").strip()
-        page = max(request.args.get("page", 1, type=int), 1)
+        hidden = (request.args.get("hidden") or "").strip()
+        if hidden not in ("0", "1"):
+            hidden = ""
+        # limit 是「这一段给到哪」，不是页大小，所以只往上加：链接里手改出来的
+        # 小数不至于把列表缩成一条。
+        limit = max(request.args.get("limit", LIST_STEP, type=int), LIST_STEP)
 
         total = repo.count_transactions(
             connection,
@@ -482,6 +531,7 @@ def create_app() -> Flask:
             account_id=account_id,
             direction=direction or None,
             search=search or None,
+            hidden=hidden or None,
         )
         rows = repo.list_transactions(
             connection,
@@ -489,10 +539,11 @@ def create_app() -> Flask:
             account_id=account_id,
             direction=direction or None,
             search=search or None,
-            limit=PAGE_SIZE,
-            offset=(page - 1) * PAGE_SIZE,
+            hidden=hidden or None,
+            limit=limit,
+            offset=0,
         )
-        # 合并行只带锚点那一笔的文字，要看全组成员得另外取——而且只取这一页
+        # 合并行只带锚点那一笔的文字，要看全组成员得另外取——而且只取这一段
         # 用得到的那些组。
         conf = settings.load()
         members: dict[int, list] = {}
@@ -501,23 +552,33 @@ def create_app() -> Flask:
         ):
             members.setdefault(member["group_id"], []).append(member)
 
+        accounts = repo.accounts(connection)
         return render_template(
             "transactions.html",
             display_currency=conf.display_currency,
             rows=rows,
             members=members,
             group_count=repo.count_groups(connection),
-            accounts=repo.accounts(connection),
+            accounts=accounts,
             categories=repo.transaction_categories(connection),
             total=total,
-            page=page,
-            pages=max((total + PAGE_SIZE - 1) // PAGE_SIZE, 1),
+            # 筛选栏收起来之后，得让人一眼看出这一屏是筛过的——不然看着就像全部
+            # 记录，而汇总和它又对不上。所以把这些条件明写在可以点开的标题旁边。
+            active_filters=active_filter_labels(
+                accounts, month=month, direction=direction,
+                account_id=account_id, search=search, hidden=hidden,
+            ),
+            limit=limit,
+            remaining=max(total - len(rows), 0),
+            next_limit=limit + LIST_STEP,
+            shown_hidden=sum(1 for row in rows if row["hidden"]),
             error=(request.args.get("error") or "").strip() or None,
             filters={
                 "month": month,
                 "direction": direction,
                 "account": account_id,
                 "q": search,
+                "hidden": hidden,
             },
         )
 
@@ -632,6 +693,23 @@ def create_app() -> Flask:
             if not repo.delete_transaction(connection, txn_id):
                 abort(404)
         return back_to_list()
+
+    def toggle_hidden(txn_id: int, hidden: bool):
+        connection = get_conn()
+        with connection:
+            if not repo.set_hidden(connection, txn_id, hidden):
+                abort(404)
+        return back_to_list()
+
+    # 隐藏 / 取消隐藏拆成两条路径，而不是一条带个开关字段：这两个动作都是从
+    # 那张大表单里用 formaction 提交的，走两条路径就不用再为它各塞一个隐藏字段。
+    @app.post("/transactions/<int:txn_id>/hide")
+    def transaction_hide(txn_id: int):
+        return toggle_hidden(txn_id, True)
+
+    @app.post("/transactions/<int:txn_id>/unhide")
+    def transaction_unhide(txn_id: int):
+        return toggle_hidden(txn_id, False)
 
     # ---------------------------------------------------------------- 合并组
 
