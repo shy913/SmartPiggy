@@ -509,6 +509,15 @@ def create_app() -> Flask:
             for name in ("month", "direction", "account", "q", "hidden", "limit")
             if (value := (request.form.get(name) or "").strip())
         }
+        # 行尾那几个按钮顺手把自己的行号交上来，回来自动落回那一行。不这样的话，
+        # 在一份长列表靠后的地方隐掉一笔，303 回来会被甩到页首，还得再翻一遍。
+        # 批量操作没有具体的行，不带这个字段，就还跟以前一样回页首。
+        anchor = (request.form.get("anchor") or "").strip()
+        if anchor.isdigit():
+            return redirect(
+                url_for("transactions", **{**still, **extra}, _anchor=f"row-{anchor}"),
+                code=303,
+            )
         return go("transactions", **still, **extra)
 
     @app.get("/transactions")
@@ -553,6 +562,25 @@ def create_app() -> Flask:
             members.setdefault(member["group_id"], []).append(member)
 
         accounts = repo.accounts(connection)
+        # 「共 N 条，其中 M 条已隐藏」里 N 是全表口径（total），所以 M 也得是——
+        # 只数这一段渲染出来的行，超过一段时 M 就是个偏小的数，而这行字正好是拿来
+        # 解释「列表数含隐藏、汇总数不含」那个差的，写小了就等于把差解释错了。
+        # 三档各算各的：只看隐藏那一档整页都是；不列出那一档一条都不在页面上；
+        # 默认那一档要单问一次全表的数。
+        if hidden == "1":
+            hidden_total = total
+        elif hidden == "0":
+            hidden_total = 0
+        else:
+            hidden_total = repo.count_transactions(
+                connection,
+                month=month or None,
+                account_id=account_id,
+                direction=direction or None,
+                search=search or None,
+                hidden="1",
+            )
+
         return render_template(
             "transactions.html",
             display_currency=conf.display_currency,
@@ -571,7 +599,7 @@ def create_app() -> Flask:
             limit=limit,
             remaining=max(total - len(rows), 0),
             next_limit=limit + LIST_STEP,
-            shown_hidden=sum(1 for row in rows if row["hidden"]),
+            hidden_total=hidden_total,
             error=(request.args.get("error") or "").strip() or None,
             filters={
                 "month": month,

@@ -98,6 +98,24 @@ def test_a_hidden_row_leaves_the_charts_and_the_coverage(conn, book):
     assert repo.coverage(conn)["total"] == 1
 
 
+def test_a_hidden_row_is_not_labelled_large(conn, book, tmp_path):
+    """大额那个标签说的是「不算进合计」，而汇总页的大额块走的是账本口径，
+    隐藏的行在那儿根本不会出现。列表里还标着「大额」就成了标了却查无此笔。
+    """
+    (tmp_path / "settings.toml").write_text(
+        'timezone = "Asia/Shanghai"\n\n[currency]\ndisplay = "CNY"\nrates = {}\n'
+        "\n[large]\nout = 100\nin = 0\n",
+        encoding="utf-8",
+    )
+    # 阈值 100 是显示币种的**主单位**（¥100 = 10000 分），所以这一笔给足
+    ids = book([{"direction": Direction.OUT, "amount_cents": 50_000}])
+    assert repo.list_transactions(conn)[0]["is_large"] == 1
+
+    repo.set_hidden(conn, ids[0], True)
+    assert repo.list_transactions(conn)[0]["is_large"] == 0, "隐藏的行不该还挂着「大额」"
+    assert repo.large_transactions(conn) == [], "大额页本来就不列它"
+
+
 def test_unhiding_puts_it_back(conn, book):
     ids = two_expenses(book)
     repo.set_hidden(conn, ids[0], True)
@@ -310,6 +328,66 @@ def test_the_hidden_filter_is_offered_on_the_page(client):
 # --------------------------------------------------------------------------
 # 筛选栏收起来、列表往下长
 # --------------------------------------------------------------------------
+
+
+def test_the_hidden_count_covers_the_whole_list_not_just_this_chunk(client, monkeypatch):
+    """页头那行「共 N 条，其中 M 条已隐藏」里的 M 得跟 N 同源。
+
+    N 是全表口径，M 只数这一段渲染出来的行就不对了——而这一行字正好是拿来解释
+    「列表数含隐藏、汇总数不含」那个差的，写小了等于把差解释错了。
+    """
+    monkeypatch.setattr("bill.web.LIST_STEP", 2)
+    for i in range(5):
+        record(client, counterparty=f"第 {i} 笔")
+    ids = checkbox_ids(client, limit=5)
+    assert len(ids) == 5
+    # 先隐第一段里的第 1 笔，再隐一段之外的第 5 笔
+    for txn_id in (ids[0], ids[4]):
+        assert client.post(f"/transactions/{txn_id}/hide").status_code == 303
+
+    page = body(client.get("/transactions"))  # 默认只看得到一段（2 条）
+    assert "共 5 条，其中 2 条已隐藏" in page, "两笔都隐了，不能只算看见的那一笔"
+
+
+def test_the_only_hidden_view_counts_itself(client, monkeypatch):
+    monkeypatch.setattr("bill.web.LIST_STEP", 2)
+    for i in range(5):
+        record(client, counterparty=f"第 {i} 笔")
+    for txn_id in checkbox_ids(client, limit=5):
+        client.post(f"/transactions/{txn_id}/hide")
+
+    page = body(client.get("/transactions?hidden=1"))
+    assert "共 5 条，其中 5 条已隐藏" in page, "这一档整页都是隐藏的，不能只数这一段"
+
+
+def test_the_not_listed_view_says_none_are_shown(client, monkeypatch):
+    monkeypatch.setattr("bill.web.LIST_STEP", 2)
+    for i in range(3):
+        record(client, counterparty=f"第 {i} 笔")
+    client.post(f"/transactions/{checkbox_ids(client)[0]}/hide")
+    page = body(client.get("/transactions?hidden=0"))
+    assert "其中 1 条已隐藏" not in page, "这一档不列隐藏的行，就不该报有几条"
+    assert "row-hidden" not in page
+
+
+def test_acting_on_a_row_keeps_your_place(client, monkeypatch):
+    """行尾那几个按钮把自己的行号交上来，回来落回那一行——
+    长列表上隐一笔被甩回页首，等于每次都要重新翻一遍。"""
+    monkeypatch.setattr("bill.web.LIST_STEP", 2)
+    for i in range(6):
+        record(client, counterparty=f"第 {i} 笔")
+    txn_id = checkbox_ids(client, limit=6)[4]
+
+    response = client.post(f"/transactions/{txn_id}/hide", data={"anchor": "4"})
+    assert response.status_code == 303
+    assert response.headers["Location"].endswith("#row-4")
+
+
+def test_a_row_without_a_number_just_goes_back_to_the_top(client):
+    record(client)
+    response = client.post(f"/transactions/{checkbox_ids(client)[0]}/hide")
+    assert response.status_code == 303
+    assert "#" not in response.headers["Location"]
 
 
 def test_the_filter_panel_is_collapsible(client):

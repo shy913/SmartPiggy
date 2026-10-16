@@ -861,7 +861,11 @@ def list_transactions(
                -- 大额不进合计这件事，列表页上只靠 is_large 那个标记交代：
                -- 金额照原样显示，标记说明它不算进上面的数。早先另有一列叫
                -- 「计入合计」，大额在那列写 0.00——列删了，理由还成立。
-               {large} AS is_large
+               --
+               -- 隐藏的行不标大额：汇总页那个「大额」块走的是账本口径
+               -- （_effective_cte 默认排除隐藏），隐藏的行在那儿根本不会出现。
+               -- 列表里还挂着「大额」就成了「标了却查无此笔」——口径自相矛盾。
+               CASE WHEN t.hidden THEN 0 ELSE {large} END AS is_large
         FROM effective t JOIN accounts a ON a.id = t.account_id
         WHERE {where}
         ORDER BY t.occurred_at DESC, t.id DESC

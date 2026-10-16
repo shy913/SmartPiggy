@@ -61,7 +61,7 @@
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 
 <p class="hint">
-  共 {{ total }} 条{% if shown_hidden %}，其中 {{ shown_hidden }} 条已隐藏{% endif %}。
+  共 {{ total }} 条{% if hidden_total %}，其中 {{ hidden_total }} 条已隐藏{% endif %}。
 </p>
 
 {% if rows %}
@@ -149,14 +149,17 @@
                   <a class="button tiny" href="{{ url_for('transaction_edit', txn_id=tx.id) }}">改</a>
                   {% if tx.hidden %}
                     <button type="submit" class="button tiny"
+                            name="anchor" value="{{ loop.index0 }}"
                             formaction="{{ url_for('transaction_unhide', txn_id=tx.id) }}"
                             formmethod="post">显示</button>
                   {% else %}
                     <button type="submit" class="button tiny"
+                            name="anchor" value="{{ loop.index0 }}"
                             formaction="{{ url_for('transaction_hide', txn_id=tx.id) }}"
                             formmethod="post">隐藏</button>
                   {% endif %}
                   <button type="submit" class="button tiny danger"
+                          name="anchor" value="{{ loop.index0 }}"
                           formaction="{{ url_for('transaction_delete', txn_id=tx.id) }}"
                           formmethod="post"
                           onclick="return confirm('删掉这一笔？')">删</button>
