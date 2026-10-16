@@ -78,6 +78,8 @@ export function MonthlyChart({
     收入: row.income,
     支出: row.expense,
   }));
+  const totalIncome = shown.reduce((sum, row) => sum + row.income, 0);
+  const totalExpense = shown.reduce((sum, row) => sum + row.expense, 0);
   // 只给每组最高那根标个值：每根都标会在窄屏上糊成一片，而精确的数在下面的
   // 表里查得到，悬停也给。
   const peakIncome = Math.max(...data.map((row) => row.收入));
@@ -136,9 +138,16 @@ export function MonthlyChart({
           </Bar>
         </BarChart>
       </ResponsiveContainer>
-      <p className="mt-1 text-xs text-muted">
-        {currency}
-        {rows.length > MONTHS_SHOWN ? " · 图中最近 12 个月" : ""}
+      {/* 图下面这行合计是**跟图同一个窗口**的数：图只画最近 12 个月时，这几个
+          数是那 12 个月的，不是整个区间的——所以末尾要说明图截到哪儿。
+          （整个区间的数在页面顶上的「总计」里，两者不同不是错，是口径不同。） */}
+      <p className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted">
+        <span>{currency}</span>
+        <span>合计收入 {formatAmount(totalIncome)}</span>
+        <span>合计支出 {formatAmount(totalExpense)}</span>
+        <span>结余 {formatAmount(totalIncome - totalExpense)}</span>
+        <span>月均支出 {formatAmount(Math.round(totalExpense / shown.length))}</span>
+        {rows.length > MONTHS_SHOWN ? <span>图中最近 12 个月</span> : null}
       </p>
     </div>
   );

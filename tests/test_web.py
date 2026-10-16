@@ -95,13 +95,18 @@ def test_every_step_of_the_chain_stays_float_free(client):
     assert_no_floats(txns(client, start="", end=""), "list")
 
 
-def test_the_default_view_is_this_month_not_the_whole_book(client, book):
-    """列表页默认缩在当月，汇总页也一样——两边落点必须一致。"""
+def test_the_two_pages_have_different_defaults_on_purpose(client, book):
+    """列表默认看整本账，汇总默认看当月——两边**故意**不一样。
+
+    列表是拿来翻账的（想看哪一段再筛），汇总是拿来问「最近花得怎么样」的。
+    以前两边都是当月，是同一个道理；改成各按各的用途之后，别再把它们拉齐——
+    对齐一次，就有一边不好用。
+    """
     book([{"occurred_at": "2026-01-05 12:00:00", "direction": "out", "amount_cents": 700}])
     listing = txns(client)
     home = summary(client)
-    assert (listing["filters"]["start"], listing["filters"]["end"]) == (
-        home["range"]["start"],
-        home["range"]["end"],
-    )
-    assert listing["total"] == 0, "2026 年 1 月那笔不在当月里"
+
+    assert (listing["filters"]["start"], listing["filters"]["end"]) == ("", ""), "列表不限"
+    assert listing["total"] == 1, "2026 年 1 月那笔也看得到"
+    assert home["range"]["start"] != "", "汇总仍然缩在当月"
+    assert [row["expense"] for row in home["overall"]] == [], "那笔不在当月里"

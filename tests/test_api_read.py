@@ -356,7 +356,12 @@ def test_the_ranking_skips_neutral_rows(client, book):
 # 交易列表与详情
 # --------------------------------------------------------------------------
 
-def test_the_list_opens_on_this_month_up_to_today(client, book):
+def test_the_list_opens_on_the_whole_book(client, book):
+    """交易记录打开就是整本账，不缩在当月。
+
+    这一页是拿来**翻账**的——默认缩在当月的话，想看上个月得先改一次日期。
+    （汇总页不一样，那边默认当月：那一页问的是「最近花得怎么样」。）
+    """
     book(
         [
             {"occurred_at": f"{today()} 12:00:00", "direction": "out", "amount_cents": 1000},
@@ -364,20 +369,33 @@ def test_the_list_opens_on_this_month_up_to_today(client, book):
         ]
     )
     body = txns(client)
-    assert body["filters"]["start"] == f"{today()[:7]}-01"
-    assert body["total"] == 1
+    assert body["filters"]["start"] == ""
+    assert body["filters"]["end"] == ""
+    assert body["total"] == 2, "两边都在"
 
 
-def test_clearing_both_dates_means_unbounded(client, book):
-    """``?start=&end=`` 是「不限」，跟压根没给参数（＝落回当月）是两件事。"""
+def test_clearing_both_dates_lands_on_the_same_view(client, book):
+    """清空两个日期跟一开始打开这一页是**同一个视图**。
+
+    默认就是「不限」，所以清空之后不会反而缩回某个月去——这一点以前不是这样
+    （那时默认当月），改默认值的时候最容易漏掉的就是它。
+    """
     book(
         [
             {"occurred_at": f"{today()} 12:00:00", "direction": "out", "amount_cents": 1000},
             {"occurred_at": "2026-01-05 12:00:00", "direction": "out", "amount_cents": 700},
         ]
     )
-    assert txns(client)["total"] == 1
-    assert txns(client, start="", end="")["total"] == 2
+    assert txns(client)["total"] == txns(client, start="", end="")["total"] == 2
+
+
+def test_the_summary_still_opens_on_this_month(client, book):
+    """汇总那边没跟着改：它的默认仍然是「当月 1 号到今天」。"""
+    book([{"occurred_at": "2026-01-05 12:00:00", "direction": "out", "amount_cents": 700}])
+    span = summary(client)["range"]
+    assert span["mode"] == "month"
+    assert span["start"] == f"{today()[:7]}-01"
+    assert span["end"] == today()
 
 
 def test_the_list_reports_both_totals_and_a_backwards_range(client, book):
@@ -395,6 +413,26 @@ def test_the_list_reports_both_totals_and_a_backwards_range(client, book):
 
     flipped = txns(client, start="2026-12-01", end="2026-01-01")
     assert flipped["backwards"] is True, "填反了要说出来，别长得像「这个月真没记账」"
+
+
+def test_each_listed_row_carries_a_category_emoji(client, book):
+    """分类在列表上退化成一个 emoji，名字仍在 effective_category 里。
+
+    映射表长在 `categories.py`（带关键词兜底），所以由接口算好发出去——
+    搬到前端就等于把那张表再抄一份。
+    """
+    book(
+        [
+            {"occurred_at": f"{today()} 12:00:00", "direction": "out", "amount_cents": 100,
+             "source_category": "餐饮美食"},
+            {"occurred_at": f"{today()} 12:00:00", "direction": "out", "amount_cents": 200,
+             "source_category": ""},
+        ]
+    )
+    rows = {row["amount_cents"]: row for row in txns(client)["rows"]}
+    assert rows[100]["emoji"] == "🍜"
+    assert rows[100]["effective_category"] == "餐饮美食", "名字还得在，前端拿它当 tooltip"
+    assert rows[200]["emoji"] == "", "没分类的不挂通用图标——每行顶同一个记号是白占地方"
 
 
 def test_a_transaction_comes_back_with_its_raw_row(client, book):

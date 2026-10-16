@@ -5,7 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { TransactionsPage } from "./TransactionsPage";
-import type { TransactionList } from "../api/types";
+import type { TransactionList, TransactionRow } from "../api/types";
 
 function listBody(overrides: Partial<TransactionList> = {}): TransactionList {
   return {
@@ -31,6 +31,33 @@ function listBody(overrides: Partial<TransactionList> = {}): TransactionList {
     categories: [],
     group_count: 0,
     display_currency: "CNY",
+    ...overrides,
+  };
+}
+
+/** 列表里的一行。只写用例在意的那些字段，其余给一份说得过去的默认值。 */
+function row(overrides: Partial<TransactionRow> = {}): TransactionRow {
+  return {
+    id: 3,
+    occurred_at: "2026-10-05 12:30:45",
+    occurred_date: "2026-10-05",
+    direction: "out",
+    amount_cents: 3250,
+    currency: "CNY",
+    counterparty: "美团平台商户",
+    counterparty_account: "",
+    description: "",
+    memo: "",
+    effective_category: "餐饮美食",
+    account_id: 1,
+    account_name: "支付宝",
+    group_id: null,
+    member_count: 1,
+    hidden: 0,
+    edited_at: null,
+    display_cents: 3250,
+    is_large: 0,
+    emoji: "🍜",
     ...overrides,
   };
 }
@@ -110,6 +137,7 @@ describe("交易记录页", () => {
             edited_at: null,
             display_cents: 88800,
             is_large: 1,
+            emoji: "📱",
           },
         ],
         total: 1,
@@ -143,6 +171,7 @@ describe("交易记录页", () => {
             edited_at: null,
             display_cents: 3250,
             is_large: 0,
+            emoji: "",
           },
         ],
         total: 1,
@@ -151,5 +180,28 @@ describe("交易记录页", () => {
     );
     await waitFor(() => expect(screen.getByText("已隐藏")).toBeInTheDocument());
     expect(screen.queryByRole("checkbox")).toBeNull();
+  });
+
+  it("列的次序是 日期 / 金额 / 对方说明——先看什么时候、多少钱，再看花在哪儿", async () => {
+    draw(listBody({ total: 1, rows: [row()] }));
+    await waitFor(() => expect(screen.getByText("美团平台商户")).toBeInTheDocument());
+
+    const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
+    expect(headers).toEqual(["", "日期", "金额", "对方 / 说明", "操作"]);
+  });
+
+  it("分类是个 emoji，名字挂在 tooltip 上", async () => {
+    // 这一列窄，分类名单独占一列会让别的列跟着挤。名字没丢——在 title 里。
+    draw(listBody({ total: 1, rows: [row({ effective_category: "餐饮美食", emoji: "🍜" })] }));
+    await waitFor(() => expect(screen.getByTitle("餐饮美食")).toBeInTheDocument());
+    expect(screen.getByTitle("餐饮美食")).toHaveTextContent("🍜");
+  });
+
+  it("没分类的行不挂 emoji", async () => {
+    // 微信账单没有分类列，整本都是空的。给它们统一挂个通用图标，等于每行都
+    // 顶着同一个记号，白占地方。
+    draw(listBody({ total: 1, rows: [row({ effective_category: "", emoji: "" })] }));
+    await waitFor(() => expect(screen.getByText("美团平台商户")).toBeInTheDocument());
+    expect(screen.queryByTitle("")).toBeNull();
   });
 });

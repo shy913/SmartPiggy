@@ -213,28 +213,27 @@ def active_filter_labels(
     return labels
 
 
-def list_query(source, conf) -> dict:
-    """从查询串或表单里取交易列表那几个筛选字段。认不出的 hidden 落回「照常列出」。
+def list_query(source) -> dict:
+    """从查询串里取交易列表那几个筛选字段。认不出的 hidden 落回「照常列出」。
 
-    ``conf`` 由调用方传进来，不在这里现读：一次请求里读两遍设置，万一中间那份
-    文件被改了，同一个页面上两处会用着不同的显示币种。
+    不读设置：这一页的落点已经跟显示时区无关了（默认不限，不是「当月」），
+    再传一份 conf 进来只会让人以为它有用。
     """
     hidden = (source.get("hidden") or "").strip()
     if hidden not in ("0", "1"):
         hidden = ""
-    # 起止日期就是原来那个「月份」筛选，只是把一头拆成两头。没给参数时落回
-    # 「当月 1 号到今天」——这一页平时看的就是本月的账。
+    # 起止日期就是原来那个「月份」筛选，只是把一头拆成两头。
     #
-    # 判的是参数**在不在**，不是值空不空：清空两个输入框提交，得到的是
-    # ``?start=&end=``，意思是「不限」，跟没给参数（＝回到默认的当月）是两件
-    # 事。要分清这两种，只能看 key。
-    if "start" in source or "end" in source:
-        bounds = {
-            "start": clean_date(source.get("start")),
-            "end": clean_date(source.get("end")),
-        }
-    else:
-        bounds = default_range(conf)
+    # **默认看全部**：打开交易记录就是整本账，想看某一段再自己筛。区间默认缩在
+    # 当月的话，翻上个月的账要先改一次日期——而「翻账」正是这一页的主要用途。
+    # （汇总页不一样，那边默认当月：那一页问的是「最近花得怎么样」。）
+    #
+    # 空值和「没给」在这里是同一件事，都表示不限。所以清空两个输入框跟一开始
+    # 打开这一页得到的是同一个视图，不会出现「清空之后反而缩回了某个月」。
+    bounds = {
+        "start": clean_date(source.get("start")),
+        "end": clean_date(source.get("end")),
+    }
     return {
         **bounds,
         "direction": (source.get("direction") or "").strip(),

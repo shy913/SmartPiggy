@@ -126,6 +126,10 @@ export type TransactionRow = {
   edited_at: string | null;
   display_cents: number;
   is_large: number;
+  /** 分类退化成的一个 emoji（名字在 effective_category 里，挂在 tooltip 上）。
+   *  没分类时是空串——空分类是真实存在的一大类，给它挂个通用图标等于每行都
+   *  顶同一个记号，白占地方。 */
+  emoji: string;
 };
 
 /** 合并组的组员。它们是真实记录，不是合成行。 */
@@ -138,7 +142,9 @@ export type MemberRow = {
   currency: string;
   counterparty: string;
   description: string;
+  effective_category: string;
   display_cents: number;
+  emoji: string;
 };
 
 export type ListFilters = {
