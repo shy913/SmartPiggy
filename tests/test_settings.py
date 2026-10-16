@@ -24,6 +24,7 @@ def form(**overrides) -> dict[str, str]:
         "large_out": "500",
         "large_in": "2000",
         "merge_enabled": "1",
+        "merge_balanced": "1",
         "merge_window_hours": "12",
         "merge_tolerance": "0.5",
         "merge_keywords": "转账、还款",
@@ -162,6 +163,27 @@ def test_an_unknown_theme_in_the_file_fails_loudly(client, isolated_data_dir):
     )
     with pytest.raises(BillError):
         settings.load()
+
+
+def test_the_balanced_switch_round_trips(client, isolated_data_dir):
+    """跟「导入后自动合并」一个套路：勾上写 true，不勾写 false。
+
+    老配置里没有这一项（用户那份 settings.toml 是整体覆盖内置的）——那时要落到
+    默认值上，而不是因为「段里没写」就把功能悄悄关掉。
+    """
+    assert settings.load().merge_balanced is True, "文件里没写这一项时落到默认值"
+
+    save(client)
+    written = (isolated_data_dir / "settings.toml").read_text(encoding="utf-8")
+    assert "balanced = true" in written
+
+    data = form()
+    data.pop("merge_balanced")
+    client.post("/settings", data=data)
+    assert settings.load().merge_balanced is False
+    assert "balanced = false" in (
+        isolated_data_dir / "settings.toml"
+    ).read_text(encoding="utf-8")
 
 
 def test_reading_the_form_back_gives_the_same_settings(isolated_data_dir):

@@ -1389,24 +1389,25 @@ def autodetect(
     since: str | None = None,
     until: str | None = None,
 ) -> int:
-    """扫一遍自动建 AA 组，返回新建了几组。
+    """扫一遍自动建合并组，返回新建了几组。
 
     ``since`` / ``until`` 是**要读进来的记录范围**（含端点），不是「支出」的范围：
     判定要用到支出之后那一段时间的收款，所以调用方得把范围往外放宽一个窗口。
     不传就是全库——给已经记了很久的账本补上用的。
 
-    检测是纯函数（``groups.candidates``），这里只负责取数、换算和落库。
+    检测是纯函数（``groups.detect``），这里只负责取数、换算和落库。
     已经在你取消过的名单上的组合会跳过，不会再自己回来。
 
     **要放在调用方的事务里**（``with connection:``）：它只负责写，提交交给调用方。
     忘了包的话，这里会安安静静什么都不留下。
     """
     conf = settings.load()
-    planned = groups.candidates(
+    planned = groups.detect(
         _detect_rows(connection, conf, since=since, until=until),
         window_hours=conf.merge_window_hours,
         tolerance_cents=conf.tolerance_cents(),
         keywords=conf.merge_keywords,
+        balanced_merge=conf.merge_balanced,
     )
     vetoed = _vetoes(connection)
     created = 0

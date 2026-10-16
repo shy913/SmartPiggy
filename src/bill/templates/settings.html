@@ -62,12 +62,17 @@
   </section>
 
   <section>
-    <h2>AA 合并</h2>
+    <h2>合并</h2>
     <div class="fields">
       <label class="check">
         <input type="checkbox" name="merge_enabled" value="1"
                {{ 'checked' if values.merge_enabled else '' }}>
         导入后自动合并
+      </label>
+      <label class="check">
+        <input type="checkbox" name="merge_balanced" value="1"
+               {{ 'checked' if values.merge_balanced else '' }}>
+        收支平衡的两笔也合上（一笔支出之后一笔等额收入，净额 0）
       </label>
       <label>窗口（小时）<input type="text" name="merge_window_hours" value="{{ values.merge_window_hours }}" size="5"></label>
       <label>容差<input type="text" name="merge_tolerance" value="{{ values.merge_tolerance }}" size="5"></label>
