@@ -1,0 +1,76 @@
+# 银行流水的模板 —— 加一家新银行就从复制这个文件开始。
+#
+#     cp src/bill/data/profiles/bank_generic_example.toml \
+#        ~/.local/share/bill/profiles/我的银行.toml
+#
+# 然后只改 [profile].name / title 和 [columns] 里的列名，不用碰 Python。
+# 不确定列名长什么样？先把文件传上去，预览页会把**实际读到的表头**列出来，
+# 照着抄就行。
+#
+# 银行流水没有统一标准，差异主要在两处，本文件都覆盖了：
+#
+#   1. 日期写法       -> [parse].date_formats 按顺序试
+#   2. 收支怎么表示   -> 见下面 [parse].sign_convention 的三种取值
+
+[profile]
+name   = "example-bank"
+title  = "示例银行（请改）"
+kind   = "bank"
+format = "auto"
+
+[match]
+# 都留空也能用：检测不出来时在预览页手动选这个 profile 就行。
+filename_globs    = ["*明细*", "*流水*"]
+required_headers  = ["交易日期", "交易金额"]
+
+[headers]
+scan_first_rows = 80
+match_any       = ["交易日期", "交易金额"]
+
+[columns]
+# 候选列名按顺序试，谁先出现用谁。你银行叫什么就改成什么。
+date              = ["交易日期", "记账日期", "交易时间"]
+amount            = ["交易金额", "发生额", "金额"]
+direction         = ["收支标志", "借贷标志"]
+counterparty      = ["对方户名", "交易对手", "对方账户名"]
+description       = ["摘要", "交易摘要", "用途"]
+memo              = ["备注"]
+payment_method    = ["渠道"]
+status            = ["状态", "交易状态"]
+source_txn_id     = ["流水号", "交易流水号", "凭证号"]
+counterparty_account = ["对方账号"]
+
+# 收支分两列的银行（借记/贷记、借方/贷方）改用下面这两行，
+# 并且把上面的 amount 和 sign_convention 注释掉：
+#   amount_in  = ["贷方发生额", "收入金额"]
+#   amount_out = ["借方发生额", "支出金额"]
+
+[parse]
+# 按顺序试第一个能解析的。覆盖了 20260105 / 2026-01-05 / 2026/01/05 等写法。
+date_formats = ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y/%m/%d", "%Y%m%d"]
+
+# sign_convention 三选一，决定怎么判断这笔是收还是支：
+#
+#   "direction_column" —— 金额列恒正，另有一列写「收入/支出」。取这个值时必须
+#                         配好下面的 direction 列和 [values]。
+#   "negative_is_out"  —— 单列带正负号，负数是支出（储蓄卡流水常见）。
+#   "negative_is_in"   —— 单列带正负号，负数是收入（信用卡账单常见，反着来）。
+sign_convention = "negative_is_out"
+
+[values]
+# 只有用 direction_column 时才需要。取值写法按你银行的实际内容改。
+in      = ["收入", "转入", "贷"]
+out     = ["支出", "转出", "借"]
+neutral = ["", "/"]
+
+[dedup]
+# 很多银行流水没有唯一流水号。没有就留空，读取层会自动改用
+# 「时间 + 方向 + 金额 + 对方 + 摘要」的内容指纹去重。
+# id_column = ["流水号"]
+id_null_values = ["", "/", "--", "0"]
+
+[cleanup]
+footer_patterns = ['^合\s*计', '^总\s*计', '^-{4,}', '^打印时间', '^第\s*\d+\s*页']
+# 银行流水列少，末尾字段常常是空的。这个值只用来兜住零星窄行，
+# 别往上调——调高会把末尾为空的合法行一起吃掉。
+min_columns     = 2

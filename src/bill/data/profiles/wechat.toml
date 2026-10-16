@@ -1,0 +1,51 @@
+# 微信支付「账单明细」导出（xlsx）。
+#
+# 开头同样有若干行说明，表头在中间。金额列叫「金额(元)」而不是「金额」——
+# 定位表头时必须带上这个括号，否则会跟支付宝的配置互相认错。
+
+[profile]
+name   = "wechat"
+title  = "微信"
+kind   = "wechat"
+format = "xlsx"
+
+[match]
+filename_globs    = ["*微信*", "*wechat*"]
+required_headers  = ["交易时间", "收/支", "金额(元)"]
+preferred_headers = ["交易类型", "商品", "交易单号", "商户单号"]
+
+[headers]
+scan_first_rows = 60
+match_any       = ["交易时间", "收/支", "金额(元)"]
+
+[columns]
+date                = ["交易时间"]
+amount              = ["金额(元)"]
+direction           = ["收/支"]
+counterparty        = ["交易对方"]
+description         = ["商品", "商品说明"]
+payment_method      = ["支付方式"]
+status              = ["当前状态", "交易状态"]
+source_txn_id       = ["交易单号"]
+merchant_txn_id     = ["商户单号"]
+memo                = ["备注"]
+# 微信账单没有分类列，这里就不配 category——对应字段留空。
+# 想要分类的话，需要另做一套关键词规则，不在这一版范围内。
+
+[parse]
+date_formats    = ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"]
+sign_convention = "direction_column"
+
+[values]
+in      = ["收入"]
+out     = ["支出"]
+# 微信对转账、还款这类用「/」表示不计收支。
+neutral = ["/", "不计收支", ""]
+
+[dedup]
+id_column      = ["交易单号"]
+id_null_values = ["", "/", "--", "0"]
+
+[cleanup]
+footer_patterns = ['^共\s*\d+\s*笔', '^-{4,}', '^导出时间', '^收入[:：]', '^支出[:：]', '^中性交易']
+min_columns     = 2

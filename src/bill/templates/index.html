@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}记账{% endblock %}
+
+{% block content %}
+{% if coverage.total == 0 %}
+  <section class="hero">
+    <h1>还没有账目</h1>
+    <p class="lede">
+      把支付宝、微信或银行导出的账单文件传进来，就能自动记录成结构化的收支。
+      文件只在这台机器上解析，不会往外发。
+    </p>
+    <p><a class="button" href="{{ url_for('import_upload') }}">导入第一份账单 →</a></p>
+  </section>
+
+{% else %}
+  <section class="hero">
+    <h1>{{ month }} 的账</h1>
+    <p class="lede">
+      {% if not is_current_month %}
+        这是账本里最近有数据的月份。账本覆盖 {{ coverage.first_day }} 至
+        {{ coverage.last_day }}，共 {{ coverage.total }} 条记录。
+      {% else %}
+        账本覆盖 {{ coverage.first_day }} 至 {{ coverage.last_day }}，共
+        {{ coverage.total }} 条记录。
+      {% endif %}
+      中性收支（转账、还款、退款）{{ month_totals.neutral_count }} 笔，不计入下面的合计。
+    </p>
+    <div class="stats">
+      <div class="stat">
+        <span class="stat-value money-in">{{ month_totals.income | cny }}</span>
+        <span class="stat-label">收入</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value money-out">{{ month_totals.expense | cny }}</span>
+        <span class="stat-label">支出</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value">{{ (month_totals.income - month_totals.expense) | cny }}</span>
+        <span class="stat-label">结余</span>
+      </div>
+    </div>
+    <p>
+      <a class="button" href="{{ url_for('import_upload') }}">导入账单</a>
+      <a class="button ghost" href="{{ url_for('transactions', month=month) }}">看这个月的明细</a>
+      <a class="button ghost" href="{{ url_for('summary') }}">全部汇总</a>
+    </p>
+  </section>
+
+  <section>
+    <h2>账本总计</h2>
+    <div class="stats">
+      <div class="stat">
+        <span class="stat-value money-in">{{ overall.income | cny }}</span>
+        <span class="stat-label">累计收入</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value money-out">{{ overall.expense | cny }}</span>
+        <span class="stat-label">累计支出</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value">{{ (overall.income - overall.expense) | cny }}</span>
+        <span class="stat-label">累计结余</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value">{{ overall.total }}</span>
+        <span class="stat-label">记录条数</span>
+      </div>
+    </div>
+  </section>
+
+  {% if imports %}
+    <section>
+      <h2>最近导入</h2>
+      <ul class="uploads">
+        {% for item in imports %}
+          <li class="upload">
+            <div>
+              <a href="{{ url_for('import_detail', import_id=item.id) }}">{{ item.filename }}</a>
+              <p class="note-meta">
+                {{ item.uploaded_at[:16] }} · {{ item.account_name }} ·
+                {{ item.profile_name }} · 新增 {{ item.inserted_count }} ·
+                重复 {{ item.duplicate_count }}
+              </p>
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+{% endif %}
+{% endblock %}

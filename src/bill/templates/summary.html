@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}记账 — 汇总{% endblock %}
+
+{% block content %}
+<h1>汇总</h1>
+<p class="lede">
+  收入、支出和结余只看「收/支」明确的行；转账、还款、退款这些中性行单列，
+  不混进合计里。
+</p>
+
+<section class="stats">
+  <div class="stat"><span class="stat-value money-in">{{ overall.income | cny }}</span><span class="stat-label">累计收入</span></div>
+  <div class="stat"><span class="stat-value money-out">{{ overall.expense | cny }}</span><span class="stat-label">累计支出</span></div>
+  <div class="stat"><span class="stat-value">{{ (overall.income - overall.expense) | cny }}</span><span class="stat-label">累计结余</span></div>
+  <div class="stat"><span class="stat-value muted">{{ overall.neutral_count }}</span><span class="stat-label">中性记录</span></div>
+</section>
+
+<section>
+  <h2>按月</h2>
+  {% if months %}
+    <div class="table-scroll">
+      <table class="data">
+        <thead>
+          <tr>
+            <th>月份</th><th class="num">收入</th><th class="num">支出</th>
+            <th class="num">结余</th><th class="num">中性笔数</th><th class="num">总条数</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in months %}
+            <tr>
+              <td><a href="{{ url_for('transactions', month=row.month) }}">{{ row.month }}</a></td>
+              <td class="num money-in">{{ row.income | cny }}</td>
+              <td class="num money-out">{{ row.expense | cny }}</td>
+              <td class="num">{{ (row.income - row.expense) | cny }}</td>
+              <td class="num muted">{{ row.neutral_count }}</td>
+              <td class="num muted">{{ row.total }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="empty">还没有数据。<a href="{{ url_for('import_upload') }}">去导入账单 →</a></p>
+  {% endif %}
+</section>
+
+<section>
+  <h2>按账单自带的分类</h2>
+  <p class="hint">
+    这是账单文件里「交易分类 / 交易类型」那一列的原值，直接照用。
+    微信账单没有分类列，所以它的记录都归在「未分类」。
+  </p>
+  {% if categories %}
+    <div class="table-scroll">
+      <table class="data">
+        <thead>
+          <tr><th>分类</th><th class="num">支出</th><th class="num">收入</th><th class="num">条数</th></tr>
+        </thead>
+        <tbody>
+          {% for row in categories %}
+            <tr>
+              <td>{{ row.category }}</td>
+              <td class="num money-out">{{ row.expense | cny }}</td>
+              <td class="num money-in">{{ row.income | cny }}</td>
+              <td class="num muted">{{ row.total }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="empty">还没有数据。</p>
+  {% endif %}
+</section>
+{% endblock %}

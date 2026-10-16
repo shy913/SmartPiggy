@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% block title %}记账 — 预览 {{ preview.filename }}{% endblock %}
+
+{% block content %}
+<p class="breadcrumb"><a href="{{ url_for('import_upload') }}">← 返回导入</a></p>
+<h1>{{ preview.filename }}</h1>
+
+{% for note in preview.notes %}<p class="hint">{{ note }}</p>{% endfor %}
+
+{% if preview.table.notes %}
+  <ul class="notes-list">
+    {% for note in preview.table.notes %}<li>{{ note }}</li>{% endfor %}
+  </ul>
+{% endif %}
+
+<section>
+  <h2>文件信息</h2>
+  <section class="stats compact">
+    {% for label, value in preview.table.describe() %}
+      <div class="stat">
+        <span class="stat-value small">{{ value }}</span>
+        <span class="stat-label">{{ label }}</span>
+      </div>
+    {% endfor %}
+  </section>
+</section>
+
+<section>
+  <h2>用哪份配置解析</h2>
+  {% set detected = preview.detected %}
+  {% if detected %}
+    <p class="hint">
+      自动认出是「{{ detected.profile.title }}」（匹配度 {{ detected.score }}）。
+      认错了就在下面换一份，会就地重新解析，不用重传文件。
+    </p>
+  {% else %}
+    <p class="error">
+      没能确定这是哪种账单格式。换成下面任意一份配置试试，
+      或者照 <code>bank_generic_example.toml</code> 的注释写一份自己的。
+    </p>
+  {% endif %}
+
+  <form class="reprofile" method="post"
+        action="{{ url_for('import_reprofile', token=preview.token) }}">
+    <label for="profile">列映射配置</label>
+    <select id="profile" name="profile">
+      {% for profile in profiles %}
+        <option value="{{ profile.name }}"
+          {{ 'selected' if profile.name == preview.profile_name else '' }}>
+          {{ profile.title }}（{{ profile.name }}）
+        </option>
+      {% endfor %}
+    </select>
+    <button type="submit">用这份重新解析</button>
+  </form>
+
+  {% if preview.candidates %}
+    <details class="candidates">
+      <summary>各个配置的匹配情况</summary>
+      <ul>
+        {% for candidate in preview.candidates %}
+          <li>
+            <strong>{{ candidate.profile.title }}</strong>
+            <span class="badge">{{ candidate.score }}</span>
+            — {{ candidate.reasons | join('；') }}
+          </li>
+        {% endfor %}
+      </ul>
+    </details>
+  {% endif %}
+</section>
+
+{% if preview.error %}
+  <section>
+    <p class="error">{{ preview.error }}</p>
+    <p class="hint">下面是文件开头的原始内容，照着它改配置里的列名即可：</p>
+    <div class="table-scroll">
+      <table class="data">
+        <thead><tr><th class="row-number">#</th><th>内容</th></tr></thead>
+        <tbody>
+          {% for number, row in preview.raw_preview(20) %}
+            <tr>
+              <td class="row-number">{{ number }}</td>
+              <td><code>{{ row | join(' | ') }}</code></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+{% else %}
+  {% set counts = preview.counts() %}
+  {% set totals = preview.totals() %}
+  <section>
+    <h2>解析结果</h2>
+    <div class="stats">
+      <div class="stat">
+        <span class="stat-value">{{ counts.new }}</span>
+        <span class="stat-label">将新增</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value muted">{{ counts.duplicate }}</span>
+        <span class="stat-label">已存在，跳过</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value {{ 'warn' if counts.possible else 'muted' }}">{{ counts.possible }}</span>
+        <span class="stat-label">疑似重复</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value muted">{{ counts.neutral }}</span>
+        <span class="stat-label">中性收支</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value {{ 'bad' if counts.problem else '' }}">{{ counts.problem }}</span>
+        <span class="stat-label">无法解析</span>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat">
+        <span class="stat-value money-in">{{ totals[0] | cny }}</span>
+        <span class="stat-label">新增收入</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value money-out">{{ totals[1] | cny }}</span>
+        <span class="stat-label">新增支出</span>
+      </div>
+    </div>
+  </section>
+
+  {% if preview.plan.issues %}
+    <details class="issues">
+      <summary>解析过程中的提示和问题（{{ preview.plan.issues | length }} 条明细）</summary>
+      {% for code, group in preview.plan.issues_by_code().items() %}
+        <div class="issue-group">
+          <h3>{{ code }} <span class="badge">{{ group | length }}</span></h3>
+          <ul>
+            {% for issue in group[:10] %}
+              <li>
+                <span class="level level-{{ issue.level }}">{{ issue.level }}</span>
+                {{ issue }}
+                {% if issue.raw_row %}<br><code>{{ issue.raw_row }}</code>{% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endfor %}
+    </details>
+  {% endif %}
+
+  <section>
+    <h2>前 {{ [max_rows, preview.rows() | length] | min }} 行</h2>
+    {% if preview.rows() | length > max_rows %}
+      <p class="hint">文件里还有更多行，这里只列前面 {{ max_rows }} 行。</p>
+    {% endif %}
+    <div class="table-scroll">
+      <table class="data">
+        <thead>
+          <tr>
+            <th class="row-number">行</th>
+            <th>日期</th>
+            <th>收支</th>
+            <th class="num">金额</th>
+            <th>交易对方</th>
+            <th>说明</th>
+            <th>账单分类</th>
+            <th>状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in preview.rows(max_rows) %}
+            {% set tx = row.transaction %}
+            <tr class="row-{{ row.status }}">
+              <td class="row-number">{{ row.row_number }}</td>
+              <td>{{ tx.occurred_at }}</td>
+              <td>
+                {% if tx.direction == 'in' %}<span class="tag tag-in">收入</span>
+                {% elif tx.direction == 'out' %}<span class="tag tag-out">支出</span>
+                {% else %}<span class="tag tag-neutral">中性</span>{% endif %}
+              </td>
+              <td class="num {{ 'money-in' if tx.direction == 'in' else 'money-out' if tx.direction == 'out' else 'muted' }}">
+                {{ tx.amount_cents | cny }}
+              </td>
+              <td>{{ tx.counterparty }}</td>
+              <td>{{ tx.description }}</td>
+              <td class="muted">{{ tx.source_category }}</td>
+              <td>
+                {% if row.duplicate %}<span class="tag tag-dup">重复</span>
+                {% elif row.possible_duplicate %}<span class="tag tag-warn">疑似重复</span>
+                {% else %}<span class="tag tag-ok">新增</span>{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  {% if counts.possible %}
+    <p class="hint warn-text">
+      有 {{ counts.possible }} 条的「日期 + 方向 + 金额」跟账本里已有的记录重合，
+      但订单号或文字对不上，没法确定是不是同一笔——多半是重新导出时摘要被改了
+      写法。它们<strong>会照常导入</strong>，你可以先在下面表里核对一眼，
+      标「新增」的才是确定不重复的。
+    </p>
+  {% endif %}
+
+  <section class="commit">
+    <form method="post" action="{{ url_for('import_confirm', token=preview.token) }}">
+      <button type="submit" {{ 'disabled' if counts.new == 0 else '' }}>
+        导入 {{ counts.new }} 条新记录
+      </button>
+      {% if counts.new == 0 %}
+        <span class="hint">没有新记录可导入——这些账单之前都导过了。</span>
+      {% endif %}
+    </form>
+    <form method="post" action="{{ url_for('import_cancel', token=preview.token) }}">
+      <button type="submit" class="ghost">放弃</button>
+    </form>
+  </section>
+{% endif %}
+{% endblock %}

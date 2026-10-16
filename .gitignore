@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# 账本数据库：本地数据，不进版本库
+*.db
+*.db-wal
+*.db-shm
+
+# Claude Code 的 worktree 是工具脚手架，不是源码
+.claude/worktrees/
+
+# 真实账单样本永远只留在本机
+tests/fixtures/real/

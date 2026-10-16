@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}记账 — 交易记录{% endblock %}
+
+{% block content %}
+<h1>交易记录</h1>
+
+<form class="filters" method="get" action="{{ url_for('transactions') }}">
+  <label>月份 <input type="month" name="month" value="{{ filters.month }}"></label>
+  <label>账户
+    <select name="account">
+      <option value="">全部</option>
+      {% for account in accounts %}
+        <option value="{{ account.id }}"
+          {{ 'selected' if filters.account == account.id else '' }}>
+          {{ account.name }}
+        </option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>收支
+    <select name="direction">
+      <option value="" {{ 'selected' if not filters.direction else '' }}>全部</option>
+      <option value="in" {{ 'selected' if filters.direction == 'in' else '' }}>收入</option>
+      <option value="out" {{ 'selected' if filters.direction == 'out' else '' }}>支出</option>
+      <option value="neutral" {{ 'selected' if filters.direction == 'neutral' else '' }}>中性</option>
+    </select>
+  </label>
+  <label>搜索 <input type="search" name="q" value="{{ filters.q }}" placeholder="对方 / 说明 / 备注"></label>
+  <button type="submit">筛选</button>
+  <a class="button ghost" href="{{ url_for('transactions') }}">清空</a>
+</form>
+
+<p class="hint">共 {{ total }} 条，第 {{ page }} / {{ pages }} 页。</p>
+
+{% if rows %}
+  <div class="table-scroll">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>日期</th><th>收支</th><th class="num">金额</th>
+          <th>交易对方</th><th>说明</th><th>账单分类</th>
+          <th>账户</th><th class="num">计入合计</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for tx in rows %}
+          <tr>
+            <td>{{ tx.occurred_at }}</td>
+            <td>
+              {% if tx.direction == 'in' %}<span class="tag tag-in">收入</span>
+              {% elif tx.direction == 'out' %}<span class="tag tag-out">支出</span>
+              {% else %}<span class="tag tag-neutral">中性</span>{% endif %}
+            </td>
+            <td class="num {{ 'money-in' if tx.direction == 'in' else 'money-out' if tx.direction == 'out' else 'muted' }}">
+              {{ tx.amount_cents | cny }}
+            </td>
+            <td>{{ tx.counterparty }}</td>
+            <td>{{ tx.description }}</td>
+            <td class="muted">{{ tx.source_category }}</td>
+            <td class="muted">{{ tx.account_name }}</td>
+            <td class="num muted">{{ tx.signed_cents | cny }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if pages > 1 %}
+    <nav class="pager">
+      {% if page > 1 %}
+        <a class="button ghost" href="{{ url_for('transactions', month=filters.month, direction=filters.direction, account=filters.account, q=filters.q, page=page-1) }}">← 上一页</a>
+      {% endif %}
+      {% if page < pages %}
+        <a class="button ghost" href="{{ url_for('transactions', month=filters.month, direction=filters.direction, account=filters.account, q=filters.q, page=page+1) }}">下一页 →</a>
+      {% endif %}
+    </nav>
+  {% endif %}
+{% else %}
+  <p class="empty">没有符合条件的记录。</p>
+{% endif %}
+{% endblock %}

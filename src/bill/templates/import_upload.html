@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}记账 — 导入账单{% endblock %}
+
+{% block content %}
+<section>
+  <h1>导入账单</h1>
+  <p class="lede">
+    支持支付宝、微信导出的账单，以及银行流水。文件会先在内存里解析出一份预览，
+    <strong>确认之前不会写进账本</strong>，所以格式认错了也不会污染数据。
+  </p>
+
+  <form class="upload-form" method="post" action="{{ url_for('receive_import') }}"
+        enctype="multipart/form-data">
+    <label class="dropzone" for="file">
+      <strong>选择账单文件</strong>
+      <span>CSV、TSV、XLSX 或 ZIP · 最大 {{ max_mb }} MB</span>
+      <input id="file" name="file" type="file" accept="{{ accept }}" required>
+    </label>
+    <div class="row">
+      <button type="submit">解析并预览</button>
+      <span class="hint">不会离开这台机器。</span>
+    </div>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  </form>
+</section>
+
+<section>
+  <h2>导入过的文件</h2>
+  {% if imports %}
+    <ul class="uploads">
+      {% for item in imports %}
+        <li class="upload">
+          <div>
+            <a href="{{ url_for('import_detail', import_id=item.id) }}">{{ item.filename }}</a>
+            <p class="note-meta">
+              {{ item.uploaded_at[:16] }} · {{ item.account_name }} ·
+              新增 {{ item.inserted_count }} · 重复 {{ item.duplicate_count }}
+              {%- if item.warning_count %} · 存疑 {{ item.warning_count }}{% endif %}
+            </p>
+          </div>
+          <form method="post" action="{{ url_for('import_delete', import_id=item.id) }}"
+                onsubmit="return confirm('删除这次导入会一并删掉它带进来的 {{ item.inserted_count }} 条记录，确定吗？')">
+            <button type="submit" class="link-button">删除</button>
+          </form>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="empty">还没有导入过任何文件。</p>
+  {% endif %}
+</section>
+{% endblock %}

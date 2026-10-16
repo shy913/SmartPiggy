@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}记账 — {{ record.filename }}{% endblock %}
+
+{% block content %}
+<p class="breadcrumb"><a href="{{ url_for('imports') }}">← 导入历史</a></p>
+<h1>{{ record.filename }}</h1>
+<p class="lede">
+  {{ record.uploaded_at[:16] }} 用「{{ record.profile_name }}」导入到账户
+  {{ record.account_name }}。
+</p>
+
+<section class="stats">
+  <div class="stat"><span class="stat-value">{{ record.inserted_count }}</span><span class="stat-label">新增</span></div>
+  <div class="stat"><span class="stat-value muted">{{ record.duplicate_count }}</span><span class="stat-label">重复跳过</span></div>
+  <div class="stat"><span class="stat-value muted">{{ record.warning_count }}</span><span class="stat-label">存疑</span></div>
+  <div class="stat"><span class="stat-value">{{ record.row_count }}</span><span class="stat-label">文件行数</span></div>
+</section>
+
+{% if record.coverage_start %}
+  <p class="hint">覆盖区间：{{ record.coverage_start }} ~ {{ record.coverage_end }}</p>
+{% endif %}
+
+<section>
+  <h2>这次带进来的记录</h2>
+  {% if sample %}
+    <div class="table-scroll">
+      <table class="data">
+        <thead>
+          <tr>
+            <th>日期</th><th>收支</th><th class="num">金额</th>
+            <th>交易对方</th><th>说明</th><th>账单分类</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for tx in sample %}
+            <tr>
+              <td>{{ tx.occurred_at }}</td>
+              <td>
+                {% if tx.direction == 'in' %}<span class="tag tag-in">收入</span>
+                {% elif tx.direction == 'out' %}<span class="tag tag-out">支出</span>
+                {% else %}<span class="tag tag-neutral">中性</span>{% endif %}
+              </td>
+              <td class="num {{ 'money-in' if tx.direction == 'in' else 'money-out' if tx.direction == 'out' else 'muted' }}">
+                {{ tx.amount_cents | cny }}
+              </td>
+              <td>{{ tx.counterparty }}</td>
+              <td>{{ tx.description }}</td>
+              <td class="muted">{{ tx.source_category }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="empty">这次导入没有新增任何记录（全都已经存在了）。</p>
+  {% endif %}
+</section>
+
+{% if issues %}
+  <section>
+    <h2>解析过程中的提示</h2>
+    {% for issue in issues %}
+      <div class="issue">
+        <span class="level level-{{ issue.level }}">{{ issue.level }}</span>
+        <code>{{ issue.code }}</code>
+        {% if issue.row_number %}<span class="muted">第 {{ issue.row_number }} 行</span>{% endif %}
+        — {{ issue.message }}
+        {% if issue.raw_row %}<br><code class="raw">{{ issue.raw_row }}</code>{% endif %}
+      </div>
+    {% endfor %}
+  </section>
+{% endif %}
+{% endblock %}

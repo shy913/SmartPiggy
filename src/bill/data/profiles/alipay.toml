@@ -1,0 +1,65 @@
+# 支付宝「交易记录明细」导出。
+#
+# 真实文件通常是 GBK 编码的 CSV（有时外面套一层 zip），开头若干行账户说明，
+# 中间一行「交易记录明细列表」分隔，末尾还有账户汇总。
+# 表头靠 [headers].start_after 从分隔行之后开始找；汇总行靠 [cleanup] 丢掉。
+
+[profile]
+name   = "alipay"
+title  = "支付宝"
+kind   = "alipay"
+format = "auto"
+
+# gb18030 是 GBK / GB2312 的超集，一个就够解两种。
+# 必须排在 utf-8 之后——它几乎不会解码失败，放前面会把 utf-8 的文件也吃掉。
+encoding = ["gb18030", "gbk", "utf-8-sig", "utf-8"]
+
+[match]
+filename_globs    = ["*支付宝*", "*alipay*"]
+required_headers  = ["交易时间", "收/支", "金额"]
+preferred_headers = ["交易分类", "商品说明", "交易订单号", "商家订单号"]
+
+[headers]
+scan_first_rows = 60
+match_any       = ["交易时间", "收/支", "金额"]
+start_after     = "交易记录明细列表"
+
+[columns]
+# 每个字段给一串候选列名，谁先出现用谁——老版本支付宝把「商品说明」
+# 写成「商品名称」，多列一个候选就不用改代码。
+date                 = ["交易时间", "交易创建时间"]
+amount               = ["金额"]
+direction            = ["收/支"]
+counterparty         = ["交易对方"]
+counterparty_account = ["对方账号"]
+description          = ["商品说明", "商品名称"]
+payment_method       = ["收/付款方式", "付款方式"]
+status               = ["交易状态", "资金状态"]
+source_txn_id        = ["交易订单号"]
+merchant_txn_id      = ["商家订单号"]
+# 支付宝自己带着「交易分类」，那就照用，不在这版里做自动归类。
+category             = ["交易分类"]
+memo                 = ["备注"]
+
+[parse]
+date_formats        = ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"]
+sign_convention     = "direction_column"
+direction_from_sign = false
+
+[values]
+in      = ["收入"]
+out     = ["支出"]
+# 「不计收支」是转账、还款、退款这类，既不进收入也不进支出，
+# 但仍然留在账本里——否则余额对不上，退款记录也会凭空消失。
+neutral = ["不计收支", "/", ""]
+
+[dedup]
+id_column      = ["交易订单号"]
+id_null_values = ["", "/", "--", "0"]
+
+[cleanup]
+# 单引号是 TOML 的字面字符串，反斜杠不用转义，写正则方便些。
+footer_patterns = ['^共\s*\d+\s*笔', '^-{4,}', '^已收入', '^已支出', '^导出时间', '^起始日期', '^账户总览']
+# 末尾汇总行靠上面的正则拦，这个值只兜零星的窄行，别定高——
+# 定高了会把末尾几列为空的合法行一起吃掉。
+min_columns     = 2
