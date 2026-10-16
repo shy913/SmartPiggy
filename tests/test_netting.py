@@ -120,7 +120,8 @@ def test_group_row_carries_the_net(conn, book):
     assert row["direction"] == "out"
     assert row["amount_cents"] == SHARE  # 12 000 - 4 000 - 4 000
     assert row["display_cents"] == SHARE
-    assert row["display_signed_cents"] == -SHARE
+    # 净额是正的还是负的、在页面上带不带负号，看的是 direction（上面那行），
+    # 不是金额本身的正负——列表现已只带 unsigned 的 display_cents。
     # 合成行顶着那笔支出的身份，日期取组内最早的一笔（也就是消费当天）
     assert row["occurred_at"] == "2026-03-01 19:00:00"
     assert row["counterparty"] == "海底捞"

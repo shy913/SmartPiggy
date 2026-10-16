@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from bill import ingest, repo, settings
-from bill.dates import convert_timezone
+from bill.dates import convert_timezone, minute
 from bill.errors import BillError
 
 from .factories import alipay_csv
@@ -128,3 +128,21 @@ def test_monzo_times_pass_through_unchanged(conn, isolated_data_dir):
     preview = ingest.stage(conn, "monzo.csv", monzo_csv())
     by_party = {row.transaction.counterparty: row.transaction for row in preview.plan.rows}
     assert by_party["Tesco"].occurred_at == "2026-09-28 12:26:21"
+
+
+def test_the_minute_view_drops_the_seconds(client, book):
+    """列表上的日期只到分钟：秒在窄屏上白占一列宽。
+
+    认不出形状的原样放回去——宁可显示长一点，也不要截出半个时间。
+    """
+    from bill.models import Direction
+
+    assert minute("2026-10-14 18:40:07") == "2026-10-14 18:40"
+    assert minute("") == "" and minute(None) == ""
+    assert minute("昨天") == "昨天"
+    assert minute("2026-10-14") == "2026-10-14"
+
+    book([{"direction": Direction.OUT, "amount_cents": 100, "currency": "CNY",
+           "occurred_at": "2026-10-14 18:40:07"}])
+    page = client.get("/transactions").get_data(as_text=True)
+    assert "18:40" in page and "18:40:07" not in page

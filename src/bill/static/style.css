@@ -640,6 +640,21 @@ tr.row-neutral td { color: var(--muted); }
 }
 .button.ghost:hover { background: var(--panel-hover); }
 
+/* 行内小按钮：表格里的「改 / 删 / 取消合并」。整行都是文字，按钮按正常尺寸
+   会把这行撑成两倍高，所以缩到跟旁边的字一个量级。描边留着——缩到这个大小，
+   没有边就看不出它是能按的东西了。底色用 code-bg 而不是 panel-hover：
+   行的 hover 底色就是 panel-hover，撞上就糊了。 */
+.button.tiny {
+  padding: 0.15rem 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  background: var(--code-bg);
+  border-color: var(--border);
+  color: var(--text);
+}
+.button.tiny:hover { background: var(--border); filter: none; }
+.button.tiny.danger { color: var(--danger); }
+
 /* 紧凑版统计块：页头那一排（条数、已勾选几笔）。磁贴按内容宽，不摊满一整行 */
 .stats.compact {
   gap: 0.5rem;
@@ -920,20 +935,38 @@ tr.row-neutral td { color: var(--muted); }
   width: 9rem;
 }
 
-/* 勾选列钉在左边：表格横向滚动时还能勾 */
+/* 勾选列：窄、居中。它原来钉在最左边，操作列挪到最前之后就不钉了——
+   一列窄勾选框钉着，横向滚动时白白吃掉一条空间。 */
 table.data .pick {
-  position: sticky;
-  left: 0;
-  background: var(--panel);
-  border-right: 1px solid var(--border);
   width: 1%;
   text-align: center;
   padding-left: 0.5rem;
   padding-right: 0.5rem;
 }
-table.data thead .pick { background: var(--panel-hover); z-index: 2; }
-table.data tbody tr:hover .pick { background: var(--panel-hover); }
 table.data .pick input { margin: 0; }
+
+/* 操作列钉在最左边：表格横向滚动时「改 / 删」还在手边。
+
+   类名刻意不叫 .actions——页头那个 .actions 是 flex 容器，单元格套上同一个
+   名字就被改成 display: flex、不再是 table-cell，整行跟着高一大截（45px 变 76px），
+   而页面上一声不响。
+
+   也不能写 width: 1%（勾选列那种压到最窄的写法）：单元格带着 overflow: hidden，
+   一给宽度就成了剪裁盒，列宽按 1% 算、按钮的字被切掉。让它按内容自己撑。 */
+table.data .row-actions {
+  position: sticky;
+  left: 0;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  white-space: nowrap;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+}
+table.data thead .row-actions { background: var(--panel-hover); z-index: 2; }
+table.data tbody tr:hover .row-actions { background: var(--panel-hover); }
+
+/* 分类缩成的那个 emoji：贴着后面的文字，别让它看起来像另一列 */
+.cat-mark { margin-right: 0.35rem; }
 
 /* 合并行：金额是净额，本身不是一条记录，用底色和上边框跟真记录分开 */
 tr.row-group td { background: color-mix(in srgb, var(--accent) 7%, transparent); }
@@ -1117,6 +1150,23 @@ table.data td { padding: 0.5rem 0.75rem; }
   .entry .row { align-items: stretch; flex-direction: column; }
   .bulk { flex-direction: column; align-items: stretch; }
   .bulk input[type="text"] { width: 100%; }
+  /* 交易记录那张表在手机上让字换行。
+
+     通用规则是 nowrap：一张表里一列一个字段，钉死了能撑到 1000px 宽，手机
+     只能横着拉。别的表列少，拉两下也就到了，这张列最多，所以只有它换行。
+     换行之后宽度落在屏宽内，一屏能看全——代价是长商户名折成两行。
+
+     日期和金额反过来，得钉成一整块：连字符后面本来就是允许断行的，放开了
+     日期会断成「2026-/10-14/18:40」三行、金额会断成「-」和「30.11」两截
+     （正负号就这么丢了）。日期那一列因此占 74px，只到分钟（见 dates.minute）。 */
+  table.data.tx-table { white-space: normal; }
+  table.data.tx-table td.num,
+  table.data.tx-table .when,
+  table.data.tx-table .row-actions { white-space: nowrap; }
+  /* 六列挤在屏宽里，格子之间的白比字还占地方，收窄一点 */
+  table.data.tx-table th,
+  table.data.tx-table td { padding-left: 0.4rem; padding-right: 0.4rem; }
+
   .group-edit { flex-direction: column; align-items: stretch; }
   .group-edit button { width: 100%; }
   .scan { flex-direction: column; align-items: stretch; }

@@ -234,22 +234,25 @@ def test_a_month_with_nothing_but_large_rows_still_shows_up(conn, isolated_data_
     assert months[0]["total"] == 1
 
 
-def test_transactions_page_marks_large_and_zeroes_the_counted_column(
+def test_transactions_page_shows_large_amount_and_tags_it(
     conn, isolated_data_dir, client
 ):
-    """交易记录页有一列叫「计入合计」。大额行在那列必须是 0.00——显示成
-    -5000.00 就是在页面上写了个假数。"""
+    """列表页上大额那笔照原样显示金额，只挂一个「大额」标记。
+
+    早先另有一列「计入合计」，大额在那列写 0.00；列删了，金额列一直是原样，
+    所以不进的合计这件事全靠这个标记交代——标记要是丢了，那笔钱在页面上
+    看起来就跟算进合计的没什么两样，而且什么都不说。
+    """
     write_settings(isolated_data_dir, DISPLAY_GBP + THRESHOLDS)
     seed(conn, [(500000, "GBP", Direction.OUT), (10000, "GBP", Direction.OUT)])
 
     rows = {row["amount_cents"]: row for row in repo.list_transactions(conn)}
     assert rows[500000]["is_large"] == 1
-    assert rows[500000]["display_signed_cents"] == 0
     assert rows[10000]["is_large"] == 0
-    assert rows[10000]["display_signed_cents"] == -10000
 
     body = client.get("/transactions").get_data(as_text=True)
     assert "tag-large" in body
+    assert "-5,000.00" in body, "金额照原样显示，只有旁边的标记说明它不进合计"
 
 
 def test_large_rows_stay_out_of_the_total_and_are_listed_at_the_bottom(

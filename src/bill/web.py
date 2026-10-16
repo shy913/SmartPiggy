@@ -24,7 +24,19 @@ from flask import (
     url_for,
 )
 
-from . import auth, charts, config, dates, db, entry, ingest, repo, settings, themes
+from . import (
+    auth,
+    categories,
+    charts,
+    config,
+    dates,
+    db,
+    entry,
+    ingest,
+    repo,
+    settings,
+    themes,
+)
 from .errors import BillError, ProfileError, UploadError
 from .money import format_amount
 from .profiles import load_all, validate
@@ -137,6 +149,10 @@ def create_app() -> Flask:
     # 在请求体被读进内存之前就挡掉超大文件。
     app.config["MAX_CONTENT_LENGTH"] = config.MAX_BYTES
     app.jinja_env.filters["amount"] = format_amount
+    # 分类在列表页上只留一个 emoji（见 categories.py）。
+    app.jinja_env.filters["category_emoji"] = categories.emoji
+    # 列表上的日期掐到分钟：秒在窄屏上白占一整列的宽。
+    app.jinja_env.filters["minute"] = dates.minute
 
     # ---------------------------------------------------------------- 登录
 

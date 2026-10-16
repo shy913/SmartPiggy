@@ -844,14 +844,9 @@ def list_transactions(
         {_effective_cte(conf)}
         SELECT t.*, a.name AS account_name,
                {amount} AS display_cents,
-               -- 大额先判：这一列在页面上叫「计入合计」，把它显示成 -1000.00
-               -- 等于在页面上写了个假数，那笔钱明明已经不进合计了。中性行本来
-               -- 就在这一列显示 0.00，大额同理。
-               CASE WHEN {large} THEN 0
-                    WHEN t.direction = 'out' THEN -({amount})
-                    WHEN t.direction = 'in'  THEN  ({amount})
-                    ELSE 0
-               END AS display_signed_cents,
+               -- 大额不进合计这件事，列表页上只靠 is_large 那个标记交代：
+               -- 金额照原样显示，标记说明它不算进上面的数。早先另有一列叫
+               -- 「计入合计」，大额在那列写 0.00——列删了，理由还成立。
                {large} AS is_large
         FROM effective t JOIN accounts a ON a.id = t.account_id
         WHERE {where}
