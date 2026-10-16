@@ -319,8 +319,11 @@ table.data tbody tr:hover .row-number { background: var(--panel-hover); }
 /* 记账 ------------------------------------------------------------- */
 
 :root {
-  --in: #5fd39a;
-  --out: #ff8f8f;
+  /* 收入蓝 / 支出红，跑过色盲校验：相邻分离 ΔE 19.2（目标 >= 8）。
+     原来那对绿/红只有 2.1——红绿色盲完全分不出收入和支出，所以换掉了。
+     图表里的 CHART_INCOME / CHART_EXPENSE 用的是同一组值，必须同步改。 */
+  --in: #3987e5;
+  --out: #e66767;
   --neutral: #9aa3b8;
 }
 
@@ -365,6 +368,49 @@ tr.row-neutral td { color: var(--muted); }
 /* 紧凑版统计块 */
 .stats.compact { gap: 0.75rem; }
 .stat-value.small { font-size: 1rem; }
+
+/* 图表 ------------------------------------------------------------- */
+
+.chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;   /* 别把坐标轴标签裁掉 */
+}
+.chart .axis { font-variant-numeric: tabular-nums; }
+
+/* 单序列不需要图例；两根以上必须有，颜色不能是唯一的身份线索 */
+.legend {
+  display: flex;
+  gap: 1.1rem;
+  margin: 0 0 0.6rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.legend span { display: inline-flex; align-items: center; gap: 0.4rem; }
+.legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.legend i.in { background: var(--in); }
+.legend i.out { background: var(--out); }
+
+.chart-card {
+  padding: 0.9rem 1rem 0.5rem;
+  margin-bottom: 1.25rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.chart-card h4 {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.chart-card .empty { margin: 0.5rem 0 0.9rem; }
 
 /* 多币种时按币种分块，避免把英镑和人民币的合计并排放在一起看串 */
 .currency-block { margin-bottom: 1.25rem; }

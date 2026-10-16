@@ -21,7 +21,7 @@ from flask import (
     url_for,
 )
 
-from . import config, db, ingest, repo
+from . import charts, config, db, ingest, repo
 from .errors import BillError, ProfileError, UploadError
 from .money import format_amount
 from .profiles import load_all, validate
@@ -253,13 +253,33 @@ def create_app() -> Flask:
     def summary():
         connection = get_conn()
         currencies = repo.currencies(connection)
+        months = repo.by_month(connection)
+        categories = repo.by_source_category(connection)
+
+        # 按币种分别出图。把英镑和人民币画进同一组柱子，等于换个方式把它们相加。
+        # 月份表是倒序的（最近的在上面），画时间轴要正过来。
         return render_template(
             "summary.html",
-            months=repo.by_month(connection),
-            categories=repo.by_source_category(connection),
+            months=months,
+            categories=categories,
             overall=repo.overall_totals(connection),
             currencies=currencies,
             multiple_currencies=len(currencies) > 1,
+            charts=[
+                {
+                    "currency": currency,
+                    "monthly": charts.monthly_columns(
+                        sorted(
+                            (row for row in months if row["currency"] == currency),
+                            key=lambda row: row["month"],
+                        )
+                    ),
+                    "categories": charts.category_bars(
+                        [row for row in categories if row["currency"] == currency]
+                    ),
+                }
+                for currency in currencies
+            ],
         )
 
     # ---------------------------------------------------------------- 配置

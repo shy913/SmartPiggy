@@ -169,6 +169,47 @@ def test_single_currency_pages_look_the_same_as_before(client):
     assert "2026-01 的账" in home
 
 
+def test_summary_renders_charts(client):
+    token = token_of(upload(client, alipay_csv(), "支付宝账单.csv"))
+    client.post(f"/import/{token}/confirm")
+
+    summary = body(client.get("/summary"))
+    assert "<svg" in summary
+    assert "每月收支" in summary
+    assert "支出构成" in summary
+    # 两根序列必须有图例——颜色不能是唯一的身份线索
+    assert "legend" in summary
+    # 数值在表里也读得到，图不是唯一途径
+    assert "12,000.00" in summary
+
+
+def test_charts_are_not_shared_across_currencies(client):
+    """图表跟着币种分开画：把英镑和人民币画进同一组柱子等于换个方式相加。"""
+    for data, name in ((wechat_xlsx(), "微信支付账单.xlsx"), (monzo_csv(), "monzo.csv")):
+        token = token_of(upload(client, data, name))
+        client.post(f"/import/{token}/confirm")
+
+    summary = body(client.get("/summary"))
+    assert summary.count("<h4>每月收支</h4>") == 2, "每个币种一幅每日收支图"
+    assert summary.count("<h4>支出构成") == 2
+    assert "CNY" in summary and "GBP" in summary
+
+    # 微信账单没有分类列，支出全归「未分类」——一根柱子的柱状图不如一句话。
+    assert "没有可比较的构成" in summary
+    assert summary.count("<svg") == 3, "两幅每月收支 + 一幅支出构成"
+
+
+def test_import_detail_lists_the_new_records_newest_first(client):
+    token = token_of(upload(client, alipay_csv(), "支付宝账单.csv"))
+    response = client.post(f"/import/{token}/confirm")
+
+    detail = body(client.get(response.headers["Location"]))
+    # 只看表格那一段——页面上方「覆盖区间」那行也按时间先后写着这两个日期。
+    table = detail.split("这次带进来的记录", 1)[1]
+    # 样本里最晚的一笔是 01-07 的工资，应该排在最前
+    assert table.index("2026-01-07") < table.index("2026-01-05")
+
+
 def test_zip_upload_works(client):
     token = token_of(upload(client, alipay_zip(), "支付宝账单.zip"))
     assert "导入 3 条新记录" in body(client.get(f"/import/{token}"))

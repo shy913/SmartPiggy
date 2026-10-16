@@ -119,6 +119,26 @@ def test_dedup_is_scoped_per_account(conn):
     assert conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 2
 
 
+def test_transactions_for_import_are_newest_first(conn):
+    """刚导完账，想先看的是最近发生了什么，所以这个列表按时间倒序。"""
+    account_id = _account(conn)
+    import_id = _import(conn, account_id)
+    rows = [
+        make_row(dedup_key="a", occurred_at="2026-01-05 08:00:00"),
+        make_row(dedup_key="b", occurred_at="2026-01-09 20:00:00"),
+        make_row(dedup_key="c", occurred_at="2026-01-02 12:00:00"),
+    ]
+    with conn:
+        repo.insert_rows(conn, account_id=account_id, import_id=import_id, rows=rows)
+
+    listed = repo.transactions_for_import(conn, import_id)
+    assert [row["occurred_at"] for row in listed] == [
+        "2026-01-09 20:00:00",
+        "2026-01-05 08:00:00",
+        "2026-01-02 12:00:00",
+    ]
+
+
 def test_deleting_an_import_cascades_to_its_transactions(conn):
     account_id = _account(conn)
     import_id = _import(conn, account_id)

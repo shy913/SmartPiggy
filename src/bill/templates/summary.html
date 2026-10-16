@@ -29,6 +29,33 @@
 </section>
 
 <section>
+  <h2>图表</h2>
+  <p class="hint">
+    每个数值在下面两张表里都能查到——图只是让人一眼看出趋势和构成。
+    鼠标停在柱子上会显示具体金额。
+  </p>
+  {% for group in charts %}
+    {% if multiple_currencies %}
+      <h3 class="currency">{{ group.currency }}</h3>
+    {% endif %}
+
+    <div class="chart-card">
+      <h4>每月收支</h4>
+      <div class="legend">
+        <span><i class="in"></i>收入</span>
+        <span><i class="out"></i>支出</span>
+      </div>
+      {{ group.monthly }}
+    </div>
+
+    <div class="chart-card">
+      <h4>支出构成（账单自带的分类，前 10）</h4>
+      {{ group.categories }}
+    </div>
+  {% endfor %}
+</section>
+
+<section>
   <h2>按月</h2>
   {% if months %}
     <div class="table-scroll">

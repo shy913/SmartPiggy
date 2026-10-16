@@ -454,11 +454,14 @@ def coverage(connection: sqlite3.Connection) -> sqlite3.Row:
 def transactions_for_import(
     connection: sqlite3.Connection, import_id: int, limit: int = 50
 ) -> list[sqlite3.Row]:
-    """这次导入带进来的交易。"""
+    """这次导入带进来的交易，按发生时间**倒序**（最近的在前）。
+
+    跟交易列表页保持一致：刚导完账，想先看的是最近发生了什么。
+    """
     return connection.execute(
         """
         SELECT * FROM transactions WHERE import_id = ?
-        ORDER BY occurred_at, id LIMIT ?
+        ORDER BY occurred_at DESC, id DESC LIMIT ?
         """,
         (import_id, limit),
     ).fetchall()
