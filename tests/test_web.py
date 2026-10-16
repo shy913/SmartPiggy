@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from bill.models import Direction
+
 from .factories import alipay_csv, alipay_zip, bank_csv, monzo_csv, wechat_xlsx
 
 
@@ -726,3 +728,103 @@ def test_the_month_filter_keeps_its_size_while_empty(client):
     assert month_rule, "月份框要有一条自己的规则"
     for prop in ("min-width", "min-height"):
         assert re.search(rf"{prop}\s*:", month_rule.group(1)), f"月份框要有 {prop} 下限"
+
+
+# --------------------------------------------------------------------------
+# 交易记录表的列
+# --------------------------------------------------------------------------
+
+
+def test_the_transaction_table_has_only_the_columns_a_phone_can_carry(client, book):
+    """列是照着窄屏收拾过的：一列一个字段，手机上横着拉不到头。
+
+    收支并进金额（+/- 加颜色），说明并进对方，分类缩成 emoji，原币种和
+    「计入合计」不留，操作挪到最前面。谁把哪一列加回来，屏幕上立刻宽出一截，
+    而且这件事不会有任何报错——所以表头和顺序在这儿钉死。
+    """
+    book([{"direction": Direction.OUT, "amount_cents": 3250, "currency": "CNY"}])
+
+    page = body(client.get("/transactions"))
+    headers = [h.strip() for h in re.findall(r"<th(?:\s[^>]*)?>(.*?)</th>", page, re.S)]
+    assert headers == ["操作", "", "日期", "金额（CNY）", "对方 / 说明", "账户"]
+
+
+def test_the_amount_column_shows_the_sign_instead_of_a_direction_column(client, book):
+    """+/- 是收支的形状标记，颜色只是搭头。
+
+    只靠颜色区分，色盲的人读不出哪笔进哪笔出。符号得紧挨着数字，中间隔一个
+    空格就跟金额分家了。
+    """
+    book(
+        [
+            {"direction": Direction.OUT, "amount_cents": 3250, "currency": "CNY"},
+            {"direction": Direction.IN, "amount_cents": 120000, "currency": "CNY"},
+        ]
+    )
+
+    page = body(client.get("/transactions"))
+    assert re.search(r'<td class="num money-out">\s*-32\.50', page), "支出是负号红字"
+    assert re.search(r'<td class="num money-in">\s*\+1,200\.00', page), "收入是正号"
+    assert "tag-in" not in page and "tag-out" not in page, "收支有自己那一列时才用这些标签"
+
+
+def test_the_text_column_falls_back_to_the_description(client, book):
+    """对方空着就显示说明——窄屏上没有第二列可以放它了。
+
+    分类缩成的 emoji 贴在文字**前面**，因为它顶替的就是原来那一列；认不出的
+    分类也不留空，空着会被读成「这笔没有分类」。
+    """
+    book(
+        [
+            {
+                "direction": Direction.OUT,
+                "amount_cents": 3250,
+                "currency": "CNY",
+                "counterparty": "Starbucks",
+                "description": "拿铁",
+                "source_category": "Eating out",
+            },
+            {
+                "direction": Direction.IN,
+                "amount_cents": 100,
+                "currency": "CNY",
+                "counterparty": "",
+                "description": "退款到账",
+                "source_category": "杂物",
+            },
+        ]
+    )
+
+    page = body(client.get("/transactions"))
+    assert '<span class="cat-mark" title="Eating out">🍜</span>Starbucks' in page
+    assert "拿铁" not in page, "有对方就不露说明，两行字在窄屏上都要折行"
+    assert '<span class="cat-mark" title="杂物">🏷️</span>退款到账' in page
+
+
+def test_the_row_buttons_are_buttons_and_the_actions_column_comes_first(client, book):
+    """「改 / 删」得看得出是按钮，而且钉在最左边。
+
+    它们原来是一串没有边框的灰字，手感跟旁边的文字没区别；表格横向滚动时
+    那一列还留在视野里，所以要钉住（CSS 在这台机器上量不了，退一步比对规则）。
+    """
+    book([{"direction": Direction.OUT, "amount_cents": 3250, "currency": "CNY"}])
+
+    page = body(client.get("/transactions"))
+    assert '<th class="row-actions">操作</th>' in page
+    assert 'class="button tiny"' in page and 'class="button tiny danger"' in page
+
+    css = Path("src/bill/static/style.css").read_text(encoding="utf-8")
+    stuck = re.search(r"(?ms)^table\.data \.row-actions \{([^}]*)\}", css)
+    assert stuck, "操作列要有自己的一条规则"
+    assert re.search(r"(?m)^\s*position:\s*sticky\s*;", stuck.group(1)), "操作列钉在左边"
+    assert re.search(r"(?m)^\s*left:\s*0\s*;", stuck.group(1))
+    assert not re.search(r"(?m)^\s*display\s*:", stuck.group(1)), (
+        "这一格得留在 table-cell 上。写成 flex（比如跟页头那个 .actions 撞名）"
+        "就不再是表格单元格，整行高度会从 45px 涨到 76px，页面上什么都不说"
+    )
+
+    pick = re.search(r"(?ms)^table\.data \.pick \{([^}]*)\}", css)
+    assert pick, "勾选列还要有条规则"
+    assert not re.search(r"(?m)^\s*position:\s*sticky\s*;", pick.group(1)), (
+        "勾选列不钉了：它不再是第一列，钉着白占一条"
+    )

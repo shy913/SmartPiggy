@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .errors import BillError
 
-__all__ = ["DEFAULT_FORMATS", "convert_timezone", "parse_datetime", "shift", "zone"]
+__all__ = ["DEFAULT_FORMATS", "convert_timezone", "minute", "parse_datetime", "shift", "zone"]
 
 DEFAULT_FORMATS = (
     "%Y-%m-%d %H:%M:%S",
@@ -76,6 +76,19 @@ def shift(moment: str, *, hours: float) -> str | None:
     except (TypeError, ValueError):
         return None
     return moved.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def minute(moment: str | None) -> str:
+    """``'2026-10-14 18:40:07'`` -> ``'2026-10-14 18:40'``：掐到分钟。
+
+    列表上那个日期列只要读到分钟。秒在窄屏上可不便宜：19 个字符挤成 16 个，
+    整列窄一截。认证过的时间戳才截，认不出形状的原样放回去——宁可显示长一点，
+    也不要截出半个时间。
+    """
+    text = (moment or "").strip()
+    if len(text) >= 16 and text[10] == " " and text[13] == ":":
+        return text[:16]
+    return text
 
 
 def zone(name: str) -> ZoneInfo:
