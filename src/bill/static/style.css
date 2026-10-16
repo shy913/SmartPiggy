@@ -401,7 +401,7 @@ button:disabled { cursor: not-allowed; filter: none; opacity: 0.5; }
 input[type="text"],
 input[type="password"],
 input[type="search"],
-input[type="month"] {
+input[type="date"] {
   flex: 1;
   background: var(--code-bg);
   border: 1px solid var(--border);
@@ -419,7 +419,7 @@ input[type="month"] {
 input[type="text"]:focus,
 input[type="password"]:focus,
 input[type="search"]:focus,
-input[type="month"]:focus {
+input[type="date"]:focus {
   outline: none;
   border-color: color-mix(in srgb, var(--accent) 70%, var(--border));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
@@ -776,11 +776,11 @@ tr.row-hidden td { color: var(--muted); }
   font: inherit;
   font-size: 0.85rem;
 }
-/* 月份是原生控件，空值的时候尺寸交给引擎算，各家给得差很远（WebKit 里量到
-   92px，旁边的搜索框 206px）。给两个下限兜住：宽度放得下 YYYY-MM 加日历
-   图标，高度跟旁边的框一档。 */
-.filters input[type="month"] {
-  min-width: 9.5rem;
+/* 日期是原生控件，空值的时候尺寸交给引擎算，各家给得差很远（WebKit 里量到
+   92px，旁边的搜索框 206px）。给两个下限兜住：宽度放得下 YYYY-MM-DD 加日历
+   图标，高度跟旁边的框一档。清空两个框去看全部记录时正是这个空值状态。 */
+.filters input[type="date"] {
+  min-width: 11rem;
   min-height: 2.4rem;
 }
 

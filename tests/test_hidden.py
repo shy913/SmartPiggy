@@ -16,6 +16,8 @@ from bill import repo
 from bill.errors import BillError
 from bill.models import Direction
 
+from .pages import whole_book
+
 DINNER = 12_000
 SHARE = 4_000
 
@@ -44,7 +46,7 @@ def record(client, **overrides) -> None:
 
 def checkbox_ids(client, limit: int | None = None) -> list[int]:
     """列表页上能勾选的 id。隐藏的行没有勾选框，所以这也就是「算数的那些」。"""
-    url = "/transactions" if limit is None else f"/transactions?limit={limit}"
+    url = whole_book() if limit is None else whole_book(limit=limit)
     return [
         int(value)
         for value in re.findall(r'name="txn" value="(\d+)"', body(client.get(url)))
@@ -253,7 +255,7 @@ def test_the_page_greys_it_out_and_takes_away_the_checkbox(client):
     ids = checkbox_ids(client)
     assert client.post(f"/transactions/{ids[0]}/hide").status_code == 303
 
-    page = body(client.get("/transactions"))
+    page = body(client.get(whole_book()))
     assert "已隐藏" in page and "其中 1 条已隐藏" in page
     assert re.search(r'<tr class="row-hidden"', page), "灰字那一条"
     # 隐藏的行不给勾选框：它不进合计，也就不该能被合进一组
@@ -266,7 +268,7 @@ def test_the_amount_stays_put_on_the_page_for_a_hidden_row(client):
     record(client)
     client.post(f"/transactions/{checkbox_ids(client)[0]}/hide")
     row = re.search(
-        r'<tr class="row-hidden".*?</tr>', body(client.get("/transactions")), re.S
+        r'<tr class="row-hidden".*?</tr>', body(client.get(whole_book())), re.S
     ).group(0)
     assert "12.30" in row, "金额照原样写着"
     assert "已隐藏" in row, "旁边挂着「隐」，说明它不算数"
@@ -279,7 +281,7 @@ def test_unhiding_from_the_page_puts_it_back(client):
     client.post(f"/transactions/{ids[0]}/hide")
     assert client.post(f"/transactions/{ids[0]}/unhide").status_code == 303
 
-    page = body(client.get("/transactions"))
+    page = body(client.get(whole_book()))
     assert "row-hidden" not in page
     assert "其中 1 条已隐藏" not in page, "页头那个数也得跟着回来"
     assert set(ids) <= set(checkbox_ids(client))
@@ -318,7 +320,7 @@ def test_hiding_something_that_is_not_there_is_a_404(client):
 
 def test_the_hidden_filter_is_offered_on_the_page(client):
     record(client)
-    page = body(client.get("/transactions"))
+    page = body(client.get(whole_book()))
     hidden_select = re.search(r'<select name="hidden">.*?</select>', page, re.S)
     assert hidden_select, "筛选栏里要有这一档"
     for word in ("照常列出", "不列出", "只看它们"):
@@ -345,7 +347,7 @@ def test_the_hidden_count_covers_the_whole_list_not_just_this_chunk(client, monk
     for txn_id in (ids[0], ids[4]):
         assert client.post(f"/transactions/{txn_id}/hide").status_code == 303
 
-    page = body(client.get("/transactions"))  # 默认只看得到一段（2 条）
+    page = body(client.get(whole_book()))  # 默认只看得到一段（2 条）
     assert "共 5 条，其中 2 条已隐藏" in page, "两笔都隐了，不能只算看见的那一笔"
 
 
@@ -356,7 +358,7 @@ def test_the_only_hidden_view_counts_itself(client, monkeypatch):
     for txn_id in checkbox_ids(client, limit=5):
         client.post(f"/transactions/{txn_id}/hide")
 
-    page = body(client.get("/transactions?hidden=1"))
+    page = body(client.get(whole_book(hidden=1)))
     assert "共 5 条，其中 5 条已隐藏" in page, "这一档整页都是隐藏的，不能只数这一段"
 
 
@@ -365,7 +367,7 @@ def test_the_not_listed_view_says_none_are_shown(client, monkeypatch):
     for i in range(3):
         record(client, counterparty=f"第 {i} 笔")
     client.post(f"/transactions/{checkbox_ids(client)[0]}/hide")
-    page = body(client.get("/transactions?hidden=0"))
+    page = body(client.get(whole_book(hidden=0)))
     assert "其中 1 条已隐藏" not in page, "这一档不列隐藏的行，就不该报有几条"
     assert "row-hidden" not in page
 
@@ -393,18 +395,20 @@ def test_a_row_without_a_number_just_goes_back_to_the_top(client):
 def test_the_filter_panel_is_collapsible(client):
     """收起之后页面上只剩一个标题——不把生效的条件写出来，这一屏看着就跟全部
     记录一样了，而合计数又是按筛过的算的。"""
-    page = body(client.get("/transactions"))
+    page = body(client.get(whole_book()))
     assert re.search(r'<details class="filter-panel" open>', page), "没筛的时候敞着"
     assert re.search(r'<form class="filters"', page), "老的那个 form 还在原处"
 
-    filtered = body(client.get("/transactions?month=2026-03&direction=out"))
+    filtered = body(
+        client.get(whole_book(direction="out", start="2026-03-01", end="2026-03-31"))
+    )
     assert '<details class="filter-panel" >' in filtered, "一有筛选就收起来"
-    assert "2026-03 · 支出" in filtered, "收起来也要写清楚筛的是什么"
+    assert "2026-03-01 至 2026-03-31 · 支出" in filtered, "收起来也要写清楚筛的是什么"
 
 
 def test_the_account_label_shows_the_name_not_the_id(client):
     record(client)
-    page = body(client.get("/transactions?account=1&direction=out"))
+    page = body(client.get(whole_book(account=1, direction="out")))
     assert "手动记账 · 支出" in page, "标签里的账户写名字，顺序跟筛选栏那几个控件对齐"
 
 
@@ -418,7 +422,7 @@ def test_the_list_grows_instead_of_paging(client, monkeypatch):
     for i in range(5):
         record(client, counterparty=f"第 {i} 笔")
 
-    page = body(client.get("/transactions"))
+    page = body(client.get(whole_book()))
     assert "下一页" not in page and "第 1 / " not in page, "分页没了"
     assert "继续下滑加载更多（还有 3 条）" in page
     assert len(checkbox_ids(client)) == 2, "页面上只给这一段"
@@ -426,7 +430,7 @@ def test_the_list_grows_instead_of_paging(client, monkeypatch):
 
     assert len(checkbox_ids(client, limit=4)) == 4
     assert len(checkbox_ids(client, limit=6)) == 5, "到底了"
-    assert "继续下滑加载更多" not in body(client.get("/transactions?limit=6"))
+    assert "继续下滑加载更多" not in body(client.get(whole_book(limit=6)))
 
 
 def test_a_typo_small_limit_does_not_shrink_the_list(client, monkeypatch):

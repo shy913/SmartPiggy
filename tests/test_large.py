@@ -15,6 +15,8 @@ from bill import repo, settings
 from bill.errors import BillError
 from bill.models import Direction, ImportPlan, ParsedRow, Transaction
 
+from .pages import whole_book
+
 DISPLAY_GBP = '[currency]\ndisplay = "GBP"\nrates = { CNY = 8.9 }\n'
 
 # out=500 / in=2000 英镑
@@ -250,7 +252,7 @@ def test_transactions_page_shows_large_amount_and_tags_it(
     assert rows[500000]["is_large"] == 1
     assert rows[10000]["is_large"] == 0
 
-    body = client.get("/transactions").get_data(as_text=True)
+    body = client.get(whole_book()).get_data(as_text=True)
     assert "tag-large" in body
     assert "-5,000.00" in body, "金额照原样显示，只有旁边的标记说明它不进合计"
 
@@ -272,7 +274,7 @@ def test_large_rows_stay_out_of_the_total_and_are_listed_at_the_bottom(
     assert "2,247.19" in home, "被剔掉的那笔要列出来，金额看得见"
     assert "<h2>不计入合计的大额（1 笔）</h2>" in home
     # 它仍然在账本里：交易记录页一条不少
-    assert "2,247.19" in client.get("/transactions").get_data(as_text=True)
+    assert "2,247.19" in client.get(whole_book()).get_data(as_text=True)
 
 
 def test_preview_totals_still_count_large_rows(conn, isolated_data_dir):

@@ -289,11 +289,11 @@ def test_the_pages_that_stay_open_survive_a_broken_config(client, isolated_data_
 
 
 def test_you_land_where_you_were_going(client, password):
-    asked = client.get("/transactions?month=2026-09")
+    asked = client.get("/transactions?start=2026-09-01&end=2026-09-30")
     # 连着筛选条件一起记下来（= 会被转义，那没关系，取回来还是原来那条路径）
     assert asked.headers["Location"].startswith("/login?next=/transactions")
-    response = login(client, next="/transactions?month=2026-09")
-    assert response.headers["Location"] == "/transactions?month=2026-09"
+    response = login(client, next="/transactions?start=2026-09-01&end=2026-09-30")
+    assert response.headers["Location"] == "/transactions?start=2026-09-01&end=2026-09-30"
 
 
 def test_next_cannot_point_at_another_site(client, password):

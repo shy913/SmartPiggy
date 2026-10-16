@@ -6,13 +6,22 @@
 
 from __future__ import annotations
 
+import calendar
 from collections.abc import Sequence
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .errors import BillError
 
-__all__ = ["DEFAULT_FORMATS", "convert_timezone", "minute", "parse_datetime", "shift", "zone"]
+__all__ = [
+    "DEFAULT_FORMATS",
+    "convert_timezone",
+    "minute",
+    "month_range",
+    "parse_datetime",
+    "shift",
+    "zone",
+]
 
 DEFAULT_FORMATS = (
     "%Y-%m-%d %H:%M:%S",
@@ -62,6 +71,28 @@ def parse_datetime(
         return f"{serial.strftime('%Y-%m-%d')} {default_time}"
 
     return None
+
+
+def month_range(month: str) -> dict[str, str]:
+    """``'2026-03'`` -> ``{'start': '2026-03-01', 'end': '2026-03-31'}``。
+
+    交易列表按起止日期筛之后，几处「去那个月看看」的链接（汇总页的月份、
+    合并组那一行的「在列表里看这一行」）就得自己把月份摊成区间。返回 dict 是
+    为了让 ``url_for('transactions', **dates.month_range(month))`` 直接能用。
+
+    月底按真实的月长算：2 月写成 ``-31`` 在字符串比较里也「碰巧」对，但那是撞
+    出来的，改天换个比较方式就不成立了。
+    """
+    year, _, number = (month or "").partition("-")
+    try:
+        first = date(int(year), int(number), 1)
+    except ValueError as error:
+        raise BillError(f"认不出月份「{month}」，要写 YYYY-MM。") from error
+    days = calendar.monthrange(first.year, first.month)[1]
+    return {
+        "start": first.isoformat(),
+        "end": first.replace(day=days).isoformat(),
+    }
 
 
 def shift(moment: str, *, hours: float) -> str | None:

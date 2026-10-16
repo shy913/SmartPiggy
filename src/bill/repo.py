@@ -833,7 +833,8 @@ def large_transactions(connection: sqlite3.Connection) -> list[sqlite3.Row]:
 def list_transactions(
     connection: sqlite3.Connection,
     *,
-    month: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
     account_id: int | None = None,
     direction: str | None = None,
     search: str | None = None,
@@ -841,9 +842,13 @@ def list_transactions(
     limit: int = 100,
     offset: int = 0,
 ) -> list[sqlite3.Row]:
-    """列表。``hidden`` 三档：None = 连隐藏的也列出来，'0' = 不含隐藏，'1' = 只看隐藏。"""
+    """列表。``hidden`` 三档：None = 连隐藏的也列出来，'0' = 不含隐藏，'1' = 只看隐藏。
+
+    ``start`` / ``end`` 是日期（``'YYYY-MM-DD'``），两端都算在内；哪一端不给
+    就是那一端不限。默认区间由调用方给（见 web.transactions）。
+    """
     where, params = _transaction_filters(
-        month, account_id, direction, search, hidden
+        start, end, account_id, direction, search, hidden
     )
     params.extend([limit, offset])
 
@@ -878,7 +883,8 @@ def list_transactions(
 def count_transactions(
     connection: sqlite3.Connection,
     *,
-    month: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
     account_id: int | None = None,
     direction: str | None = None,
     search: str | None = None,
@@ -888,7 +894,7 @@ def count_transactions(
     「共 N 条」和列表行数就会各说各话。"""
     conf = settings.load()
     where, params = _transaction_filters(
-        month, account_id, direction, search, hidden
+        start, end, account_id, direction, search, hidden
     )
     return connection.execute(
         f"""
@@ -900,7 +906,8 @@ def count_transactions(
 
 
 def _transaction_filters(
-    month: str | None,
+    start: str | None,
+    end: str | None,
     account_id: int | None,
     direction: str | None,
     search: str | None,
@@ -908,9 +915,15 @@ def _transaction_filters(
 ) -> tuple[str, list]:
     clauses = ["1 = 1"]
     params: list = []
-    if month:
-        clauses.append("t.occurred_date LIKE ? || '%'")
-        params.append(month)
+    # 起止日期都是 ``'YYYY-MM-DD'`` 的定长文本，字典序就是时间序，所以直接比
+    # 大小，不用再解析成日期。**两端都算在内**：默认区间是「当月 1 号到今天」，
+    # 今天那几笔当然要看得到。
+    if start:
+        clauses.append("t.occurred_date >= ?")
+        params.append(start)
+    if end:
+        clauses.append("t.occurred_date <= ?")
+        params.append(end)
     if account_id:
         clauses.append("t.account_id = ?")
         params.append(account_id)

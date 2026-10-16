@@ -66,7 +66,8 @@
         <tbody>
           {% for row in months %}
             <tr>
-              <td><a href="{{ url_for('transactions', month=row.month) }}">{{ row.month }}</a></td>
+              {# 列表页默认只看当月，这里点过去要的是那一整月，所以把月份摊成起止日期。 #}
+              <td><a href="{{ url_for('transactions', **month_range(row.month)) }}">{{ row.month }}</a></td>
               {% if multiple_currencies %}<td class="muted">{{ row.display_currency }}</td>{% endif %}
               <td class="num money-in">{{ row.income | amount }}</td>
               <td class="num money-out">{{ row.expense | amount }}</td>
@@ -135,7 +136,9 @@
       </table>
     </div>
     <p class="hint">
-      <a href="{{ url_for('transactions', direction='neutral') }}">在交易记录里逐笔看 →</a>
+      {# 上面那个数目是整个账本的，所以这一跳也得是整个账本：列表页默认缩在当月，
+         起止两端写成空串就是「不限」。 #}
+      <a href="{{ url_for('transactions', direction='neutral', start='', end='') }}">在交易记录里逐笔看 →</a>
     </p>
   </section>
 {% endif %}

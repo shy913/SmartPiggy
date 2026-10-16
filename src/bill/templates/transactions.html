@@ -25,7 +25,10 @@
   </summary>
 
   <form class="filters" method="get" action="{{ url_for('transactions') }}">
-    <label>月份 <input type="month" name="month" value="{{ filters.month }}"></label>
+    {# 起止日期。默认是「当月 1 号到今天」，所以这两个框平时都是有值的——
+       想看更早的账就把开始时间往前拨，想看全部就把两个框都清空。 #}
+    <label>开始时间 <input type="date" name="start" value="{{ filters.start }}"></label>
+    <label>结束时间 <input type="date" name="end" value="{{ filters.end }}"></label>
     <label>账户
       <select name="account">
         <option value="">全部</option>
@@ -54,6 +57,9 @@
     </label>
     <label>搜索 <input type="search" name="q" value="{{ filters.q }}" placeholder="对方 / 说明 / 备注"></label>
     <button type="submit">筛选</button>
+    {# 「清空」是回到打开这一页时的样子（当月），所以它空着手回去、由服务端把默认
+       区间填回来。要看整个账本，把上面两个日期框清空再点筛选——那样两个框也空着，
+       看到的就是「不限」。 #}
     <a class="button ghost" href="{{ url_for('transactions') }}">清空</a>
   </form>
 </details>
@@ -72,7 +78,8 @@
      没有 JS 就没有「全选本页」：批量操作只作用于手勾的那些行。隐藏的行连勾选框
      都没有——它是「不算数」的那一档，合进合并组里会让净额和笔数对不上。 #}
   <form method="post" action="{{ url_for('transactions_bulk') }}">
-    <input type="hidden" name="month" value="{{ filters.month }}">
+    <input type="hidden" name="start" value="{{ filters.start }}">
+    <input type="hidden" name="end" value="{{ filters.end }}">
     <input type="hidden" name="direction" value="{{ filters.direction }}">
     <input type="hidden" name="account" value="{{ filters.account or '' }}">
     <input type="hidden" name="q" value="{{ filters.q }}">
@@ -207,7 +214,7 @@
   {% if remaining %}
     <p class="more">
       <a class="button ghost"
-         href="{{ url_for('transactions', month=filters.month, direction=filters.direction, account=filters.account or '', q=filters.q, hidden=filters.hidden, limit=next_limit) }}#row-{{ limit }}">
+         href="{{ url_for('transactions', start=filters.start, end=filters.end, direction=filters.direction, account=filters.account or '', q=filters.q, hidden=filters.hidden, limit=next_limit) }}#row-{{ limit }}">
         继续下滑加载更多（还有 {{ remaining }} 条）
       </a>
     </p>

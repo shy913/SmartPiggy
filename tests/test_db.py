@@ -300,13 +300,26 @@ def test_filters_and_search(conn):
     with conn:
         repo.insert_rows(conn, account_id=account_id, import_id=import_id, rows=rows)
 
-    assert repo.count_transactions(conn, month="2026-01") == 1
+    assert repo.count_transactions(conn, start="2026-01-01", end="2026-01-31") == 1
     assert repo.count_transactions(conn, search="滴滴") == 1
     assert repo.count_transactions(conn, search="外卖") == 1
     assert repo.count_transactions(conn, direction="out") == 2
     assert repo.count_transactions(conn, direction="neutral") == 0
-    assert repo.count_transactions(conn, month="2026-01", search="滴滴") == 0
+    assert (
+        repo.count_transactions(
+            conn, start="2026-01-01", end="2026-01-31", search="滴滴"
+        )
+        == 0
+    )
     assert repo.count_transactions(conn) == 2
+
+    # 区间是闭的：1 月 5 日那一笔在两端都算得进来
+    assert repo.count_transactions(conn, start="2026-01-05", end="2026-01-05") == 1
+    assert repo.count_transactions(conn, start="2026-01-06", end="2026-01-31") == 0
+    assert repo.count_transactions(conn, start="2026-01-01", end="2026-01-04") == 0
+    # 只给一端就是那一端不限
+    assert repo.count_transactions(conn, start="2026-02-01") == 1
+    assert repo.count_transactions(conn, end="2026-01-31") == 1
 
 
 def test_by_month_and_by_source_category(conn):

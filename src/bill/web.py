@@ -10,7 +10,7 @@ from __future__ import annotations
 import getpass
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from flask import (
     Flask,
@@ -112,8 +112,41 @@ _DIRECTION_WORDS = {"in": "收入", "out": "支出", "neutral": "中性"}
 _HIDDEN_WORDS = {"0": "不含隐藏", "1": "只看隐藏"}
 
 
+def default_range(conf) -> tuple[str, str]:
+    """筛选栏没给条件时落回的那个区间：当月 1 号到今天。
+
+    按**显示时区**算「今天」，不按服务器本地时间：``occurred_date`` 入库时
+    就按显示时区换算过（见 dates.convert_timezone），拿另一套时钟去比，月初和
+    月末那两天会差出一天——屏幕上就是「昨天的账不见了」。
+    """
+    today = datetime.now(conf.tz()).date()
+    return today.replace(day=1).isoformat(), today.isoformat()
+
+
+def clean_date(value: str | None) -> str:
+    """筛选栏里的一个日期。认不出来就返回空串（＝那一端不限）。
+
+    只认 ``'YYYY-MM-DD'`` 这一种写法，认出来之后**重新写一遍**：库里的
+    ``occurred_date`` 是定长的，比较靠的是字典序，放过 ``'2026-1-5'`` 这种
+    看着对、比出来错的写法，等于给出一个不报错的错结果。手改地址栏塞进来的
+    东西也一样——与其在筛选栏里留一个查不出记录的隐形条件，不如当没给。
+    """
+    text = (value or "").strip()
+    try:
+        return date.fromisoformat(text).isoformat()
+    except ValueError:
+        return ""
+
+
 def active_filter_labels(
-    accounts, *, month="", direction="", account_id=None, search="", hidden=""
+    accounts,
+    *,
+    start="",
+    end="",
+    direction="",
+    account_id=None,
+    search="",
+    hidden="",
 ) -> list[str]:
     """当前生效的筛选条件，写成几个短标签。
 
@@ -124,8 +157,14 @@ def active_filter_labels(
     顺序跟着筛选栏里那几个控件走，读到的和看到的对得上。
     """
     labels = []
-    if month:
-        labels.append(month)
+    # 两个日期都在的时候只写一行「甲 至 乙」：它们是同一个条件的两个端点，
+    # 拆成两条读起来像两个并排的条件。
+    if start and end:
+        labels.append(f"{start} 至 {end}")
+    elif start:
+        labels.append(f"{start} 起")
+    elif end:
+        labels.append(f"至 {end}")
     if account_id:
         labels.append(
             next(
@@ -197,6 +236,10 @@ def create_app() -> Flask:
     app.jinja_env.filters["category_emoji"] = categories.emoji
     # 列表上的日期掐到分钟：秒在窄屏上白占一整列的宽。
     app.jinja_env.filters["minute"] = dates.minute
+    # 别处「跳到某个月的账」那些链接（汇总页的月份列、合并组那一行）用得上：
+    # 列表页只认起止日期，模板里写成
+    # ``url_for('transactions', **month_range('2026-03'))``。
+    app.jinja_env.globals["month_range"] = dates.month_range
 
     # ---------------------------------------------------------------- 登录
 
@@ -506,9 +549,14 @@ def create_app() -> Flask:
         """
         still = {
             name: value
-            for name in ("month", "direction", "account", "q", "hidden", "limit")
+            for name in ("direction", "account", "q", "hidden", "limit")
             if (value := (request.form.get(name) or "").strip())
         }
+        # 起止日期一律带上，空串也带。空串是「这一端不限」的意思，跟「压根没这个
+        # 参数」（＝落回默认的当月）是两回事——丢掉的话，把区间清空之后隐掉一笔，
+        # 回来的这一屏会自己缩回当月，像是在别的地方动过手。
+        for name in ("start", "end"):
+            still[name] = (request.form.get(name) or "").strip()
         # 行尾那几个按钮顺手把自己的行号交上来，回来自动落回那一行。不这样的话，
         # 在一份长列表靠后的地方隐掉一笔，303 回来会被甩到页首，还得再翻一遍。
         # 批量操作没有具体的行，不带这个字段，就还跟以前一样回页首。
@@ -523,7 +571,18 @@ def create_app() -> Flask:
     @app.get("/transactions")
     def transactions():
         connection = get_conn()
-        month = request.args.get("month") or ""
+        conf = settings.load()
+        # 两个日期就是原来那个「月份」筛选，只是把一头拆成两头。没给参数时落回
+        # 「当月 1 号到今天」——这一页平时看的就是本月的账。
+        #
+        # 判的是参数**在不在**，不是值空不空：清空两个输入框提交，得到的是
+        # ``?start=&end=``，意思是「不限」，跟没给参数（＝回到默认的当月）是两件
+        # 事。要分清这两种，只能看 key。
+        if "start" in request.args or "end" in request.args:
+            start = clean_date(request.args.get("start"))
+            end = clean_date(request.args.get("end"))
+        else:
+            start, end = default_range(conf)
         direction = request.args.get("direction") or ""
         account_id = request.args.get("account", type=int)
         search = (request.args.get("q") or "").strip()
@@ -534,9 +593,18 @@ def create_app() -> Flask:
         # 小数不至于把列表缩成一条。
         limit = max(request.args.get("limit", LIST_STEP, type=int), LIST_STEP)
 
+        # 两个日期填反了。不吭声的话这就是一个干干净净的「没有符合条件的记录」，
+        # 看着跟「这个月真没记账」一模一样——把话说出来，别让人去别处找账。
+        reversed_range = (
+            "开始时间比结束时间晚，这个区间里一条都挑不出来。"
+            if start and end and start > end
+            else ""
+        )
+
         total = repo.count_transactions(
             connection,
-            month=month or None,
+            start=start or None,
+            end=end or None,
             account_id=account_id,
             direction=direction or None,
             search=search or None,
@@ -544,7 +612,8 @@ def create_app() -> Flask:
         )
         rows = repo.list_transactions(
             connection,
-            month=month or None,
+            start=start or None,
+            end=end or None,
             account_id=account_id,
             direction=direction or None,
             search=search or None,
@@ -554,7 +623,6 @@ def create_app() -> Flask:
         )
         # 合并行只带锚点那一笔的文字，要看全组成员得另外取——而且只取这一段
         # 用得到的那些组。
-        conf = settings.load()
         members: dict[int, list] = {}
         for member in repo.group_members(
             connection, [row["group_id"] for row in rows if row["group_id"]]
@@ -574,7 +642,8 @@ def create_app() -> Flask:
         else:
             hidden_total = repo.count_transactions(
                 connection,
-                month=month or None,
+                start=start or None,
+                end=end or None,
                 account_id=account_id,
                 direction=direction or None,
                 search=search or None,
@@ -593,16 +662,17 @@ def create_app() -> Flask:
             # 筛选栏收起来之后，得让人一眼看出这一屏是筛过的——不然看着就像全部
             # 记录，而汇总和它又对不上。所以把这些条件明写在可以点开的标题旁边。
             active_filters=active_filter_labels(
-                accounts, month=month, direction=direction,
+                accounts, start=start, end=end, direction=direction,
                 account_id=account_id, search=search, hidden=hidden,
             ),
             limit=limit,
             remaining=max(total - len(rows), 0),
             next_limit=limit + LIST_STEP,
             hidden_total=hidden_total,
-            error=(request.args.get("error") or "").strip() or None,
+            error=(request.args.get("error") or "").strip() or reversed_range,
             filters={
-                "month": month,
+                "start": start,
+                "end": end,
                 "direction": direction,
                 "account": account_id,
                 "q": search,
@@ -680,7 +750,7 @@ def create_app() -> Flask:
             _autodetect_around(connection, conf, draft.occurred_at)
             # 刚记的这笔要是立刻被并进了别个月的组，就跳它现在待的那一页
             month = repo.effective_month(connection, txn_id) or draft.month
-        return go("transactions", month=month)
+        return go("transactions", **dates.month_range(month))
 
     @app.get("/transactions/<int:txn_id>/edit")
     def transaction_edit(txn_id: int):
@@ -712,7 +782,7 @@ def create_app() -> Flask:
         with connection:
             repo.update_transaction(connection, txn_id, draft.fields())
             month = repo.effective_month(connection, txn_id) or draft.month
-        return go("transactions", month=month)
+        return go("transactions", **dates.month_range(month))
 
     @app.post("/transactions/<int:txn_id>/delete")
     def transaction_delete(txn_id: int):

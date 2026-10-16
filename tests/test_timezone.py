@@ -13,6 +13,7 @@ from bill.dates import convert_timezone, minute
 from bill.errors import BillError
 
 from .factories import alipay_csv
+from .pages import whole_book
 
 
 def write_settings(tmp_path, timezone: str):
@@ -144,5 +145,5 @@ def test_the_minute_view_drops_the_seconds(client, book):
 
     book([{"direction": Direction.OUT, "amount_cents": 100, "currency": "CNY",
            "occurred_at": "2026-10-14 18:40:07"}])
-    page = client.get("/transactions").get_data(as_text=True)
+    page = client.get(whole_book()).get_data(as_text=True)
     assert "18:40" in page and "18:40:07" not in page

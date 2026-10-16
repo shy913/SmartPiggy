@@ -73,8 +73,10 @@
         </form>
 
         <div class="actions">
-          {# 合成行落在组内最早那一笔的月份上，所以按那个月去列表里找就行。 #}
-          <a class="button ghost" href="{{ url_for('transactions', month=group.first_at[:7]) }}">在列表里看这一行</a>
+          {# 合成行落在组内最早那一笔的月份上，所以按那个月去列表里找就行。列表页
+             默认只看当月，这一跳得把那个月整个交给它，不然多半落在空屏上。 #}
+          <a class="button ghost"
+             href="{{ url_for('transactions', **month_range(group.first_at[:7])) }}">在列表里看这一行</a>
           <form method="post" action="{{ url_for('group_dissolve', group_id=group.id) }}"
                 onsubmit="return confirm('取消这一组合并？原始记录一笔都不会删。')">
             <button type="submit" class="button ghost">取消合并</button>

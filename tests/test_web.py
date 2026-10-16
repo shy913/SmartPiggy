@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import io
 import re
+from datetime import date, datetime, timedelta
+from html import unescape
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
+from bill import dates
+from bill.errors import BillError
 from bill.models import Direction
 
 from .factories import alipay_csv, alipay_zip, bank_csv, monzo_csv, wechat_xlsx
+from .pages import whole_book
 
 
 def body(response) -> str:
@@ -102,11 +108,13 @@ def test_full_import_then_browse(client):
     assert "32.50" in home
     assert "11,967.50" in home, "结余 = 收入 - 支出"
 
-    assert "共 3 条" in body(client.get("/transactions"))
-    assert "共 1 条" in body(client.get("/transactions?direction=neutral"))
-    assert "共 1 条" in body(client.get("/transactions?q=美团"))
-    assert "共 1 条" in body(client.get("/transactions?month=2026-01&direction=out"))
-    assert "共 0 条" in body(client.get("/transactions?month=2026-02"))
+    assert "共 3 条" in body(client.get(whole_book()))
+    assert "共 1 条" in body(client.get(whole_book(direction="neutral")))
+    assert "共 1 条" in body(client.get(whole_book(q="美团")))
+    assert "共 1 条" in body(
+        client.get("/transactions?start=2026-01-01&end=2026-01-31&direction=out")
+    )
+    assert "共 0 条" in body(client.get("/transactions?start=2026-02-01&end=2026-02-28"))
     assert "餐饮美食" in body(client.get("/"))
     assert "2026-01" in body(client.get("/"))
 
@@ -139,7 +147,7 @@ def test_reuploading_the_same_file_imports_nothing_new(client):
     assert "导入 0 条新记录" in html
     assert "disabled" in html, "没有新记录时确认按钮要禁用"
 
-    assert "共 3 条" in body(client.get("/transactions"))
+    assert "共 3 条" in body(client.get(whole_book()))
 
 
 def test_wechat_and_bank_both_work_through_the_ui(client):
@@ -147,8 +155,8 @@ def test_wechat_and_bank_both_work_through_the_ui(client):
         token = token_of(upload(client, data, name))
         assert client.post(f"/import/{token}/confirm").status_code == 303
 
-    assert "共 6 条" in body(client.get("/transactions"))
-    accounts = body(client.get("/transactions"))
+    assert "共 6 条" in body(client.get(whole_book()))
+    accounts = body(client.get(whole_book()))
     assert "微信" in accounts and "示例银行（请改）" in accounts
 
 
@@ -226,7 +234,7 @@ def test_cancelling_drops_the_preview(client):
     token = token_of(upload(client, alipay_csv(), "支付宝账单.csv"))
     assert client.post(f"/import/{token}/cancel").status_code == 303
     assert client.get(f"/import/{token}").status_code == 410
-    assert "共 0 条" in body(client.get("/transactions"))
+    assert "共 0 条" in body(client.get(whole_book()))
 
 
 def test_deleting_an_import_removes_its_transactions(client):
@@ -234,7 +242,7 @@ def test_deleting_an_import_removes_its_transactions(client):
     client.post(f"/import/{token}/confirm")
 
     assert client.post("/imports/1/delete").status_code == 303
-    assert "没有符合条件的记录" in body(client.get("/transactions"))
+    assert "没有符合条件的记录" in body(client.get(whole_book()))
     assert "还没有数据" in body(client.get("/"))
 
 
@@ -308,11 +316,11 @@ def txn_ids(client) -> list[int]:
 
     拿不到复选框的 id 时用这个：合并组本身不能勾选，组内每一笔才是真记录。
     """
-    return [int(v) for v in re.findall(r"/transactions/(\d+)/edit", body(client.get("/transactions")))]
+    return [int(v) for v in re.findall(r"/transactions/(\d+)/edit", body(client.get(whole_book())))]
 
 
 def checkboxes(client) -> list[int]:
-    page = body(client.get("/transactions"))
+    page = body(client.get(whole_book()))
     return [int(value) for value in re.findall(r'name="txn" value="(\d+)"', page)]
 
 
@@ -348,7 +356,7 @@ def test_empty_groups_page_renders(client):
 def test_recording_a_manual_entry(client):
     assert client.post("/transactions/new", data=entry_form()).status_code == 303
 
-    html = body(client.get("/transactions"))
+    html = body(client.get(whole_book()))
     assert "海底捞" in html and "12.30" in html
     # 手动记的账落在自己的账户里，跟导入进来的分开
     assert "手动记账" in html
@@ -367,7 +375,7 @@ def test_a_bad_form_comes_back_filled_in(client):
 
 def test_editing_a_transaction(client):
     client.post("/transactions/new", data=entry_form())
-    page = body(client.get("/transactions"))
+    page = body(client.get(whole_book()))
     txn_id = int(re.findall(r'name="txn" value="(\d+)"', page)[0])
 
     form_page = body(client.get(f"/transactions/{txn_id}/edit"))
@@ -378,7 +386,7 @@ def test_editing_a_transaction(client):
         data=entry_form(amount="15.00", category="朋友聚餐", memo="那顿 AA"),
     )
     assert response.status_code == 303
-    html = body(client.get("/transactions"))
+    html = body(client.get(whole_book()))
     assert "15.00" in html and "朋友聚餐" in html and "已改" in html
 
 
@@ -390,10 +398,10 @@ def test_editing_something_that_is_not_there_404s(client):
 
 def test_deleting_a_transaction(client):
     client.post("/transactions/new", data=entry_form())
-    txn_id = int(re.findall(r'name="txn" value="(\d+)"', body(client.get("/transactions")))[0])
+    txn_id = int(re.findall(r'name="txn" value="(\d+)"', body(client.get(whole_book())))[0])
 
     assert client.post(f"/transactions/{txn_id}/delete").status_code == 303
-    assert "没有符合条件的记录" in body(client.get("/transactions"))
+    assert "没有符合条件的记录" in body(client.get(whole_book()))
 
 
 def test_bulk_reclassify(client):
@@ -402,7 +410,7 @@ def test_bulk_reclassify(client):
         "/transactions/bulk", data={"action": "reclassify", "txn": ids, "category": "朋友聚会"}
     )
     assert response.status_code == 303
-    assert "朋友聚会" in body(client.get("/transactions"))
+    assert "朋友聚会" in body(client.get(whole_book()))
     assert "朋友聚会" in body(client.get("/"))
 
 
@@ -411,14 +419,14 @@ def test_bulk_merge_and_dissolve(client):
     response = client.post("/transactions/bulk", data={"action": "merge", "txn": ids})
     assert response.status_code == 303
 
-    html = body(client.get("/transactions"))
+    html = body(client.get(whole_book()))
     assert "取消合并" in html and "展开 2 笔" in html
     # 100 和 313.37 合成一行，净额 -413.37
     assert "413.37" in html
 
     group_id = int(re.findall(r"/groups/(\d+)/dissolve", body(client.get("/groups")))[0])
     assert client.post(f"/groups/{group_id}/dissolve").status_code == 303
-    assert "取消合并" not in body(client.get("/transactions"))
+    assert "取消合并" not in body(client.get(whole_book()))
     assert checkboxes(client) == ids, "取消合并之后三笔都回到列表里"
 
 
@@ -440,7 +448,7 @@ def test_merging_something_already_merged_says_so(client):
 def test_the_auto_merge_is_visible_and_reversible(client):
     """自动合上的那一组，页面上要看得出来、汇总要跟着净额走、取消要能撤销。"""
     aa_trio(client)
-    html = body(client.get("/transactions"))
+    html = body(client.get(whole_book()))
     assert "取消合并" in html and "展开 3 笔" in html
 
     # 花出去 120、收回来 80：实际只花了 40，收入也不虚增
@@ -449,7 +457,7 @@ def test_the_auto_merge_is_visible_and_reversible(client):
 
     group_id = int(re.findall(r"/groups/(\d+)/dissolve", body(client.get("/groups")))[0])
     assert client.post(f"/groups/{group_id}/dissolve").status_code == 303
-    assert "取消合并" not in body(client.get("/transactions"))
+    assert "取消合并" not in body(client.get(whole_book()))
     assert "120.00" in body(client.get("/")), "散开之后又回到 120 的支出"
 
 
@@ -457,7 +465,7 @@ def test_group_rows_never_become_negative_transaction_urls(client):
     """合成行的 id 是负值哨兵，Werkzeug 的 <int:> 不收负数——模板里必须按
     group_id 分支，不然会生成 /transactions/-1 这种一点就 404 的链接。"""
     aa_trio(client)
-    html = body(client.get("/transactions"))
+    html = body(client.get(whole_book()))
     assert "/transactions/-" not in html
     assert "/groups/" in html
 
@@ -482,7 +490,7 @@ def test_importing_an_aa_shape_merges_it_right_away(client):
     assert "顺手合并" in detail, "导入详情要说清它顺手做了什么"
     # 但这一页仍然逐条列原始行：它回答的是「这个文件带进来什么」
     assert "海底捞" in detail
-    assert "取消合并" in body(client.get("/transactions"))
+    assert "取消合并" in body(client.get(whole_book()))
 
 
 def test_cross_currency_aa_merges_when_the_second_file_lands(client, isolated_data_dir):
@@ -515,7 +523,7 @@ def test_cross_currency_aa_merges_when_the_second_file_lands(client, isolated_da
         "monzo.csv",
     )
     assert client.post(f"/import/{token_of(monzo)}/confirm").status_code == 303
-    assert "取消合并" not in body(client.get("/transactions")), "这时候还没有还款"
+    assert "取消合并" not in body(client.get(whole_book())), "这时候还没有还款"
 
     wechat = upload(
         client,
@@ -533,7 +541,7 @@ def test_cross_currency_aa_merges_when_the_second_file_lands(client, isolated_da
     detail = body(client.get(confirmed.headers["Location"]))
     assert "顺手合并" in detail, "这份账单落地的同时就该认出上一份里那次 AA"
     # 55.40 − 27.75 = 27.65 才是真实消费，收入也不再虚增那 27.75
-    assert "展开 2 笔（净额 27.65 GBP）" in body(client.get("/transactions"))
+    assert "展开 2 笔（净额 27.65 GBP）" in body(client.get(whole_book()))
 
 
 def test_scanning_finds_aa_among_existing_records(client):
@@ -544,20 +552,20 @@ def test_scanning_finds_aa_among_existing_records(client):
         counterparty="小王转账",
     )
     # 只还了三分之一：一个人还在还钱，但凑不出「每人一份」的形状
-    assert "取消合并" not in body(client.get("/transactions"))
+    assert "取消合并" not in body(client.get(whole_book()))
 
     # 第二个人也还了一份，这笔一录进来就该合上
     record(
         client, direction="in", amount="40.00", occurred_at="2026-03-01T21:00:00",
         counterparty="小李转账",
     )
-    assert "取消合并" in body(client.get("/transactions"))
+    assert "取消合并" in body(client.get(whole_book()))
 
     # 手动取消之后就别再自己回来——这正是那张否决表存在的理由
     group_id = int(re.findall(r"/groups/(\d+)/dissolve", body(client.get("/groups")))[0])
     assert client.post(f"/groups/{group_id}/dissolve").status_code == 303
     assert client.post("/groups/scan").status_code == 303
-    assert "取消合并" not in body(client.get("/transactions"))
+    assert "取消合并" not in body(client.get(whole_book()))
 
 
 def test_group_edit_shows_up_in_the_list(client):
@@ -571,12 +579,12 @@ def test_group_edit_shows_up_in_the_list(client):
     assert response.status_code == 303
     html = body(client.get("/groups"))
     assert "上个月的聚餐" in html and "社交" in html
-    assert "上个月的聚餐" in body(client.get("/transactions"))
+    assert "上个月的聚餐" in body(client.get(whole_book()))
 
 
 def test_editing_an_auto_group_member_dissolves_it(client):
     aa_trio(client)
-    assert "取消合并" in body(client.get("/transactions"))
+    assert "取消合并" in body(client.get(whole_book()))
     # 组里那笔 £120 的支出
     anchor = max(txn_ids(client))
 
@@ -585,7 +593,7 @@ def test_editing_an_auto_group_member_dissolves_it(client):
         data=entry_form(direction="out", amount="119.00", counterparty="海底捞"),
     )
     assert response.status_code == 303
-    assert "取消合并" not in body(client.get("/transactions"))
+    assert "取消合并" not in body(client.get(whole_book()))
 
 
 def test_dissolving_something_that_is_not_there_404s(client):
@@ -603,7 +611,7 @@ def test_editing_something_that_is_not_there_404s_instead_of_pretending(client):
 def test_a_rejected_edit_still_shows_the_account(client):
     """账户那一格是只读的，提交不上来；校验失败重画表单时要拿库里的补上。"""
     client.post("/transactions/new", data=entry_form())
-    txn_id = int(re.findall(r"/transactions/(\d+)/edit", body(client.get("/transactions")))[0])
+    txn_id = int(re.findall(r"/transactions/(\d+)/edit", body(client.get(whole_book())))[0])
 
     response = client.post(
         f"/transactions/{txn_id}/edit", data=entry_form(amount="十二块")
@@ -625,14 +633,15 @@ def test_saving_a_row_that_got_merged_takes_you_to_where_it_is(client):
                         counterparty="小王转账"),
     )
     assert response.status_code == 303
-    assert "month=2026-03" in response.headers["Location"], "落在组所在的那个月"
+    # 落在**组所在的那个月**：组落在最早那一笔（3 月 31 日），不是刚记的 4 月 1 日。
+    assert "start=2026-03-01&end=2026-03-31" in response.headers["Location"]
     assert "取消合并" in body(client.get(response.headers["Location"]))
 
 
 def test_group_members_can_be_edited_from_the_list(client):
     """合成行本身不能改（它不是一条记录），但组里每一笔都能单独改。"""
     aa_trio(client)
-    html = body(client.get("/transactions"))
+    html = body(client.get(whole_book()))
     for txn_id in txn_ids(client):
         assert f"/transactions/{txn_id}/edit" in html
 
@@ -656,13 +665,21 @@ def test_cross_currency_group_shows_both_amounts(client, isolated_data_dir):
         occurred_at="2026-03-01T21:00:00", counterparty="龚必勋", description="微信转账",
     )
 
-    html = body(client.get("/transactions"))
+    html = body(client.get(whole_book()))
     assert "取消合并" in html
     assert "247.00" in html and "CNY" in html
     assert "≈ 27.75 GBP" in html
     # 净额 = 55.40 − 27.75
     assert "27.65" in html
-    assert "27.65" in body(client.get("/groups"))
+    groups = body(client.get("/groups"))
+    assert "27.65" in groups
+    # 「在列表里看这一行」得能真的看到它：列表页默认只看当月，而这一组落在 3 月。
+    # 链接里的 & 是 &amp;，跟过去之前先还原，不然第二个参数根本传不到。
+    link = re.search(r'href="(/transactions\?[^"]*)"[^>]*>在列表里看这一行<', groups)
+    assert link, "合并组那一行有个跳到列表页的链接"
+    target = unescape(link.group(1))
+    assert "start=2026-03-01&end=2026-03-31" in target
+    assert "取消合并" in body(client.get(target))
 
 
 # --------------------------------------------------------------------------
@@ -704,18 +721,20 @@ def test_a_page_outside_the_nav_highlights_nothing(client):
 # --------------------------------------------------------------------------
 
 
-def test_the_month_filter_keeps_its_size_while_empty(client):
-    """还没选月份时，月份框得照样占位置。
+def test_the_date_filters_keep_their_size_while_empty(client):
+    """把区间清空时，那两个日期框得照样占位置。
 
-    月份框初值是空的，而空值的原生月份控件自己不介意变成一条线——尺寸全看
+    日期框清空之后是空的，而空值的原生日期控件自己不介意变成一条线——尺寸全看
     引擎怎么给。所以两条保险都得在：筛选栏里的控件在竖排的 label 底下，不能
     带着通用规则那条 `flex: 1`（那是给横向的 .row 用的，竖排里就成了按高度
-    伸缩，空值撑不出一行）；月份框本身另有宽高下限。CSS 在这台机器上量不了，
+    伸缩，空值撑不出一行）；日期框本身另有宽高下限。CSS 在这台机器上量不了，
     退一步比对规则本身——谁把这两条删了，这里就挂。
     """
-    month = re.search(r'<input type="month"[^>]*>', body(client.get("/transactions")))
-    assert month, "筛选栏里应该有月份输入"
-    assert 'value=""' in month.group(0), "初次打开月份框是空的——正是当初缩没的那个状态"
+    # 默认那两个框是有值的（当月 1 号到今天），清空区间才是「空框」那个状态。
+    cleared = body(client.get(whole_book()))
+    start = re.search(r'<input type="date" name="start"[^>]*>', cleared)
+    assert start, "筛选栏里应该有开始时间"
+    assert 'value=""' in start.group(0), "清空之后日期框是空的——正是当初缩没的那个状态"
 
     css = Path("src/bill/static/style.css").read_text(encoding="utf-8")
     shared = re.search(r"(?ms)^\.filters input,\n\.filters select \{([^}]*)\}", css)
@@ -724,10 +743,161 @@ def test_the_month_filter_keeps_its_size_while_empty(client):
         "筛选栏的控件在竖排 label 里，要关掉通用规则的 flex: 1"
     )
 
-    month_rule = re.search(r"(?ms)^\.filters input\[type=\"month\"\] \{([^}]*)\}", css)
-    assert month_rule, "月份框要有一条自己的规则"
+    date_rule = re.search(r"(?ms)^\.filters input\[type=\"date\"\] \{([^}]*)\}", css)
+    assert date_rule, "日期框要有一条自己的规则"
     for prop in ("min-width", "min-height"):
-        assert re.search(rf"{prop}\s*:", month_rule.group(1)), f"月份框要有 {prop} 下限"
+        assert re.search(rf"{prop}\s*:", date_rule.group(1)), f"日期框要有 {prop} 下限"
+
+
+# --------------------------------------------------------------------------
+# 起止日期
+#
+# 筛选栏原来只筛「某个月」，现在换成起止两个日期，默认是**当月 1 号到今天**。
+# 这一组盯的就是那个默认值：它决定的不是别的，正是「打开这一页看到的是哪一段
+# 账」，而合计又是按它算的——错了屏幕上什么都不说。
+# --------------------------------------------------------------------------
+
+
+def this_month_so_far() -> tuple[str, str]:
+    """账本那一侧的「本月 1 号」和「今天」——正是默认区间的那两端。
+
+    时区照着夹具写死的那个来（Asia/Shanghai），不拿跑测试这台机器的本地时间
+    去猜，否则跨时区跑起来会差出一天。
+    """
+    today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+    return today.replace(day=1).isoformat(), today.isoformat()
+
+
+def _neighbouring_day(day: str, *, days: int) -> str:
+    """默认区间外面的一天：往前一天落在上个月，往后一天落在明天。"""
+    return (date.fromisoformat(day) + timedelta(days=days)).isoformat()
+
+
+def test_month_range_knows_how_long_each_month_is():
+    """月份摊成区间时，月底按真实月长算。
+
+    汇总页的月份、合并组那一行的链接都靠它，写成固定的 ``-31`` 在字符串比较里
+    也「碰巧」对得上——那种对是撞出来的，所以这儿把 2 月和闰年钉住。
+    """
+    assert dates.month_range("2026-01") == {"start": "2026-01-01", "end": "2026-01-31"}
+    assert dates.month_range("2026-02") == {"start": "2026-02-01", "end": "2026-02-28"}
+    assert dates.month_range("2024-02") == {"start": "2024-02-01", "end": "2024-02-29"}
+    assert dates.month_range("2026-12") == {"start": "2026-12-01", "end": "2026-12-31"}
+    with pytest.raises(BillError):
+        dates.month_range("2026-13")
+
+
+def test_the_list_opens_on_this_month_up_to_today(client, book):
+    """不点筛选时看的是「当月 1 号到今天」，两端都算在内。"""
+    first, today = this_month_so_far()
+    book([
+        {"direction": Direction.OUT, "amount_cents": 100, "currency": "CNY",
+         "occurred_at": f"{first} 09:00:00", "counterparty": "月初那笔"},
+        {"direction": Direction.OUT, "amount_cents": 200, "currency": "CNY",
+         "occurred_at": f"{today} 09:00:00", "counterparty": "今天那笔"},
+        {"direction": Direction.OUT, "amount_cents": 400, "currency": "CNY",
+         "occurred_at": f"{_neighbouring_day(first, days=-1)} 09:00:00",
+         "counterparty": "上个月那笔"},
+        {"direction": Direction.OUT, "amount_cents": 800, "currency": "CNY",
+         "occurred_at": f"{_neighbouring_day(today, days=1)} 09:00:00",
+         "counterparty": "明天那笔"},
+    ])
+
+    page = body(client.get("/transactions"))
+    assert "月初那笔" in page and "今天那笔" in page, "两端都算在内"
+    assert "上个月那笔" not in page and "明天那笔" not in page
+    assert "共 2 条" in page
+    # 合计是按区间算的，所以区间得明写出来——筛选栏平时是收起的
+    assert f"{first} 至 {today}" in page
+    assert f'name="start" value="{first}"' in page
+    assert f'name="end" value="{today}"' in page
+
+
+def test_clearing_both_dates_shows_the_whole_book(client, book):
+    """清空两个框 = 那一端不限，两个都清空就是整个账本。
+
+    这是这一页上唯一能一眼看到全部记录的办法，所以它得跟「没给参数」分开：
+    没给参数是回到默认的当月。
+    """
+    first, _ = this_month_so_far()
+    book([
+        {"direction": Direction.OUT, "amount_cents": 100, "currency": "CNY",
+         "occurred_at": f"{_neighbouring_day(first, days=-1)} 09:00:00",
+         "counterparty": "上个月那笔"},
+        {"direction": Direction.OUT, "amount_cents": 200, "currency": "CNY",
+         "occurred_at": f"{first} 09:00:00", "counterparty": "本月那笔"},
+    ])
+
+    assert "上个月那笔" not in body(client.get("/transactions")), "默认缩在当月"
+    page = body(client.get(whole_book()))
+    assert "上个月那笔" in page and "本月那笔" in page
+    assert "共 2 条" in page
+    # 没有条件可写了，筛选栏就不用收着
+    assert '<details class="filter-panel" open>' in page
+
+
+def test_a_month_link_asks_for_that_whole_month(client, book):
+    """汇总页的月份是链到列表页的，得把**整个月**交过去。
+
+    列表页默认只看当月，交错了就落在空屏上，而那一屏写着「没有符合条件的
+    记录」——看着像那一个月的账没了。
+    """
+    book([{"direction": Direction.OUT, "amount_cents": 100, "currency": "CNY",
+           "occurred_at": "2026-01-05 09:00:00", "counterparty": "一月的账"}])
+
+    home = body(client.get("/"))
+    link = re.search(r'href="(/transactions\?[^"]*)"[^>]*>\s*2026-01\s*<', home)
+    assert link, "汇总页的月份应该是个链接"
+    target = unescape(link.group(1))
+    assert "start=2026-01-01&end=2026-01-31" in target
+    assert "一月的账" in body(client.get(target))
+
+
+def test_the_range_survives_acting_on_a_row_and_loading_more(client, book, monkeypatch):
+    """隐一笔、点「继续下滑加载更多」都要带着区间走。
+
+    列表是按区间筛过的，操作之后回到一个没筛过的页面，等于把刚才那一屏换掉了
+    ——在一段自定义区间里隐掉一笔，回来发现自己站在另一个区间上。
+    """
+    monkeypatch.setattr("bill.web.LIST_STEP", 2)
+    book([
+        {"direction": Direction.OUT, "amount_cents": 100 * i, "currency": "CNY",
+         "occurred_at": f"2026-01-0{i} 09:00:00", "counterparty": f"第 {i} 笔"}
+        for i in (1, 2, 3)
+    ])
+
+    page = body(client.get("/transactions?start=2026-01-01&end=2026-01-31"))
+    more = re.search(r'href="(/transactions\?[^"]*)"[^>]*>\s*继续下滑加载更多', page)
+    assert more, "这一段之外还有一笔"
+    assert "start=2026-01-01" in more.group(1) and "end=2026-01-31" in more.group(1)
+
+    txn_id = int(re.findall(r'name="txn" value="(\d+)"', page)[0])
+    response = client.post(
+        f"/transactions/{txn_id}/hide",
+        data={"start": "2026-01-01", "end": "2026-01-31", "limit": "2"},
+    )
+    assert response.status_code == 303
+    assert "start=2026-01-01&end=2026-01-31" in response.headers["Location"]
+
+
+def test_a_backwards_range_says_so_instead_of_looking_empty(client):
+    """开始晚于结束：不吭声的话这就是一个干干净净的「没有符合条件的记录」，
+    看着跟「这个月真没记账」一模一样。"""
+    page = body(client.get("/transactions?start=2026-03-10&end=2026-03-01"))
+    assert "开始时间比结束时间晚" in page
+
+
+def test_a_hand_edited_date_that_makes_no_sense_is_ignored(client, book):
+    """地址栏里塞进来的东西不该变成一个查不出记录的隐形条件。
+
+    认不出来的当成「那一端不限」：那最多是看多了几笔，看得见的；反过来的话
+    是一屏空账，而屏幕上什么都不说。
+    """
+    book([{"direction": Direction.OUT, "amount_cents": 100, "currency": "CNY",
+           "occurred_at": "2026-01-05 09:00:00", "counterparty": "一月的账"}])
+
+    page = body(client.get("/transactions?start=去年&end="))
+    assert "一月的账" in page
 
 
 # --------------------------------------------------------------------------
@@ -744,7 +914,7 @@ def test_the_transaction_table_has_only_the_columns_a_phone_can_carry(client, bo
     """
     book([{"direction": Direction.OUT, "amount_cents": 3250, "currency": "CNY"}])
 
-    page = body(client.get("/transactions"))
+    page = body(client.get(whole_book()))
     headers = [h.strip() for h in re.findall(r"<th(?:\s[^>]*)?>(.*?)</th>", page, re.S)]
     assert headers == ["", "日期", "金额（CNY）", "对方 / 说明", "账户", "操作"]
 
@@ -762,7 +932,7 @@ def test_the_amount_column_shows_the_sign_instead_of_a_direction_column(client, 
         ]
     )
 
-    page = body(client.get("/transactions"))
+    page = body(client.get(whole_book()))
     assert re.search(r'<td class="num money-out">\s*-32\.50', page), "支出是负号红字"
     assert re.search(r'<td class="num money-in">\s*\+1,200\.00', page), "收入是正号"
     assert "tag-in" not in page and "tag-out" not in page, "收支有自己那一列时才用这些标签"
@@ -795,7 +965,7 @@ def test_the_text_column_falls_back_to_the_description(client, book):
         ]
     )
 
-    page = body(client.get("/transactions"))
+    page = body(client.get(whole_book()))
     assert '<span class="cat-mark" title="Eating out">🍜</span>Starbucks' in page
     assert "拿铁" not in page, "有对方就不露说明，两行字在窄屏上都要折行"
     assert '<span class="cat-mark" title="杂物">🏷️</span>退款到账' in page
@@ -809,7 +979,7 @@ def test_the_row_buttons_are_buttons_and_the_actions_column_comes_last(client, b
     """
     book([{"direction": Direction.OUT, "amount_cents": 3250, "currency": "CNY"}])
 
-    page = body(client.get("/transactions"))
+    page = body(client.get(whole_book()))
     assert '<th class="row-actions">操作</th>' in page
     assert re.search(r'<th class="row-actions">操作</th>\s*</tr>', page), "操作列在表头最后"
     assert 'class="button tiny"' in page and 'class="button tiny danger"' in page
