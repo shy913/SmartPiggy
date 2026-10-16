@@ -20,6 +20,17 @@ import { cn } from "../lib/utils";
 /** 一次多要多少条。跟服务端 `params.LIST_STEP` 是同一个节奏。 */
 const STEP = 200;
 
+/**
+ * 操作那一列钉在右边。
+ *
+ * 表格横向滚起来的时候，被推出可视区的正是最后那几列——而「隐藏」这个动作
+ * 恰恰是要对着某一行的。钉住之后滚到哪儿它都在手边。
+ *
+ * `bg-bg` 不能少：粘住的格子得自己盖住底下的内容，不然下面几列的字会从它
+ * 背后透出来。
+ */
+const STICKY = "sticky right-0 bg-bg";
+
 /** 方向 -> 金额前面那个符号。列表上没有单独的「收支」列：`. 符号 + 颜色`就说清了。 */
 function signed(row: { direction: string; display_cents: number }) {
   const value = row.direction === "neutral" ? 0 : row.display_cents;
@@ -140,7 +151,7 @@ export function TransactionsPage() {
                 <TH>时间</TH>
                 <TH>对方 / 说明</TH>
                 <NumTH>金额</NumTH>
-                <TH className="text-right">操作</TH>
+                <TH className={cn("text-right", STICKY)}>操作</TH>
               </TR>
             </THead>
             <TBody>
@@ -383,7 +394,7 @@ function Row({
       >
         {formatSigned(signed(row))}
       </NumTD>
-      <TD className="text-right">
+      <TD className={cn("text-right", STICKY)}>
         <Button variant="ghost" size="sm" onClick={onHide}>
           {hidden ? "还原" : "隐藏"}
         </Button>
@@ -409,7 +420,7 @@ function GroupRow({ row, members }: { row: TransactionRow; members: MemberRow[] 
         <NumTD className={row.display_cents === 0 ? "text-muted" : "text-out"}>
           {formatSigned(signed(row))}
         </NumTD>
-        <TD className="text-right">
+        <TD className={cn("text-right", STICKY, "bg-accent/5")}>
           {/* 合并行不是一条记录，进不了详情页——它只能去合并组页取消合并。 */}
           <Link className="text-accent underline" to="/groups">
             管理
