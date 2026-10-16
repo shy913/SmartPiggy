@@ -73,10 +73,74 @@ def test_no_file_means_no_login_wall(isolated_data_dir):
 
 
 def test_round_trip(isolated_data_dir):
-    auth.write(PASSWORD)
+    auth.write(PASSWORD, "账本主人")
     conf = auth.load()
-    assert conf.check(PASSWORD)
-    assert not conf.check("something-else")
+    assert conf.username == "账本主人"
+    assert conf.check("账本主人", PASSWORD) is True
+    # 账号和密码有一个不对就进不来，两样都得对
+    assert conf.check("账本主人", "something-else") is False
+    assert conf.check("bill", PASSWORD) is False
+    assert conf.check("", PASSWORD) is False
+    assert conf.check("账本主人", "") is False
+    # 登录表单是没登录的人能直接打的，塞非字符串不能让校验抛
+    assert conf.check(None, PASSWORD) is False
+    assert conf.check({"a": 1}, PASSWORD) is False
+    assert conf.check("账本主人", [PASSWORD]) is False
+
+
+def test_the_account_name_defaults_when_it_is_not_given(isolated_data_dir):
+    assert auth.write(PASSWORD).username == auth.DEFAULT_USERNAME
+    assert auth.load().username == auth.DEFAULT_USERNAME
+
+
+def test_setting_a_password_again_keeps_the_account_name(isolated_data_dir):
+    """只改密码不该顺手把账号名改掉：账号名是天天要打的那个。"""
+    auth.write(PASSWORD, "账本主人")
+    auth.write("another-good-one")
+    conf = auth.load()
+    assert conf.username == "账本主人"
+    assert conf.check("账本主人", "another-good-one") is True
+
+
+def test_a_file_from_before_accounts_existed_still_lets_me_in(isolated_data_dir):
+    """加账号之前在用的那份 auth.toml 里只有 password 和 session_key。
+
+    那份配置读出来按默认账号算——不然升级完打开页面，得先猜中一个谁也没告诉过
+    他的账号名，等于把人锁在自己的账本外面。
+    """
+    config.user_auth_path().write_text(
+        'password = "%s"\nsession_key = "%s"\n'
+        % (auth.hash_password(PASSWORD), "a" * 64),
+        encoding="utf-8",
+    )
+    conf = auth.load()
+    assert conf.username == auth.DEFAULT_USERNAME
+    assert conf.check(auth.DEFAULT_USERNAME, PASSWORD) is True
+
+
+def test_an_account_name_that_would_break_the_file_is_refused(isolated_data_dir):
+    """账号名会被原样写进 TOML：一个引号就能拼出一份读不回来的配置，
+    然后谁都进不来。所以宁可在写的时候就不认。"""
+    for bad in ("", "   ", '带"引号', "带\\反斜杠", "带\n换行", "x" * (auth.MAX_USERNAME + 1)):
+        with pytest.raises(BillError):
+            auth.write(PASSWORD, bad)
+    assert auth.load() is None  # 一个都没写下去
+
+    # 手改进来的坏形状，读的时候也不认（下一次 --set-password 会把它写坏）
+    config.user_auth_path().write_text(
+        'username = 42\npassword = "%s"\nsession_key = "%s"\n'
+        % (auth.hash_password(PASSWORD), "a" * 64),
+        encoding="utf-8",
+    )
+    with pytest.raises(BillError):
+        auth.load()
+
+
+def test_the_account_name_is_written_into_the_file(isolated_data_dir):
+    auth.write(PASSWORD, "账本主人")
+    written = config.user_auth_path().read_text(encoding="utf-8")
+    assert 'username = "账本主人"' in written
+    assert auth.load().username == "账本主人"
 
 
 def test_the_file_is_owner_only(isolated_data_dir):
@@ -90,7 +154,7 @@ def test_changing_the_password_keeps_the_people_who_are_already_in(isolated_data
     first = auth.write(PASSWORD).session_key
     second = auth.write("another-good-one").session_key
     assert second == first
-    assert auth.load().check("another-good-one")
+    assert auth.load().check(auth.DEFAULT_USERNAME, "another-good-one")
 
 
 def test_a_file_without_a_password_is_not_treated_as_no_password(isolated_data_dir):
@@ -181,10 +245,38 @@ def test_a_good_login_clears_the_slate():
 
 
 def test_set_password_reads_one_line_from_a_pipe(isolated_data_dir, monkeypatch):
-    """`echo … | bill --set-password`：管道进来的一行照收，不多问一遍。"""
+    """`echo … | bill --set-password`：管道进来的一行照收，不多问一遍。
+
+    那一行是密码；账号名这条路上只能从 `--user` 来。
+    """
     monkeypatch.setattr(sys, "stdin", io.StringIO(PASSWORD + "\n"))
     main(["--set-password"])
-    assert auth.load().check(PASSWORD)
+    assert auth.load().check(auth.DEFAULT_USERNAME, PASSWORD)
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO(PASSWORD + "\n"))
+    main(["--set-password", "--user", "账本主人"])
+    assert auth.load().check("账本主人", PASSWORD)
+
+
+def test_set_password_prints_the_account_so_i_know_what_to_type(
+    isolated_data_dir, monkeypatch, capsys
+):
+    """账号名要天天打，写完得说一声它现在是什么。"""
+    monkeypatch.setattr(sys, "stdin", io.StringIO(PASSWORD + "\n"))
+    main(["--set-password", "--user", "账本主人"])
+    assert "账本主人" in capsys.readouterr().out
+
+
+def test_set_password_refuses_a_broken_account_name(isolated_data_dir, monkeypatch):
+    monkeypatch.setattr(sys, "stdin", io.StringIO(PASSWORD + "\n"))
+    with pytest.raises(SystemExit):
+        main(["--set-password", "--user", '带"引号'])
+    assert auth.load() is None
+
+
+def test_set_password_needs_a_value_after_user(isolated_data_dir):
+    with pytest.raises(SystemExit):
+        main(["--set-password", "--user"])
 
 
 def test_set_password_keeps_the_output_clean(isolated_data_dir, monkeypatch, capsys):

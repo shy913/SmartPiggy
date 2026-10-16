@@ -543,12 +543,13 @@ def login():
         return jsonify(ok=True, auth_enabled=False)
 
     body = request.get_json(silent=True) or {}
+    username = body.get("username") if isinstance(body, dict) else ""
     password = body.get("password") if isinstance(body, dict) else ""
     source = request.remote_addr or "?"
 
-    # **先验密码，再数失败。** 这道闸门是给猜密码的人设的，不该把输对了密码的
-    # 那个人一起锁在门外：账本只有这一个密码，没有第二把钥匙。
-    if conf.check(password or ""):
+    # **先验账号密码，再数失败。** 这道闸门是给猜的人设的，不该把输对了的那个人
+    # 一起锁在门外：账本就这一组凭据，没有第二把钥匙。
+    if conf.check(username, password):
         attempts().clear(source)
         session.clear()  # 换一个新的会话，不接着用登录之前那一个
         session["logged_in"] = True
@@ -558,8 +559,9 @@ def login():
     attempts().failed(source)
     wait = attempts().waiting(source)
     if wait > 0:
-        return _login_error(f"密码错的次数太多了，等 {int(wait) + 1} 秒再试。", 429)
-    return _login_error("密码不对。", 401)
+        return _login_error(f"错的次数太多了，等 {int(wait) + 1} 秒再试。", 429)
+    # 账号错和密码错**用同一句**：分开说等于告诉猜的人「账号对了、接着猜密码」。
+    return _login_error("账号或密码不对。", 401)
 
 
 @blueprint.delete("/session")

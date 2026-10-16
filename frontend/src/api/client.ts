@@ -95,8 +95,8 @@ function json(body: unknown): RequestInit {
 export const getSession = () =>
   request<SessionState>("/api/session");
 
-export const login = (password: string) =>
-  request<{ ok: boolean }>("/api/session", json({ password }));
+export const login = (username: string, password: string) =>
+  request<{ ok: boolean }>("/api/session", json({ username, password }));
 
 export const logout = () =>
   request<void>("/api/session", { method: "DELETE" });
