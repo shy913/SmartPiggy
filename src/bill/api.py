@@ -123,6 +123,66 @@ LEDGER_FIELDS = (
 )
 
 
+# 交易列表上一行用得上的列。`raw_json` / `dedup_key` / `content_hash` 不在里面：
+# 一次 200 行，那几列（尤其 raw_json）又长又没人看，发过去只是白白占带宽。
+LIST_FIELDS = (
+    "id",
+    "occurred_at",
+    "occurred_date",
+    "direction",
+    "amount_cents",
+    "currency",
+    "counterparty",
+    "counterparty_account",
+    "description",
+    "memo",
+    "effective_category",
+    "account_id",
+    "account_name",
+    "group_id",
+    "member_count",
+    "hidden",
+    "edited_at",
+    "display_cents",
+    "is_large",
+)
+
+MEMBER_FIELDS = (
+    "id",
+    "group_id",
+    "occurred_at",
+    "direction",
+    "amount_cents",
+    "currency",
+    "counterparty",
+    "description",
+    "display_cents",
+)
+
+
+def transaction_rows(result) -> list[dict]:
+    """交易列表的行。合并行的 id 归一成 null，跟账本行一个规矩。"""
+    return [
+        _project(item, LIST_FIELDS, null_group_id=True)
+        for item in result
+    ]
+
+
+def member_rows(result) -> list[dict]:
+    """合并组的组员。它们是**真实记录**，id 不动。"""
+    return [_project(item, MEMBER_FIELDS) for item in result]
+
+
+def _project(item, fields, *, null_group_id: bool = False) -> dict:
+    data = dict(item)
+    row = {key: data.get(key) for key in fields}
+    if null_group_id and row.get("group_id") is not None:
+        # `_effective_cte` 给合成行的 id 是 `-组号` 那个哨兵。前端据此判断
+        # 「这一行点不进详情页」——「字段在不在」比「id 是不是小于零」可靠。
+        row["id"] = None
+    return row
+
+
 def ledger_rows(result) -> list[dict]:
     """投影成界面上那个「一笔」的形状。
 
@@ -277,8 +337,8 @@ def transaction_list():
     accounts = repo.accounts(connection)
     start, end = query["start"], query["end"]
     return jsonify(
-        rows=rows(found),
-        members={str(key): rows(value) for key, value in members.items()},
+        rows=transaction_rows(found),
+        members={str(key): member_rows(value) for key, value in members.items()},
         total=total,
         hidden_total=hidden_total,
         hint=params.list_hint(total, hidden_total),
@@ -327,10 +387,21 @@ def transaction_detail(txn_id: int):
         raw = {}
     return jsonify(
         transaction=row(found),
+        # 改一笔那张表单的初值。放在这里而不是让前端自己拼：`from_row` 里带着
+        # 金额的格式化（分 → '32.50'）和时间那个 'T' 分隔符，那是**服务端的
+        # 一套写法**，在前端再抄一遍就会有两处各写各的。
+        #
+        # 也带上 errors / accounts / currencies / categories / back_month：
+        # 这样「改一笔」和「记一笔」回的是同一个形状，前端两份表单共用一套类型。
+        values=entry.from_row(found),
+        errors=[],
         raw=raw if isinstance(raw, dict) else {},
         record=row(
             repo.get_import(connection, found["import_id"]) if found["import_id"] else None
         ),
+        accounts=_account_rows(connection),
+        currencies=repo.transaction_currencies(connection),
+        categories=repo.transaction_categories(connection),
         display_currency=settings.load().display_currency,
         # 「← 交易记录」要落在这一笔现在待的那个月：被并进别个月的组之后
         # （组落在最早那一笔上），照它自己的日期回，落在的是空屏。

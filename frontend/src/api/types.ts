@@ -99,3 +99,276 @@ export type Meta = {
 };
 
 export type SessionState = { auth_enabled: boolean; logged_in: boolean };
+
+// --------------------------------------------------------------------------
+// 交易列表与详情
+// --------------------------------------------------------------------------
+
+/** 列表里的一行。合并行 `id` 是 null、`group_id` 非空。 */
+export type TransactionRow = {
+  id: number | null;
+  occurred_at: string;
+  occurred_date: string;
+  direction: Direction;
+  amount_cents: number;
+  currency: string;
+  counterparty: string;
+  counterparty_account: string;
+  description: string;
+  memo: string;
+  effective_category: string;
+  account_id: number;
+  account_name: string;
+  group_id: number | null;
+  member_count: number;
+  /** SQLite 里存的是 0/1。 */
+  hidden: number;
+  edited_at: string | null;
+  display_cents: number;
+  is_large: number;
+};
+
+/** 合并组的组员。它们是真实记录，不是合成行。 */
+export type MemberRow = {
+  id: number;
+  group_id: number;
+  occurred_at: string;
+  direction: Direction;
+  amount_cents: number;
+  currency: string;
+  counterparty: string;
+  description: string;
+  display_cents: number;
+};
+
+export type ListFilters = {
+  start: string;
+  end: string;
+  direction: string;
+  account: number | null;
+  q: string;
+  hidden: string;
+};
+
+export type TransactionList = {
+  rows: TransactionRow[];
+  /** key 是组号（字符串，因为 JSON 对象的键只能是字符串）。 */
+  members: Record<string, MemberRow[]>;
+  total: number;
+  hidden_total: number;
+  /** 服务端算好的那行字：「共 N 条，其中 M 条已隐藏。」 */
+  hint: string;
+  limit: number;
+  offset: number;
+  remaining: number;
+  /** 起止日期填反了。要说出来，不能长得像「这个月真没记账」。 */
+  backwards: boolean;
+  active_filters: string[];
+  filters: ListFilters;
+  accounts: Account[];
+  categories: string[];
+  group_count: number;
+  display_currency: string;
+};
+
+/** 改一笔那张表单的初值。金额是**字符串**（'32.50'），时间带 'T' 分隔符。 */
+export type FormValues = {
+  occurred_at: string;
+  direction: string;
+  amount: string;
+  currency: string;
+  category: string;
+  account_name: string;
+  counterparty: string;
+  counterparty_account: string;
+  description: string;
+  memo: string;
+  payment_method: string;
+};
+
+export type FormPayload = {
+  values: FormValues | Record<string, string>;
+  errors: string[];
+  transaction: Record<string, unknown> | null;
+  back_month: string | null;
+  accounts: Account[];
+  currencies: string[];
+  categories: string[];
+  display_currency: string;
+};
+
+/** 详情接口回来的一笔。字段比列表上多——这一页是拿来对账的。 */
+export type TransactionFields = {
+  id: number;
+  occurred_at: string;
+  direction: Direction;
+  amount_cents: number;
+  currency: string;
+  counterparty: string;
+  counterparty_account: string;
+  description: string;
+  memo: string;
+  effective_category: string;
+  source_category: string;
+  account_name: string;
+  is_large: number;
+  hidden: number;
+  edited_at: string | null;
+  dedup_key: string;
+  content_hash: string;
+  source_txn_id: string;
+  merchant_txn_id: string;
+  status: string;
+  payment_method: string;
+};
+
+/**
+ * 详情接口的响应。
+ *
+ * 它**也**满足 `FormPayload`——服务端特意把 values / accounts / currencies /
+ * categories / back_month / errors 一并带上，好让「改一笔」和「记一笔」共用
+ * 一份表单，而不是两份各自写着写着的表单。
+ */
+export type TransactionDetail = FormPayload & {
+  transaction: TransactionFields;
+  values: FormValues;
+  raw: Record<string, unknown>;
+  record: Record<string, unknown> | null;
+  display_currency: string;
+  back_month: string;
+};
+
+export type HideResult = {
+  hidden: boolean;
+  total: number;
+  hidden_total: number;
+  /** 当前这一档排不排得下它。排不下就把那一行从列表里撤掉。 */
+  keep: boolean;
+  hint: string;
+};
+
+// --------------------------------------------------------------------------
+// 合并组
+// --------------------------------------------------------------------------
+
+export type GroupRow = {
+  id: number;
+  origin: string;
+  title: string;
+  category: string;
+  note: string;
+  created_at: string;
+  member_count: number;
+  unconvertible: number;
+  /** 缺汇率的组不生效，这里是 null，`stuck` 说明缺哪个币种。 */
+  net_cents: number | null;
+  first_at: string;
+  currency_count: number;
+  stuck: string | null;
+};
+
+export type GroupsPayload = {
+  groups: GroupRow[];
+  members: Record<string, MemberRow[]>;
+  display_currency: string;
+};
+
+// --------------------------------------------------------------------------
+// 导入
+// --------------------------------------------------------------------------
+
+export type ImportRow = {
+  id: number;
+  filename: string;
+  profile_name: string;
+  uploaded_at: string;
+  row_count: number;
+  inserted: number;
+  duplicates: number;
+  errors: number;
+  warnings: number;
+  merged: number;
+  coverage_start: string | null;
+  coverage_end: string | null;
+};
+
+export type PreviewRow = {
+  row_number: number;
+  status: string;
+  duplicate: boolean;
+  possible_duplicate: boolean;
+  occurred_at: string;
+  direction: Direction;
+  amount_cents: number;
+  currency: string;
+  counterparty: string;
+  description: string;
+  source_category: string;
+};
+
+export type Preview = {
+  token: string;
+  filename: string;
+  size_bytes: number;
+  profile_name: string;
+  /** 认不出表头 / 配置本身有毛病时那句话。 */
+  error: string;
+  notes: string[];
+  detected: { name: string; score: number; confident: boolean } | null;
+  candidates: { name: string; score: number; confident: boolean }[];
+  profiles: { name: string; title: string }[];
+  raw_preview: { row_number: number; cells: string[] }[];
+  counts: {
+    new: number;
+    duplicate: number;
+    possible: number;
+    neutral: number;
+    problem: number;
+  };
+  totals: { income: number; expense: number };
+  issues: { code: string; level: string; message: string; row_number: number | null }[];
+  issues_total: number;
+  rows: PreviewRow[];
+  max_rows: number;
+  truncated: boolean;
+};
+
+// --------------------------------------------------------------------------
+// 设置与列映射
+// --------------------------------------------------------------------------
+
+export type SettingsValues = {
+  theme: string;
+  display: string;
+  timezone: string;
+  rates: { code: string; rate: string }[];
+  large_out: string;
+  large_in: string;
+  merge_enabled: boolean;
+  merge_balanced: boolean;
+  merge_window_hours: string;
+  merge_tolerance: string;
+  merge_keywords: string;
+};
+
+export type SettingsPayload = {
+  values: SettingsValues;
+  errors: string[];
+  saved: boolean;
+  path: string;
+};
+
+export type ProfileRow = {
+  name: string;
+  title: string;
+  origin: string;
+  problems: string[];
+};
+
+export type ProfilesPayload = {
+  profiles: ProfileRow[];
+  headers: string[];
+  staged: { token: string; filename: string } | null;
+  user_dir: string;
+  builtin_dir: string;
+};
