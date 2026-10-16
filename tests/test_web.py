@@ -111,9 +111,7 @@ def test_full_import_then_browse(client):
     assert "共 3 条" in body(client.get(whole_book()))
     assert "共 1 条" in body(client.get(whole_book(direction="neutral")))
     assert "共 1 条" in body(client.get(whole_book(q="美团")))
-    assert "共 1 条" in body(
-        client.get("/transactions?start=2026-01-01&end=2026-01-31&direction=out")
-    )
+    assert "共 1 条" in body(client.get("/transactions?start=2026-01-01&end=2026-01-31&direction=out"))
     assert "共 0 条" in body(client.get("/transactions?start=2026-02-01&end=2026-02-28"))
     assert "餐饮美食" in body(client.get("/"))
     assert "2026-01" in body(client.get("/"))
@@ -874,6 +872,29 @@ def test_a_month_link_asks_for_that_whole_month(client, book):
     assert "一月的账" in body(client.get(target))
 
 
+def test_the_edit_form_goes_back_to_the_month_the_row_is_in(client):
+    """「改一笔」的返回链接要落在这一笔**现在待的那个月**。
+
+    合并组落在组内最早那一笔上：4 月 1 日记的那笔被并进了 3 月 31 日那个组，照它
+    自己的日期回，落在的是 4 月的空屏上——而保存之后的跳转走的是另一个口径
+    （repo.effective_month），两边会互相打架，都指着一个地方说「它不在这儿」。
+    """
+    record(client, direction="out", amount="120.00", occurred_at="2026-03-31T23:00:00",
+           counterparty="海底捞")
+    record(client, direction="in", amount="60.00", occurred_at="2026-04-01T02:00:00",
+           counterparty="小王转账")
+
+    ids = txn_ids(client)
+    assert len(ids) == 2, "两笔都在那个组里（各自还能单独改）"
+    for txn_id in ids:
+        page = body(client.get(f"/transactions/{txn_id}/edit"))
+        link = re.search(r'href="(/transactions\?[^"]*)"[^>]*>取消<', page)
+        assert link, "改一笔的页面上有「取消」"
+        target = unescape(link.group(1))
+        assert "start=2026-03-01&end=2026-03-31" in target, "回到组所在的那个月"
+        assert "取消合并" in body(client.get(target))
+
+
 def test_the_range_survives_acting_on_a_row_and_loading_more(client, book, monkeypatch):
     """隐一笔、点「继续下滑加载更多」都要带着区间走。
 
@@ -964,6 +985,8 @@ def test_the_text_column_falls_back_to_the_description(client, book):
 
     分类缩成的 emoji 贴在文字**前面**，因为它顶替的就是原来那一列；认不出的
     分类也不留空，空着会被读成「这笔没有分类」。
+
+    那一格整个是点进详细信息的入口（a.row-link），所以 emoji 在前、链接在后。
     """
     book(
         [
@@ -987,9 +1010,17 @@ def test_the_text_column_falls_back_to_the_description(client, book):
     )
 
     page = body(client.get(whole_book()))
-    assert '<span class="cat-mark" title="Eating out">🍜</span>Starbucks' in page
+    assert re.search(
+        r'<span class="cat-mark" title="Eating out">🍜</span>'
+        r'<a class="row-link"[^>]*>Starbucks</a>',
+        page,
+    )
     assert "拿铁" not in page, "有对方就不露说明，两行字在窄屏上都要折行"
-    assert '<span class="cat-mark" title="杂物">🏷️</span>退款到账' in page
+    assert re.search(
+        r'<span class="cat-mark" title="杂物">🏷️</span>'
+        r'<a class="row-link"[^>]*>退款到账</a>',
+        page,
+    )
 
 
 def test_the_row_buttons_are_buttons_and_the_actions_column_comes_last(client, book):

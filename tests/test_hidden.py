@@ -53,6 +53,16 @@ def checkbox_ids(client, limit: int | None = None) -> list[int]:
     ]
 
 
+def the_form(**fields) -> dict:
+    """那张大表单提交上来的字段。
+
+    起止日期是两个 hidden input，浏览器一提交就一定带着——底下那段脚本（fetch）
+    复制的也正是它们。这些用例看的页面是「区间清空」那一档（见 checkbox_ids），
+    所以这里也把两端留空，服务端算出来的数才跟屏幕上那份是同一个条件。
+    """
+    return {"start": "", "end": "", **fields}
+
+
 # --------------------------------------------------------------------------
 # 算数的地方
 # --------------------------------------------------------------------------
@@ -287,20 +297,24 @@ def test_unhiding_from_the_page_puts_it_back(client):
     assert set(ids) <= set(checkbox_ids(client))
 
 
-def test_every_tag_class_in_the_template_exists_in_the_stylesheet():
+def test_every_tag_class_used_in_the_templates_exists_in_the_stylesheet():
     """模板里写了个样式表里没有的类名，浏览器一个字都不说——那一格就静静地
     没被上色，看着还像是「本来就长这样」。
 
-    这条是给这种错兜底的：交易记录页上用到的每一种标签，样式表里都得有。
+    这条扫的是整个 templates/，不只是交易记录页：一行 markup 可能被挪到别的
+    文件里去（比如 _transaction_rows.html），只盯一个文件就漏了。
     """
     css = Path("src/bill/static/style.css").read_text(encoding="utf-8")
-    html = Path("src/bill/templates/transactions.html").read_text(encoding="utf-8")
-    html = re.sub(r"\{\{.*?\}\}|\{%.*?%\}", " ", html, flags=re.S)
-
     used: set[str] = set()
-    for attr in re.findall(r'class="([^"]*)"', html):
-        used.update(name for name in attr.split() if name.startswith("tag-"))
-    assert used, "交易记录页上应该有收支 / 大额 / 已改 / 已隐藏这些标签"
+    for template in sorted(Path("src/bill/templates").glob("*.html")):
+        html = template.read_text(encoding="utf-8")
+        html = re.sub(r"\{\{.*?\}\}|\{%.*?%\}", " ", html, flags=re.S)
+        for attr in re.findall(r'class="([^"]*)"', html):
+            used.update(name for name in attr.split() if name.startswith("tag-"))
+
+    assert {"tag-in", "tag-large", "tag-hidden"} <= used, (
+        "收支 / 大额 / 已隐藏这些标签应该还在模板里"
+    )
     missing = sorted(name for name in used if f".{name}" not in css)
     assert not missing, f"这些标签样式表里没有：{missing}"
 
@@ -311,6 +325,82 @@ def test_the_summary_page_forgets_it_too(client):
     assert "12.30" in body(client.get("/"))
     client.post(f"/transactions/{checkbox_ids(client)[0]}/hide")
     assert "12.30" not in body(client.get("/"))
+
+
+def test_hiding_without_reloading_answers_with_the_new_row(client):
+    """页面不重载那条路（见 transactions.html 底下那段脚本）。
+
+    服务端得把三样一起交回去：新的那一行、页头那行字、以及全表条数——
+    「全表还隐藏着几笔」客户端自己算不出来。
+    """
+    record(client)
+    txn_id = checkbox_ids(client)[0]
+    response = client.post(
+        f"/transactions/{txn_id}/hide",
+        data=the_form(anchor="0"),
+        headers={"Accept": "application/json"},
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["hidden"] is True
+    assert payload["keep"] is True, "「照常列出」这一档，隐了也还留在页面上"
+    assert payload["total"] == 1
+    assert payload["hint"] == "共 1 条，其中 1 条已隐藏。"
+
+    row = payload["row"]
+    assert 'class="row-hidden"' in row, "回来的是灰字那一版"
+    assert '<span class="tag tag-hidden" title="已隐藏">隐</span>' in row
+    assert ">显示</button>" in row
+    assert 'name="txn"' not in row, "隐藏的行不给勾选框"
+    assert 'id="row-0"' in row, "行号要原样带着，底下的锚点还指着它"
+
+
+def test_the_row_is_dropped_from_a_view_that_filters_it_out(client):
+    record(client)
+    txn_id = checkbox_ids(client)[0]
+
+    hidden_now = client.post(
+        f"/transactions/{txn_id}/hide",
+        data=the_form(hidden="0", anchor="0"),
+        headers={"Accept": "application/json"},
+    ).get_json()
+    assert hidden_now["keep"] is False, "「不列出」这一档，刚隐的那行得从页面上撤掉"
+    assert hidden_now["total"] == 0
+    assert hidden_now["hint"] == "共 0 条。"
+
+    shown_again = client.post(
+        f"/transactions/{txn_id}/unhide",
+        data=the_form(hidden="1", anchor="0"),
+        headers={"Accept": "application/json"},
+    ).get_json()
+    assert shown_again["keep"] is False, "「只看它们」里还原一笔，那一行也该走"
+    assert shown_again["total"] == 0
+
+
+def test_the_json_count_is_the_whole_list_too(client, monkeypatch):
+    monkeypatch.setattr("bill.web.LIST_STEP", 2)
+    for i in range(5):
+        record(client, counterparty=f"第 {i} 笔")
+    ids = checkbox_ids(client, limit=5)
+    for txn_id in (ids[0], ids[4]):
+        client.post(f"/transactions/{txn_id}/hide")
+
+    payload = client.post(
+        f"/transactions/{ids[0]}/unhide",
+        data=the_form(anchor="0"),
+        headers={"Accept": "application/json"},
+    ).get_json()
+    assert payload["total"] == 5
+    assert payload["hint"] == "共 5 条，其中 1 条已隐藏。", "隐了两笔，还原一笔，还剩一笔"
+
+
+def test_a_plain_submit_still_goes_back_to_the_list(client):
+    """没脚本的时候走的就是这条路——一层加法，不是替代。"""
+    record(client)
+    txn_id = checkbox_ids(client)[0]
+    response = client.post(f"/transactions/{txn_id}/hide", data=the_form(anchor="0"))
+    assert response.status_code == 303
+    assert response.headers["Location"].endswith("#row-0")
 
 
 def test_hiding_something_that_is_not_there_is_a_404(client):
@@ -380,7 +470,7 @@ def test_acting_on_a_row_keeps_your_place(client, monkeypatch):
         record(client, counterparty=f"第 {i} 笔")
     txn_id = checkbox_ids(client, limit=6)[4]
 
-    response = client.post(f"/transactions/{txn_id}/hide", data={"anchor": "4"})
+    response = client.post(f"/transactions/{txn_id}/hide", data=the_form(anchor="4"))
     assert response.status_code == 303
     assert response.headers["Location"].endswith("#row-4")
 
@@ -424,7 +514,9 @@ def test_the_list_grows_instead_of_paging(client, monkeypatch):
 
     page = body(client.get(whole_book()))
     assert "下一页" not in page and "第 1 / " not in page, "分页没了"
-    assert "继续下滑加载更多（还有 3 条）" in page
+    assert re.search(
+        r'继续下滑加载更多（还有\s*<span class="more-count">3</span>\s*条）', page
+    ), "那一条链接着下一段，并且说清还有几条"
     assert len(checkbox_ids(client)) == 2, "页面上只给这一段"
     assert "limit=4#row-2" in page, "点一下接着往下长，并且跳到新那一段的第一行"
 

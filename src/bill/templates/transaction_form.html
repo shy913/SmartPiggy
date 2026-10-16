@@ -2,10 +2,10 @@
 {% block title %}记账 — {{ '改一笔' if transaction else '记一笔' }}{% endblock %}
 
 {% block content %}
-{# 回到交易记录。列表页默认只看当月，所以「改一笔」得回到**那一笔所在的月份**：
-   把三月的账改完按取消，落在十月的空屏上，看着就像刚丢了一笔。新记一笔没有
-   月份可依，就走默认的当月。 #}
-{% set back_to_list = url_for('transactions', **month_range(transaction.occurred_at[:7])) if transaction else url_for('transactions') %}
+{# 回到交易记录。列表页默认只看当月，所以「改一笔」得回到**这一笔现在待的那个月**
+   （back_month，合并之后不一定是它自己的月份）：把三月的账改完按取消，落在十月的
+   空屏上，看着就像刚丢了一笔。新记一笔没有月份可依，就走默认的当月。 #}
+{% set back_to_list = url_for('transactions', **month_range(back_month)) if back_month else url_for('transactions') %}
 <p class="breadcrumb"><a href="{{ back_to_list }}">← 回到交易记录</a></p>
 
 <h1>{{ '改这一笔' if transaction else '记一笔' }}</h1>

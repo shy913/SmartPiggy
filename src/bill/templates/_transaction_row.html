@@ -1,0 +1,4 @@
+{#- 单独渲染一行，给 web.py 里 toggle_hidden 的 JSON 分支用：
+    改完状态之后把这一行原样重画一份，客户端拿去换掉旧的那一行。
+    行本身在 _transaction_rows.html 里，只有那一份。 -#}
+{% import "_transaction_rows.html" as rows %}{{ rows.row(tx, index, members, display_currency) }}

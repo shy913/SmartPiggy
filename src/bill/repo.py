@@ -472,6 +472,16 @@ def _is_large(conf, prefix: str = "") -> str:
     )
 
 
+def _large_flag(conf, prefix: str = "t.") -> str:
+    """单笔页面上那个「大额」标记（列表页和详情页共用）。
+
+    隐藏的行不标：汇总页那个「大额」块走的是账本口径（_effective_cte 默认排除
+    隐藏），隐藏的行在那儿根本不会出现——单笔上还挂着「大额」就成了「标了却
+    查无此笔」。两处各写一遍 CASE 的话，迟早有一处漏掉。
+    """
+    return f"(CASE WHEN {prefix}hidden THEN 0 ELSE {_is_large(conf, prefix)} END)"
+
+
 def _totals(conf, prefix: str = "") -> str:
     amount = _amount_in_display(conf, prefix)
     large = _is_large(conf, prefix)
@@ -857,7 +867,7 @@ def list_transactions(
     # 显示币种（见 _effective_cte），币种列也是显示币种，所以乘 1。
     conf = settings.load()
     amount = _amount_in_display(conf, "t.")
-    large = _is_large(conf, "t.")
+    large_flag = _large_flag(conf, "t.")
     return connection.execute(
         f"""
         {_effective_cte(conf, include_hidden=hidden != "0")}
@@ -866,11 +876,7 @@ def list_transactions(
                -- 大额不进合计这件事，列表页上只靠 is_large 那个标记交代：
                -- 金额照原样显示，标记说明它不算进上面的数。早先另有一列叫
                -- 「计入合计」，大额在那列写 0.00——列删了，理由还成立。
-               --
-               -- 隐藏的行不标大额：汇总页那个「大额」块走的是账本口径
-               -- （_effective_cte 默认排除隐藏），隐藏的行在那儿根本不会出现。
-               -- 列表里还挂着「大额」就成了「标了却查无此笔」——口径自相矛盾。
-               CASE WHEN t.hidden THEN 0 ELSE {large} END AS is_large
+               {large_flag} AS is_large
         FROM effective t JOIN accounts a ON a.id = t.account_id
         WHERE {where}
         ORDER BY t.occurred_at DESC, t.id DESC
@@ -984,8 +990,9 @@ def get_transaction(
     return connection.execute(
         f"""
         SELECT t.*, a.name AS account_name, {amount} AS display_cents,
+               {_large_flag(conf, "t.")} AS is_large,
                COALESCE(NULLIF(t.category, ''), t.source_category) AS effective_category,
-               m.group_id AS group_id, g.origin AS group_origin
+               m.group_id AS group_id, g.origin AS group_origin, g.title AS group_title
         FROM transactions t
         JOIN accounts a ON a.id = t.account_id
         LEFT JOIN tx_group_members m ON m.transaction_id = t.id
