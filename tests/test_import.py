@@ -331,14 +331,18 @@ def test_a_narrow_bank_row_survives(conn):
 
 def test_monzo_joins_the_separate_date_and_time_columns(conn):
     """Monzo 把日期和时间分成两列，必须拼起来再解析——只取日期会丢掉时分秒，
-    同一天的多笔就分不出先后了。"""
+    同一天的多笔就分不出先后了。
+
+    工厂里的 12:26:21 是**英国时间**（当天伦敦是 BST，UTC+1），而测试账本按
+    北京时间显示，所以 +7 小时。换算本身由 test_timezone.py 专门覆盖。
+    """
     preview = ingest.stage(conn, "monzo.csv", monzo_csv())
     assert preview.profile_name == "monzo"
     assert preview.error == ""
 
     by_party = {row.transaction.counterparty: row.transaction for row in preview.plan.rows}
-    assert by_party["Tesco"].occurred_at == "2026-09-28 12:26:21"
-    assert by_party["Happy Lamb"].occurred_at == "2026-10-03 16:58:56"
+    assert by_party["Tesco"].occurred_at == "2026-09-28 19:26:21"
+    assert by_party["Happy Lamb"].occurred_at == "2026-10-03 23:58:56"
 
 
 def test_monzo_sign_decides_the_direction(conn):

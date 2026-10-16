@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 
-from .dates import parse_datetime
+from .dates import convert_timezone, parse_datetime
 from .dedup import base_key, content_hash
 from .errors import ProfileError
 from .models import Direction, ImportPlan, Issue, ParsedRow, Transaction
@@ -44,8 +44,19 @@ class _Issues:
             )
 
 
-def parse(grid: Grid, profile: Profile, *, account_id: int | None = None) -> ImportPlan:
-    """按 ``profile`` 解析整张表，返回导入计划。"""
+def parse(
+    grid: Grid,
+    profile: Profile,
+    *,
+    account_id: int | None = None,
+    display_timezone: str = "",
+) -> ImportPlan:
+    """按 ``profile`` 解析整张表，返回导入计划。
+
+    ``display_timezone`` 是账本统一使用的时区；账单里声明了 ``profile.timezone``
+    且与之不同时，时间会换算过来。原始字符串仍留在 ``transaction.raw`` 里，
+    随时能对回去。
+    """
     problems = validate(profile)
     if problems:
         raise ProfileError("；".join(problems))
@@ -93,6 +104,12 @@ def parse(grid: Grid, profile: Profile, *, account_id: int | None = None) -> Imp
                 "warning", "bad_date", f"日期「{date_text}」解析不了", row_number, raw_row
             )
             continue
+
+        # 账单给的是**当地墙上时钟**，换到账本统一的时区再存。
+        # 微信是 UTC+8、Monzo 是英国本地时间，不换算的话两边的时间线是错位的。
+        occurred_at = convert_timezone(
+            occurred_at, profile.timezone, display_timezone
+        )
 
         direction, cents, error = _amount_and_direction(row, indexes, profile)
         if error is not None:

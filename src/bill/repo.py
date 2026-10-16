@@ -69,7 +69,7 @@ def ensure_account(connection: sqlite3.Connection, name: str, kind: str = "other
         return row["id"]
     cursor = connection.execute(
         "INSERT INTO accounts (name, kind, created_at) VALUES (?, ?, ?)",
-        (clean, kind, db.utcnow()),
+        (clean, kind, db.now()),
     )
     return int(cursor.lastrowid)
 
@@ -118,7 +118,7 @@ def create_import(
         """,
         (
             account_id, profile_name, filename, file_sha256, size_bytes,
-            db.utcnow(), row_count, coverage_start, coverage_end,
+            db.now(), row_count, coverage_start, coverage_end,
         ),
     )
     return int(cursor.lastrowid)
@@ -274,7 +274,7 @@ def insert_rows(
     """
     inserted = 0
     duplicates = 0
-    now = db.utcnow()
+    now = db.now()
 
     for row in rows:
         transaction = row.transaction

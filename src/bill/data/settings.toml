@@ -4,6 +4,11 @@
 #
 # 改完刷新页面就生效，不用重启——应用每次请求都会重新读这个文件。
 
+# 所有时间都换算成这个时区显示（IANA 名字）。
+# 各来源自己声明它用的是哪个时区（见 data/profiles/*.toml 的 [profile].timezone），
+# 导入时换算过来。写错名字会在读设置时就报错，不会拖到导入。
+timezone = "Europe/London"
+
 [currency]
 # 所有金额都换算成这个币种显示与统计。
 display = "GBP"

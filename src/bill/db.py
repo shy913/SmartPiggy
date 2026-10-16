@@ -8,16 +8,22 @@ ORM 只会换来一个依赖和一套迁移工具。SQL 都收在 ``repo.py``，
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
-from . import config
+from . import config, settings
 
-__all__ = ["connect", "init_db", "utcnow", "MIGRATIONS"]
+__all__ = ["connect", "init_db", "now", "MIGRATIONS"]
 
 
-def utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+def now() -> str:
+    """当前时刻，用**账本统一的显示时区**。
+
+    存 UTC 更「正确」，但这个应用没有「观看者时区」这个概念，能看到的每一处
+    时间都是显示时区的；导入时间要是只有它一个是 UTC，页面上就会并排出现
+    两个差着几小时的时钟，比存得不够正统更容易误导人。
+    """
+    return datetime.now(settings.load().tz()).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 # 每一项是一版迁移；索引 i 把库从版本 i 升到 i+1。

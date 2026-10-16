@@ -10,12 +10,13 @@ import re
 import tomllib
 from dataclasses import dataclass, field
 
-from . import config
+from . import config, dates
 from .errors import BillError
 
 __all__ = ["Settings", "load"]
 
 DEFAULT_DISPLAY = "GBP"
+DEFAULT_TIMEZONE = "Europe/London"
 _CODE = re.compile(r"^[A-Z0-9]{1,8}$")
 
 
@@ -24,6 +25,11 @@ class Settings:
     display_currency: str = DEFAULT_DISPLAY
     # 「1 单位显示币种 = 多少该币种」，例如 {"CNY": 8.9} 表示 1 GBP = 8.9 CNY。
     rates: dict[str, float] = field(default_factory=dict)
+    # 所有时间都换算成这个时区显示（IANA 名字）。
+    timezone: str = DEFAULT_TIMEZONE
+
+    def tz(self):
+        return dates.zone(self.timezone)
 
     def factors(self) -> dict[str, float]:
         """币种 -> 乘数。原金额乘上它就是显示币种的最小单位数。
@@ -43,14 +49,16 @@ class Settings:
         return factors
 
     def describe(self) -> str:
-        """给界面用的一句话，让汇率是明摆着的。"""
-        if not self.rates:
-            return f"金额以 {self.display_currency} 计。"
-        pairs = "、".join(
-            f"1 {self.display_currency} = {rate:g} {code}"
-            for code, rate in sorted(self.rates.items())
-        )
-        return f"金额已按 {pairs} 换算为 {self.display_currency}。"
+        """给界面用的一句话，让换算规则是明摆着的。"""
+        if self.rates:
+            pairs = "、".join(
+                f"1 {self.display_currency} = {rate:g} {code}"
+                for code, rate in sorted(self.rates.items())
+            )
+            money = f"金额已按 {pairs} 换算为 {self.display_currency}"
+        else:
+            money = f"金额以 {self.display_currency} 计"
+        return f"{money}；时间均已换算到 {self.timezone}。"
 
 
 def load() -> Settings:
@@ -78,6 +86,10 @@ def load() -> Settings:
             str(code).upper(): float(rate)
             for code, rate in (section.get("rates") or {}).items()
         }
-        return Settings(display_currency=display, rates=rates)
+
+        timezone = str(parsed.get("timezone") or DEFAULT_TIMEZONE)
+        dates.zone(timezone)  # 名字写错就当场报，别等导入时才发现
+
+        return Settings(display_currency=display, rates=rates, timezone=timezone)
 
     return Settings()

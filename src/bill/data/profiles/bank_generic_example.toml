@@ -18,6 +18,11 @@ title  = "示例银行（请改）"
 kind   = "bank"
 format = "auto"
 
+# 这份账单里的时间是哪个时区的（IANA 名字，例如 Europe/London、Asia/Shanghai）。
+# 留空 = 「已经是显示时区」，不做换算——自己加的配置用这个默认值就行。
+# 只有当账单来自别的时区时才需要填，导入时会被换算到显示时区。
+# timezone = "Europe/London"
+
 [match]
 # 都留空也能用：检测不出来时在预览页手动选这个 profile 就行。
 filename_globs    = ["*明细*", "*流水*"]

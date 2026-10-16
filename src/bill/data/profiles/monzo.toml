@@ -12,6 +12,9 @@
 name     = "monzo"
 title    = "Monzo"
 kind     = "bank"
+# Monzo 按账户所在地的**本地时间**导出，所以是英国时区——
+# 夏令时会变，必须用 IANA 名字让 zoneinfo 去算，不能写死 +00:00。
+timezone = "Europe/London"
 format   = "csv"
 # 账单里本来就有 Currency 列，这行是兜底：万一某份导出缺了那列，按英镑算。
 currency = "GBP"

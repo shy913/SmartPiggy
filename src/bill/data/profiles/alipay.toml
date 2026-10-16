@@ -8,7 +8,9 @@
 name   = "alipay"
 title  = "支付宝"
 kind   = "alipay"
-format = "auto"
+# 支付宝账单里的时间是北京时间（UTC+8）。
+timezone = "Asia/Shanghai"
+format   = "auto"
 
 # gb18030 是 GBK / GB2312 的超集，一个就够解两种。
 # 必须排在 utf-8 之后——它几乎不会解码失败，放前面会把 utf-8 的文件也吃掉。

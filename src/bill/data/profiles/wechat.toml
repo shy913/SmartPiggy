@@ -7,7 +7,9 @@
 name   = "wechat"
 title  = "微信"
 kind   = "wechat"
-format = "xlsx"
+# 微信账单第一页自己写着「本账单中所有时间均为UTC+08:00时间」。
+timezone = "Asia/Shanghai"
+format   = "xlsx"
 
 [match]
 filename_globs    = ["*微信*", "*wechat*"]

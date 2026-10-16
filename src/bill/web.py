@@ -34,7 +34,11 @@ PAGE_SIZE = 100
 
 
 def current_month() -> str:
-    return datetime.now().strftime("%Y-%m")
+    """「本月」按账本统一的显示时区算，不是按服务器的时钟。
+
+    这台机器在 UTC+8 而账本显示英国时间，跨月那几小时会整整差一个月。
+    """
+    return datetime.now(settings.load().tz()).strftime("%Y-%m")
 
 
 def uptime_seconds() -> int:

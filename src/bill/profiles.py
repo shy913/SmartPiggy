@@ -16,9 +16,9 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import config
+from . import config, dates
 from .dates import DEFAULT_FORMATS, DEFAULT_TIME
-from .errors import ProfileError
+from .errors import BillError, ProfileError
 from .readers import RawTable, build_grid, find_header
 
 __all__ = [
@@ -75,6 +75,9 @@ class Profile:
     kind: str = "other"
     # 账单里没有币种列时用这个。有了币种字段，汇总才能不把英镑和人民币加在一起。
     default_currency: str = "CNY"
+    # 这份账单里的时间是**哪个时区**的墙上时钟（IANA 名字）。
+    # 留空表示「已经是显示时区」，不做换算——用户自己加的银行配置用这个默认值。
+    timezone: str = ""
     format: str = "auto"
     encoding: tuple[str, ...] = ()
     delimiter: str | None = None
@@ -204,6 +207,7 @@ def load_profile(path: Path, origin: str = "builtin") -> Profile:
         title=str(meta.get("title") or name),
         kind=str(meta.get("kind") or "other"),
         default_currency=str(meta.get("currency") or "CNY").upper(),
+        timezone=str(meta.get("timezone") or ""),
         format=str(meta.get("format") or "auto"),
         encoding=_as_tuple(meta.get("encoding")),
         delimiter=meta.get("delimiter") or None,
@@ -295,6 +299,12 @@ def validate(profile: Profile) -> list[str]:
 
     if profile.format not in ("auto", "csv", "xlsx", "zip"):
         problems.append(f"format「{profile.format}」不认识，只能是 auto/csv/xlsx/zip")
+
+    if profile.timezone:
+        try:
+            dates.zone(profile.timezone)
+        except BillError as error:
+            problems.append(str(error))
 
     for pattern in profile.footer_patterns:
         try:

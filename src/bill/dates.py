@@ -6,10 +6,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
 from collections.abc import Sequence
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-__all__ = ["parse_datetime", "DEFAULT_FORMATS"]
+from .errors import BillError
+
+__all__ = ["DEFAULT_FORMATS", "convert_timezone", "parse_datetime", "zone"]
 
 DEFAULT_FORMATS = (
     "%Y-%m-%d %H:%M:%S",
@@ -59,6 +62,36 @@ def parse_datetime(
         return f"{serial.strftime('%Y-%m-%d')} {default_time}"
 
     return None
+
+
+def zone(name: str) -> ZoneInfo:
+    """按 IANA 名字取时区。名字写错是最容易犯也最该早报的错。"""
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError) as error:
+        raise BillError(f"认不出时区「{name}」，要写 IANA 名字，例如 Europe/London。") from error
+
+
+def convert_timezone(local_text: str, source: str, target: str) -> str:
+    """把「源时区的本地时间」换到目标时区的本地时间。
+
+    账单给的都是**当地墙上时钟**，不带偏移量，所以必须由来源自己声明时区
+    （微信是 UTC+8，Monzo 是英国本地时间——而英国本地时间是会随夏令时变的，
+    所以不能写死 +00:00，得用 IANA 名字让 zoneinfo 去算）。
+
+    夏令时回拨那一小时里出现的时刻是有歧义的（同一串数字对应两个瞬间），
+    zoneinfo 默认取前一个。对账目来说这已经够用——那种时刻本来就极罕见。
+    """
+    if not source or source == target or not local_text:
+        return local_text
+
+    try:
+        naive = datetime.strptime(local_text, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return local_text
+
+    converted = naive.replace(tzinfo=zone(source)).astimezone(zone(target))
+    return converted.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _has_time(fmt: str) -> bool:

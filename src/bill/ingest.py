@@ -15,7 +15,7 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 
-from . import config, dedup, repo
+from . import config, dedup, repo, settings
 from .errors import BillError, ProfileError
 from .importer import parse
 from .models import ImportPlan
@@ -227,7 +227,12 @@ def _apply_inner(
     account_id = repo.find_account(connection, profile.title)
 
     try:
-        plan = parse(grid, profile, account_id=account_id)
+        plan = parse(
+            grid,
+            profile,
+            account_id=account_id,
+            display_timezone=settings.load().timezone,
+        )
     except ProfileError as error:
         preview.error = str(error)
         return
