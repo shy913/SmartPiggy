@@ -1,0 +1,15 @@
+<!doctype html>
+<!-- data-theme 由服务端在外壳路由里替换掉再吐出来：等 /api/meta 回来才设主题的话，
+     第一帧会是默认那套配色，切到浅色主题的人每次刷新都先闪一下深色。
+     占位符用一对百分号，Vite 构建时不会动它。 -->
+<html lang="zh-CN" data-theme="%BILL_THEME%">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>记账</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -12,6 +12,7 @@ import json
 import os
 import sys
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 from flask import (
     Flask,
@@ -21,6 +22,7 @@ from flask import (
     redirect,
     render_template,
     request,
+    send_from_directory,
     session,
     url_for,
 )
@@ -62,7 +64,20 @@ _started_at = datetime.now(timezone.utc)
 # 不带任何账目数据），加静态文件——登录页的样式表就在那儿。
 # 这个名单是**逐个点名**的：没点到的都要先登录，认不出来的 URL（那种请求的
 # endpoint 是 None）也不例外——宁可让 404 也先走一趟登录页。
-OPEN_ENDPOINTS = frozenset({"login_page", "login", "logout", "healthz", "static"})
+# assets / app_shell 在里面：外壳与它的 JS/CSS 都**不含账目数据**，要登录的是
+# /api/*。把外壳也纳入闸门的话，没登录的人打开首页会被拽去登录页——而那个登录
+# 视图本身就长在 SPA 里，先有鸡还是先有蛋。
+OPEN_ENDPOINTS = frozenset(
+    {"login_page", "login", "logout", "healthz", "static", "assets", "app_shell"}
+)
+
+# 前端构建产物。**不进版本库**（见 .gitignore），部署时现构建——仓库里就不会
+# 有一份「改了源码忘了重建」的偏差。
+APP_BUILD_DIR = Path(__file__).parent / "static" / "app"
+# 外壳里那个 data-theme 占位符。服务端填好再吐出去，第一帧主题就是对的。
+THEME_SLOT = "%BILL_THEME%"
+# 外壳现在挂在 /app 下，跟旧界面并存；切换那一批会把它挪到根路径。
+SHELL_PREFIX = "/app"
 
 # 接口那边不登录也能打的几个。同样**逐个点名**，而且只点登录本身：
 # 「问一句我登没登」「登录」「退出」，除此之外一律 401。
@@ -938,6 +953,53 @@ def create_app() -> Flask:
     @app.get("/healthz")
     def healthz():
         return jsonify(status="ok", uptime_seconds=uptime_seconds())
+
+    # ---------------------------------------------------------------- 前端外壳
+
+    @app.get("/assets/<path:filename>")
+    def assets(filename: str):
+        """构建出来的 JS / CSS。
+
+        Vite 默认发绝对路径 `/assets/…`，所以这一条挂在根上而不是 /app 下面——
+        将来外壳挪到根路径时，这些地址一个字都不用改。
+        """
+        return send_from_directory(APP_BUILD_DIR / "assets", filename)
+
+    def render_shell():
+        """把外壳 HTML 吐出去，顺手把主题填进 ``<html data-theme>``。
+
+        填在服务端而不是等 /api/meta 回来再设：否则第一帧永远用默认那套配色，
+        切成浅色主题的人每次打开都先闪一下深色。这里读一次设置就有，
+        跟旧界面 ``<html data-theme>`` 的做法是同一条路。
+        """
+        index = APP_BUILD_DIR / "index.html"
+        if not index.exists():
+            # 产物不在 = 还没构建过，或者构建到一半失败了。**说清楚**，
+            # 而不是回一个空白页——空白页看起来像应用坏了，而实际只是没构建。
+            return (
+                "<!doctype html><meta charset='utf-8'><h1>前端还没有构建</h1>"
+                "<p>在 frontend/ 下跑 <code>npm ci &amp;&amp; npm run build</code>。</p>",
+                503,
+            )
+        try:
+            theme = settings.load().theme
+        except BillError:
+            # 设置坏了不该连带把界面也挡在外面：先用默认主题把页面给出去，
+            # 设置页自己会说明哪里填错了。
+            theme = themes.DEFAULT_THEME
+        html = index.read_text(encoding="utf-8").replace(THEME_SLOT, theme)
+        return html, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+    @app.get(SHELL_PREFIX)
+    @app.get(f"{SHELL_PREFIX}/<path:path>")
+    def app_shell(path: str = ""):
+        """SPA 的入口。
+
+        这一层**免登录**：外壳 HTML 里没有任何账目数据，数据全在 /api/*（那边
+        每个接口都要登录）。这样打开首页不会先被拽去一个登录页再弹回来。
+        真正的闸门在接口那一层。
+        """
+        return render_shell()
 
     @app.after_request
     def render_inline(response):

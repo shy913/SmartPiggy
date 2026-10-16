@@ -16,3 +16,14 @@ build/
 
 # 真实账单样本永远只留在本机
 tests/fixtures/real/
+
+# 前端依赖与构建产物都不进版本库：产物在部署时现构建（见 README「部署」一节）。
+# 好处是仓库里不会有一份「改了源码忘了重建」的偏差；代价是回退时要重跑一次构建。
+frontend/node_modules/
+src/bill/static/app/
+
+# 主题的 CSS 变量块和 TS 常量都是从 theme.json 生成的（建构建前先跑
+# `npm run themes`）。不进版本库，是为了让 theme.json 成为**唯一**来源：
+# 提交一份生成物，就又多出一个「改了源文件忘了重新生成」的机会。
+frontend/src/theme/themes.css
+frontend/src/theme/themes.ts

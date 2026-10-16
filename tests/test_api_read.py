@@ -90,10 +90,15 @@ def test_the_summary_can_be_pinned_to_a_month(client, book):
         ]
     )
     body = summary(client, range="month", month="2026-01")
-    assert body["range"] == {
-        "mode": "month", "month": "2026-01", "year": "", "days": 30,
-        "start": "2026-01-01", "end": "2026-01-31", "label": "2026-01",
-    }
+    span = body["range"]
+    assert span["mode"] == "month"
+    assert span["month"] == "2026-01"
+    assert (span["start"], span["end"]) == ("2026-01-01", "2026-01-31")
+    assert span["label"] == "2026-01"
+    # 年份和天数即使当前模式用不上也要填成生效值：模式之间是链接，切过去
+    # 不能发现自己手里没有值、只能落回默认。
+    assert span["year"] == today()[:4]
+    assert span["days"] == 30
     assert [row["expense"] for row in body["overall"]] == [700]
 
 
@@ -256,6 +261,28 @@ def test_the_ranking_is_the_net_amount_of_a_group(client, conn, book):
     assert len(rows) == 1, "合起来的三笔在排行里是一行"
     assert rows[0]["display_signed_cents"] == -4000
     assert rows[0]["group_id"] is not None
+    # 合成行的 id 归一成 null（`_effective_cte` 给的是 `-组号` 那个哨兵）。
+    # 前端据此判断这一行点不进详情页——一个字段在不在，比「id 是不是小于零」可靠。
+    assert rows[0]["id"] is None
+
+
+def test_a_ledger_row_does_not_carry_the_books_internals(client, book, tmp_path):
+    """大额那一栏原先是 ``SELECT *``，把 dedup_key / raw_json 一起发了出去。
+
+    那几列是**记录的身份**，界面一个都用不上。发出去不算安全问题（同一个
+    浏览器本来就登着），但它是两样东西混在了一起：接口的形状该由界面决定，
+    不该由表结构决定。
+    """
+    (tmp_path / "settings.toml").write_text(
+        'timezone = "Asia/Shanghai"\n\n[currency]\ndisplay = "CNY"\nrates = {}\n'
+        "\n[large]\nout = 5\nin = 0\n",
+        encoding="utf-8",
+    )
+    book([{"occurred_at": "2026-06-01 10:00:00", "direction": "out", "amount_cents": 700}])
+    large = summary(client, range="all")["large"]
+    assert len(large) == 1, "先确认这笔真的被判成了大额"
+    for leaked in ("dedup_key", "content_hash", "raw_json", "hidden", "account_id"):
+        assert leaked not in large[0], f"{leaked} 不该出现在这一行里"
 
 
 def test_the_ranking_leaves_large_rows_to_the_other_column(client, book, tmp_path):

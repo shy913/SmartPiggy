@@ -1,0 +1,57 @@
+@import "tailwindcss";
+@import "./theme/themes.css";
+
+/* 把主题变量接进 Tailwind 的色板，于是 `bg-panel`、`text-muted`、`border-border`
+   这些类取的都是**当前主题**的值。
+
+   `inline` 不能省：它让生成出来的工具类直接引用 var(--panel)，而不是把值抄一份
+   进样式表。抄一份的话，切主题时那些类会留在旧颜色上——一个不会报错、只在浅色
+   主题下才看得出来的错。 */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-panel-hover: var(--panel-hover);
+  --color-border: var(--border);
+  --color-code: var(--code-bg);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-on-accent: var(--on-accent);
+  --color-danger: var(--danger);
+  --color-warn: var(--warn);
+  --color-in: var(--in);
+  --color-out: var(--out);
+  --color-neutral: var(--neutral);
+  --color-grid: var(--grid);
+  --color-axis: var(--axis);
+
+  /* 中文优先：全是本机字体，不联网加载——这是个本地应用，断网也得一样好看。 */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC",
+    "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+}
+
+/* 金额、日期这些要对齐的数字用等宽字体：比例字体下每一行的位数都不一样，
+   一列数读起来会参差不齐。 */
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+html {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+/* 焦点环跟着强调色走，别用浏览器默认那种：在深色主题下它几乎看不见。 */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

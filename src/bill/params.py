@@ -138,8 +138,11 @@ def summary_range(conf, source) -> dict[str, str | int]:
         mode = "month"
 
     today = datetime.now(conf.tz()).date()
-    month = clean_month(source.get("month"))
-    year = clean_year(source.get("year"))
+    # 三个取值**一律填成生效值**，哪怕当前模式用不上：界面上的模式是链接，
+    # 每条链都得带着另外两个值，否则从「按月」切到「按年」会发现自己手里没有
+    # 年份，只能落回默认——用户看到的就是「刚切过去又被弹回来了」。
+    month = clean_month(source.get("month")) or f"{today.year:04d}-{today.month:02d}"
+    year = clean_year(source.get("year")) or f"{today.year:04d}"
     days = clean_days(source.get("days"))
 
     if mode == "all":
@@ -149,8 +152,6 @@ def summary_range(conf, source) -> dict[str, str | int]:
         }
 
     if mode == "year":
-        if not year:
-            year = f"{today.year:04d}"
         bounds = year_range(year)
         return {**bounds, "mode": mode, "month": month, "year": year,
                 "days": days, "label": year}
@@ -160,8 +161,6 @@ def summary_range(conf, source) -> dict[str, str | int]:
         return {**bounds, "mode": mode, "month": month, "year": year,
                 "days": days, "label": f"最近 {days} 天"}
 
-    if not month:
-        month = f"{today.year:04d}-{today.month:02d}"
     bounds = dates.month_range(month)
     return {**bounds, "mode": mode, "month": month, "year": year,
             "days": days, "label": month}

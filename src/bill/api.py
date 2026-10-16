@@ -106,6 +106,46 @@ def _account_rows(connection) -> list[dict]:
     return rows(repo.accounts(connection))
 
 
+# 合并后账本里的一行，界面真正用得上的列。
+LEDGER_FIELDS = (
+    "id",
+    "group_id",
+    "member_count",
+    "occurred_at",
+    "occurred_date",
+    "counterparty",
+    "description",
+    "memo",
+    "effective_category",
+    "display_cents",
+    "display_signed_cents",
+    "display_currency",
+)
+
+
+def ledger_rows(result) -> list[dict]:
+    """投影成界面上那个「一笔」的形状。
+
+    两件事：
+
+    1. **别把库里的身份发出去。** ``large_transactions`` 取的是 ``t.*``，里面带着
+       ``raw_json``、``dedup_key``、``content_hash``——那是记录的身份，没有理由
+       跟着响应跑到浏览器上。顺便让大额和开销排行两个列表长得一样，前端一套
+       类型就够。
+    2. **合并行的 id 归一成 null。** ``_effective_cte`` 给合成行的 id 是 ``-组号``，
+       那是个哨兵、不是一条记录的 id。前端据此判断「这一行点不进详情页」——
+       「字段在不在」比「id 是不是小于零」可靠得多。
+    """
+    out = []
+    for item in result:
+        data = dict(item)
+        row = {key: data.get(key) for key in LEDGER_FIELDS}
+        if row["group_id"] is not None:
+            row["id"] = None
+        out.append(row)
+    return out
+
+
 # --------------------------------------------------------------------------
 # 会话与元信息
 # --------------------------------------------------------------------------
@@ -176,9 +216,9 @@ def summary():
         # 悄悄截断等于跟读者撒谎。图的 12 个月上限在图表组件那一侧。
         months=rows(repo.by_month(connection, limit=None, **bounds)),
         categories=rows(repo.by_source_category(connection, **bounds)),
-        large=rows(repo.large_transactions(connection, **bounds)),
+        large=ledger_rows(repo.large_transactions(connection, **bounds)),
         # 每币种前 20 条；counts 给的是**总数**，前端拿它说「另有多少笔」。
-        ranking=rows(repo.expense_ranking(connection, **bounds)),
+        ranking=ledger_rows(repo.expense_ranking(connection, **bounds)),
         ranking_counts=counted,
     )
 
