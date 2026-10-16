@@ -7,13 +7,15 @@ import { Card } from "../components/ui/card";
 import { ErrorText, Field, Input } from "../components/ui/bits";
 
 export function LoginPage() {
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const client = useQueryClient();
 
   const submit = useMutation({
-    mutationFn: () => login(password),
+    mutationFn: () => login(username, password),
     onSuccess: () => {
+      setUsername("");
       setPassword("");
       setError("");
       // 会话变了，前面那些「没登录」的查询结果全都过期了。
@@ -35,11 +37,21 @@ export function LoginPage() {
             submit.mutate();
           }}
         >
+          <Field label="账号">
+            <Input
+              type="text"
+              name="username"
+              autoFocus
+              autoComplete="username"
+              spellCheck={false}
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+            />
+          </Field>
           <Field label="密码">
             <Input
               type="password"
               name="password"
-              autoFocus
               autoComplete="current-password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}

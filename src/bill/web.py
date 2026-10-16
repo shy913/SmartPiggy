@@ -29,7 +29,7 @@ __all__ = ["create_app", "main"]
 
 _started_at = datetime.now(timezone.utc)
 
-USAGE = "用法：bill [--set-password]"
+USAGE = "用法：bill [--set-password [--user 账号]]"
 
 # 前端构建产物。**不进版本库**（见 .gitignore），部署时现构建——仓库里就不会
 # 有一份「改了源码忘了重建」的偏差。
@@ -209,24 +209,51 @@ def create_app() -> Flask:
 
 
 def _set_password_command(arguments: list[str]) -> None:
-    """``bill --set-password``：交互式问两遍，对上了才写。
+    """``bill --set-password [--user 账号]``：交互式问账号和两遍密码，对上了才写。
 
-    标准输入不是终端（管道、脚本）时只读一行、不确认——``echo … | bill
-    --set-password`` 是给人拿来用的，多问一遍也没人答。
+    账号名回车就沿用现有的（没设过就是 ``auth.DEFAULT_USERNAME``）。**改密码
+    顺手改掉账号名**是件坏事：账号名是天天要打的那个，不该被一次「换个密码」
+    悄悄换掉。
+
+    标准输入不是终端（管道、脚本）时只读一行、不确认，那一行是密码——账号名
+    这时候只能从 ``--user`` 来（``echo … | bill --set-password`` 是给人拿来用
+    的，多问一遍也没人答）。
     """
-    if arguments:
-        raise SystemExit(f"认不出的参数：{' '.join(arguments)}\n{USAGE}")
+    username = None
+    rest = list(arguments)
+    while rest:
+        head = rest.pop(0)
+        if head == "--user" and rest:
+            username = rest.pop(0)
+        elif head == "--user":
+            raise SystemExit(f"--user 后面要跟一个账号名。\n{USAGE}")
+        else:
+            raise SystemExit(f"认不出的参数：{head}\n{USAGE}")
+
+    try:
+        existing = auth.load()
+    except BillError:
+        existing = None  # 现有那份读不出来，下面照常写一份新的
+    if username is None:
+        username = existing.username if existing else auth.DEFAULT_USERNAME
+
     if sys.stdin.isatty():
+        answer = input(f"账号（回车用 {username}）：").strip()
+        if answer:
+            username = answer
         first = getpass.getpass("新密码：")
         if first != getpass.getpass("再输一遍："):
             raise SystemExit("两遍不一样，没改。")
     else:
         first = sys.stdin.readline().rstrip("\n")
     try:
-        auth.write(first)
+        conf = auth.write(first, username)
     except BillError as error:
         raise SystemExit(str(error)) from None
-    print(f"密码已写入 {config.user_auth_path()}。下次打开页面就要登录。")
+    print(
+        f"账号 {conf.username} 和密码已写入 {config.user_auth_path()}。"
+        "下次打开页面就要登录。"
+    )
 
 
 def main(argv: list[str] | None = None) -> None:

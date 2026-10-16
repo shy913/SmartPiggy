@@ -1,9 +1,13 @@
-"""登录认证：一个密码，一个人。
+"""登录认证：一个账号加一个密码，一个人。
 
 这是给自己用的本地账本，没有多用户、没有注册、没有找回密码——要的只是
-「先过一道密码再看账目」，所以这里就一个密码。密码存数据目录里的 ``auth.toml``，
-scrypt 加盐哈希，**不存明文**；同一个文件里还放着一把随机会话密钥，重启服务不会
-把已经登录的浏览器踢下线。
+「先过一道账号密码再看账目」，所以这里就**只有一组**凭据：一个账号名，一个密码。
+账号名是拿来「对得上就进」的，不是拿来区分人的：账本只有一份，也不记「这笔是谁
+记的」。要多人合用，得先给每条记录加归属，那是另一件事。
+
+密码存数据目录里的 ``auth.toml``，scrypt 加盐哈希，**不存明文**；账号名是明文
+存的（它本来就要在登录页上打出来，藏起来没有意义）。同一个文件里还放着一把随机
+会话密钥，重启服务不会把已经登录的浏览器踢下线。
 
 **文件不存在 = 不设防。** 这是刻意的：新装的、以及从上一版升上来的，照旧打开
 就能用，不需要先跑一条命令才能看自己的账。这种状态会在每个页面顶上挂一条提示
@@ -32,6 +36,8 @@ from . import config
 from .errors import BillError
 
 __all__ = [
+    "DEFAULT_USERNAME",
+    "MAX_USERNAME",
     "MIN_LENGTH",
     "Attempts",
     "Auth",
@@ -41,6 +47,14 @@ __all__ = [
     "verify",
     "write",
 ]
+
+# 还没起过账号名时的那个账号。**旧文件靠它继续能用**：加账号之前写的 auth.toml
+# 里只有密码，那份配置读出来就是这个账号名。不这么做的话，升级完打开页面就得先
+# 猜中一个谁也没告诉过他的账号名，等于把人锁在自己的账本外面。
+DEFAULT_USERNAME = "bill"
+# 账号名要原样写进 TOML（跟会话密钥同一个理由），所以形状得卡住：够用就行，
+# 长的没有意义。
+MAX_USERNAME = 64
 
 MIN_LENGTH = 8
 # 太长的密码没有意义，还要拿它去跑一遍 scrypt；给个上限省得有人拿几兆的输入
@@ -60,16 +74,32 @@ _MAX_MEM = 64 * 1024 * 1024
 # 一个带引号的「密钥」能拼出一份读不回来的文件，下次请求谁都进不来。
 _SESSION_KEY = re.compile(r"^[0-9a-fA-F]{32,128}$")
 
+# 账号名长什么样：可打印、非空，但**不能有引号和反斜杠**——它会被原样拼进 TOML，
+# 一个 ``"`` 就能把文件拼坏，然后谁都进不来。控制字符同理（换行、制表符会把一行
+# 拆成两行）。汉字、空格、点、@ 这些都随你。长度算字符不算字节。
+_USERNAME = re.compile(r'^[^\x00-\x1f\x7f"\\]{1,%d}\Z' % MAX_USERNAME)
+
 
 @dataclass(frozen=True)
 class Auth:
     """一份能用的认证配置。"""
 
+    username: str
     password_hash: str
     session_key: str
 
-    def check(self, password: str) -> bool:
-        return verify(password, self.password_hash)
+    def check(self, username: str, password: str) -> bool:
+        """账号和密码都对才算进门。
+
+        两项**都算完再合**（不短路）：先比账号、不对就返回的话，「这个账号名
+        存在」这件事会从响应时间上漏出去一半，猜的人分得清「账号错了」和
+        「密码错了」，那对猜的人来说是白送的一条线索。
+        """
+        user_ok = hmac.compare_digest(
+            _entered(username).encode("utf-8"), self.username.encode("utf-8")
+        )
+        pass_ok = verify(_entered(password), self.password_hash)
+        return user_ok and pass_ok
 
 
 def hash_password(password: str) -> str:
@@ -134,12 +164,33 @@ def _unb64(text: str) -> bytes:
     return base64.b64decode(text, validate=True)
 
 
+def _entered(value: object) -> str:
+    """登录表单里来的东西。**没登录的人**能直接往这个接口塞任何 JSON，
+    所以非字符串（``null``、数字、对象）一律当空串处理，不能让它把校验弄抛。"""
+    return value if isinstance(value, str) else ""
+
+
+def _checked_username(username: str) -> str:
+    """把账号名收拾成能写进 TOML 的样子，收拾不了就抛。"""
+    cleaned = username.strip()
+    if not cleaned:
+        raise BillError("账号不能是空的。")
+    if not _USERNAME.match(cleaned):
+        raise BillError(
+            f"账号名最多 {MAX_USERNAME} 个字，不能带引号、反斜杠或换行。"
+        )
+    return cleaned
+
+
 # --------------------------------------------------------------------------
 # 文件
 # --------------------------------------------------------------------------
 
 _TOML = '''\
 # 由 `bill --set-password` 写出。删掉这个文件 = 关掉登录，恢复成谁都能看。
+username = "{username}"
+
+# 密码：scrypt 加盐哈希，不是明文。忘了就再跑一次 `bill --set-password`。
 password = "{password}"
 
 # 会话密钥：浏览器那边的登录凭据是拿它签的。换掉它等于把所有已登录的浏览器
@@ -172,7 +223,7 @@ def load() -> Auth | None:
     session_key = parsed.get("session_key")
     # 少任何一项、或者类型不对，都当坏文件，不回落成「不设防」：手改这个文件
     # 把 password 那行删掉，本意绝不是「那就别要密码了」。
-    # 形状也一起查——这两个值会被原样写回 TOML，放进来的怪东西（数字、数组、
+    # 形状也一起查——这三个值会被原样写回 TOML，放进来的怪东西（数字、数组、
     # 带引号的串）会让下一次 `--set-password` 写出一份读不回来的配置。
     if not isinstance(password_hash, str) or not password_hash:
         raise BillError(f"{path} 里没有 password。要关掉登录就直接删掉这个文件。")
@@ -181,11 +232,30 @@ def load() -> Auth | None:
             f"{path} 里的 session_key 不像个会话密钥，跑一次 `bill --set-password`。"
         )
 
-    return Auth(password_hash=password_hash, session_key=session_key)
+    # 账号名**可以缺**，这一项跟密码、会话密钥不一样：缺＝这份配置是加账号之前
+    # 写的，按默认账号算。恰好这一项出问题的是「谁都进不来」，而它本身又只是
+    # 一个写在登录页上的名字，藏不住什么——所以这里选能进去那一头。
+    # 但**写坏了**（类型不对、形状不对）仍旧当坏文件：那种文件下一次
+    # `--set-password` 会写出读不回来的配置，得当场说清楚。
+    username = parsed.get("username", DEFAULT_USERNAME)
+    if not isinstance(username, str) or not _USERNAME.match(username.strip()):
+        raise BillError(
+            f"{path} 里的 username 不合法，跑一次 `bill --set-password` 重设一个。"
+        )
+
+    return Auth(
+        username=username.strip(),
+        password_hash=password_hash,
+        session_key=session_key,
+    )
 
 
-def write(password: str) -> Auth:
+def write(password: str, username: str | None = None) -> Auth:
     """写出一份新的 auth.toml（先写临时文件、再原子替换）。
+
+    ``username`` 不给就沿用现有那份的（现有的也是旧的、没这一项，那就用
+    ``DEFAULT_USERNAME``）——``--set-password`` 只改密码的时候，账号名不该被
+    顺手改掉。
 
     已经有一份就沿用里面的会话密钥：改密码不该把别的设备一起踢下线。
     文件权限收到 0600——哈希本身不该被别人顺手读走，会话密钥更是。
@@ -203,12 +273,18 @@ def write(password: str) -> Auth:
         # 正在设密码的人本来就进不去，谈不上把他踢下线。
         existing = None
 
+    if username is None:
+        username = existing.username if existing else DEFAULT_USERNAME
+
     conf = Auth(
+        username=_checked_username(username),
         password_hash=hash_password(password),
         session_key=existing.session_key if existing else new_session_key(),
     )
     text = _TOML.format(
-        password=conf.password_hash, session_key=conf.session_key
+        username=conf.username,
+        password=conf.password_hash,
+        session_key=conf.session_key,
     )
 
     target.parent.mkdir(parents=True, exist_ok=True)

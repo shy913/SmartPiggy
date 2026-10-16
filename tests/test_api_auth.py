@@ -14,6 +14,7 @@ from bill.errors import BillError
 from .api import NEEDS_SHELL, payload
 
 PASSWORD = "correct-horse-9"
+USERNAME = "账本主人"
 
 # 没登录就不该打得开的接口。**逐个点名**：漏掉一个就是多一个不设防的入口。
 PROTECTED = (
@@ -42,13 +43,13 @@ PROTECTED = (
 
 @pytest.fixture
 def password():
-    """给这个用例的数据目录设一个密码，返回它。"""
-    auth.write(PASSWORD)
+    """给这个用例的数据目录设一组账号密码，返回密码。"""
+    auth.write(PASSWORD, USERNAME)
     return PASSWORD
 
 
-def session_post(client, password=PASSWORD):
-    return client.post("/api/session", json={"password": password})
+def session_post(client, password=PASSWORD, username=USERNAME):
+    return client.post("/api/session", json={"username": username, "password": password})
 
 
 def test_asking_whether_we_are_logged_in_is_open(client, password):
@@ -77,7 +78,28 @@ def test_logging_in_and_out(client, password):
 
 def test_the_wrong_password_comes_back_with_a_sentence(client, password):
     body = payload(session_post(client, "wrong"))
-    assert body["error"]["message"] == "密码不对。"
+    assert body["error"]["message"] == "账号或密码不对。"
+
+
+def test_the_wrong_account_comes_back_with_the_same_sentence(client, password):
+    """账号错和密码错说同一句话：分开说等于告诉猜的人「账号对了、接着猜密码」。"""
+    assert session_post(client, username="别人").status_code == 401
+    assert payload(session_post(client, username="别人"))["error"]["message"] == payload(
+        session_post(client, "wrong")
+    )["error"]["message"]
+    # 账号空着也进不来
+    assert session_post(client, username="").status_code == 401
+
+
+def test_the_account_has_to_be_a_string(client, password):
+    """这个接口是没登录的人能直接打的，塞什么形状的 JSON 都不能让它 500。
+
+    一路错下去会撞上失败计数（429），那也算挡对了——这里盯的是「别抛」。
+    """
+    for bad in (None, 42, {"a": 1}, ["账本主人"]):
+        assert session_post(client, username=bad).status_code in (401, 429), bad
+    assert session_post(client, password=None).status_code in (401, 429)
+    assert session_post(client, password={"a": 1}).status_code in (401, 429)
 
 
 def test_too_many_tries_are_held_back_but_the_right_one_still_gets_in(client, password):
@@ -90,7 +112,7 @@ def test_too_many_tries_are_held_back_but_the_right_one_still_gets_in(client, pa
         session_post(client, "wrong")
     blocked = session_post(client, "wrong")
     assert blocked.status_code == 429
-    assert payload(blocked)["error"]["message"].startswith("密码错的次数太多了")
+    assert payload(blocked)["error"]["message"].startswith("错的次数太多了")
     # 对的密码什么时候都能进
     assert session_post(client).status_code == 200
 
