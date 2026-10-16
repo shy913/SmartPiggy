@@ -13,7 +13,7 @@ import pytest
 
 from bill import settings, themes
 
-from .api import payload
+from .api import NEEDS_SHELL, payload
 
 
 def form(**overrides) -> dict:
@@ -53,6 +53,7 @@ def test_the_meta_lists_every_theme_with_a_label(client):
     assert all(label.strip() for label in listed.values())
 
 
+@NEEDS_SHELL
 def test_the_shell_carries_the_theme_so_the_first_frame_is_right(client, isolated_data_dir):
     """`<html data-theme>` 由服务端填好再吐出去。
 

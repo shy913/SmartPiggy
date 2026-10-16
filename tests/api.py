@@ -10,6 +10,24 @@ from __future__ import annotations
 
 import io
 
+import pytest
+
+from bill.web import APP_BUILD_DIR
+
+
+def shell_is_built() -> bool:
+    """前端产物在不在。
+
+    产物**不进版本库**（部署时现构建，见 deploy.sh），所以全新克隆上它一开始
+    就是不在的。碰外壳 HTML 的用例要据此跳过——**跳过**，不是断言 200：产物不在
+    时外壳回的是 503 加一句「前端还没有构建」，那是设计好的行为，不是一个失败。
+    """
+    return (APP_BUILD_DIR / "index.html").exists()
+
+
+#: 挂给「要看外壳 HTML 长什么样」的用例。
+NEEDS_SHELL = pytest.mark.skipif(not shell_is_built(), reason="前端还没构建：跑 ./deploy.sh")
+
 
 def payload(response) -> dict:
     """取响应体。**顺带钉一条：不是 JSON 就直接失败。**

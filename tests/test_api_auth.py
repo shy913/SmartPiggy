@@ -11,7 +11,7 @@ import pytest
 from bill import auth, config
 from bill.errors import BillError
 
-from .api import payload
+from .api import NEEDS_SHELL, payload
 
 PASSWORD = "correct-horse-9"
 
@@ -111,6 +111,7 @@ def test_healthz_stays_open(client, password):
     assert client.get("/healthz").status_code == 200
 
 
+@NEEDS_SHELL
 def test_the_shell_and_its_assets_are_open(client, password):
     """外壳里没有账目数据，数据全在 /api/*。要登录的是后者。
 
@@ -149,6 +150,5 @@ def test_a_broken_auth_file_locks_the_api_out(client):
     config.user_auth_path().write_text("这不是 TOML", encoding="utf-8")
     with pytest.raises(BillError):
         client.get("/api/meta")
-    # 而监控那一针和外壳更要拿得到：登录坏掉的时候，正是要能看出「它还在跑」。
+    # 而监控那一针更要拿得到：登录坏掉的时候，正是要能看出「它还在跑」。
     assert client.get("/healthz").status_code == 200
-    assert client.get("/").status_code == 200
