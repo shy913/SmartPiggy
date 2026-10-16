@@ -705,18 +705,24 @@ def test_a_page_outside_the_nav_highlights_nothing(client):
 def test_the_month_filter_keeps_its_size_while_empty(client):
     """还没选月份时，月份框得照样占位置。
 
-    月份框初值是空的，空的原生月份控件没有内禀宽度；样式表里那句
-    `appearance: none`（Safari 的搜索框要它）又把原生那点宽度一并拿走了，
-    于是筛选栏一打开它缩成窄窄一条，选了月份才恢复。这里守两件事：模板里
-    初次打开确实是空的，样式表里给了宽度下限。CSS 没法在这台没有浏览器的
-    机器上量宽度，所以退一步比对规则本身——谁把下限删了，这里就挂。
+    月份框初值是空的，而空值的原生月份控件自己不介意变成一条线——尺寸全看
+    引擎怎么给。所以两条保险都得在：筛选栏里的控件在竖排的 label 底下，不能
+    带着通用规则那条 `flex: 1`（那是给横向的 .row 用的，竖排里就成了按高度
+    伸缩，空值撑不出一行）；月份框本身另有宽高下限。CSS 在这台机器上量不了，
+    退一步比对规则本身——谁把这两条删了，这里就挂。
     """
     month = re.search(r'<input type="month"[^>]*>', body(client.get("/transactions")))
     assert month, "筛选栏里应该有月份输入"
     assert 'value=""' in month.group(0), "初次打开月份框是空的——正是当初缩没的那个状态"
 
     css = Path("src/bill/static/style.css").read_text(encoding="utf-8")
-    rules = re.findall(r'(?m)^input\[type="month"\][^{]*\{([^}]*)\}', css)
-    assert any(re.search(r"(min-)?width\s*:", rule) for rule in rules), (
-        "input[type=\"month\"] 要有一条宽度（下限）规则，空值时才不会缩成一条"
+    shared = re.search(r"(?ms)^\.filters input,\n\.filters select \{([^}]*)\}", css)
+    assert shared, "样式表里应该有筛选栏控件那条共用规则"
+    assert re.search(r"(?m)^\s*flex:\s*none\s*;", shared.group(1)), (
+        "筛选栏的控件在竖排 label 里，要关掉通用规则的 flex: 1"
     )
+
+    month_rule = re.search(r"(?ms)^\.filters input\[type=\"month\"\] \{([^}]*)\}", css)
+    assert month_rule, "月份框要有一条自己的规则"
+    for prop in ("min-width", "min-height"):
+        assert re.search(rf"{prop}\s*:", month_rule.group(1)), f"月份框要有 {prop} 下限"

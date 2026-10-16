@@ -415,10 +415,6 @@ input[type="month"] {
   appearance: none;
   -webkit-appearance: none;
 }
-/* 上面那条 `appearance: none` 连原生的尺度也一起拿掉了：月份框空着的时候
-   浏览器不再按「YYYY-MM」预留宽度，只按内容撑——筛选栏初次打开（还没选月份）
-   就缩成窄窄一条。给个下限，装得下日期加日历图标。 */
-input[type="month"] { min-width: 9.5rem; }
 
 input[type="text"]:focus,
 input[type="password"]:focus,
@@ -748,6 +744,9 @@ tr.row-neutral td { color: var(--muted); }
 }
 .filters input,
 .filters select {
+  /* label 是竖排的，通用规则那条 flex: 1 到这里就成了「按高度伸缩」——
+     空值的原生月份框在有些引擎里撑不出一行，整条就没了。跟 .login 一样关掉。 */
+  flex: none;
   padding: 0.42rem 0.6rem;
   background: var(--code-bg);
   color: var(--text);
@@ -755,6 +754,13 @@ tr.row-neutral td { color: var(--muted); }
   border-radius: var(--radius-sm);
   font: inherit;
   font-size: 0.85rem;
+}
+/* 月份是原生控件，空值的时候尺寸交给引擎算，各家给得差很远（WebKit 里量到
+   92px，旁边的搜索框 206px）。给两个下限兜住：宽度放得下 YYYY-MM 加日历
+   图标，高度跟旁边的框一档。 */
+.filters input[type="month"] {
+  min-width: 9.5rem;
+  min-height: 2.4rem;
 }
 
 /* 翻页 */
