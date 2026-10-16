@@ -333,6 +333,61 @@ def test_a_group_with_one_member_never_swallows_it(conn, book):
     assert repo.list_groups(conn) == [], "空壳组也不该出现在合并组页上"
 
 
+def test_netting_and_the_large_threshold_agree(conn, book, isolated_data_dir):
+    """«合计 + 大额单列 = 账本全部金额»，合并和大额叠在一起时也要成立。
+
+    两处都不报错的错法：大额单列那一块要是还从原始表取数、而合计走的是合并后的
+    净额，就会一边把这笔列出来、一边又把它算进合计里去；或者反过来，剔除的是
+    组的净额、单列里却一笔都对不上。
+    """
+    write_settings(
+        isolated_data_dir,
+        'timezone = "Asia/Shanghai"\n\n[currency]\ndisplay = "CNY"\nrates = {}\n'
+        "\n[large]\nout = 100\nin = 1000\n",
+    )
+    # 一次 AA：¥300 的支出 + 两笔 ¥100 还款 → 净额 ¥100，正好够大额线
+    ids = book(
+        [
+            {"direction": Direction.OUT, "amount_cents": 30_000},
+            {"direction": Direction.IN, "amount_cents": 10_000, "occurred_at": "2026-01-05 13:30:45"},
+            {"direction": Direction.IN, "amount_cents": 10_000, "occurred_at": "2026-01-05 14:30:45"},
+        ]
+    )
+    with conn:
+        repo.create_group(conn, origin="manual", transaction_ids=ids)
+    book(
+        [
+            {"direction": Direction.OUT, "amount_cents": 50_000},  # 单笔大额
+            {"direction": Direction.IN, "amount_cents": 150_000},  # 单笔大额
+            {"direction": Direction.IN, "amount_cents": 20_000},  # 正常
+            {"direction": Direction.NEUTRAL, "amount_cents": 77_700},
+        ]
+    )
+
+    rows = repo.list_transactions(conn, limit=100)
+    large = repo.large_transactions(conn)
+    totals = repo.overall_totals(conn)[0]
+
+    def total(picked, direction):
+        return sum(row["display_cents"] for row in picked if row["direction"] == direction)
+
+    # 组里那两笔 ¥100 的收入已经折进组行（净额方向是支出），列表里不再单独出现
+    assert total(rows, "in") == 150_000 + 20_000
+    assert total(rows, "out") == 10_000 + 50_000
+    # 剔掉的是那一组的**净额**（¥100），不是组里那笔 ¥300 的原始支出
+    assert [(row["direction"], row["display_cents"]) for row in large] == [
+        ("in", 150_000),
+        ("out", 50_000),
+        ("out", 10_000),
+    ]
+    assert large[2]["member_count"] == 3, "组只出现一行，不是拆成三行"
+
+    assert totals["income"] == total(rows, "in") - total(large, "in")
+    assert totals["expense"] == total(rows, "out") - total(large, "out")
+    assert (totals["income"], totals["expense"]) == (20_000, 0)
+    assert totals["large_count"] == 3
+
+
 def test_losing_a_rate_makes_the_group_stop_counting(conn, book, isolated_data_dir):
     """汇率的校验不能只在建组那一刻做一次。
 

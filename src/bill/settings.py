@@ -1,4 +1,4 @@
-"""本地设置：汇率换算、时区、AA 合并。
+"""本地设置：汇率换算、时区、大额阈值、AA 合并。
 
 跟列映射一样走 TOML：内置一份默认值，用户目录里放一份同名文件就整体覆盖它。
 读取时带上文件的修改时间做缓存键，所以改了文件下次请求就生效，不用重启。
@@ -10,7 +10,7 @@ import re
 import tomllib
 from dataclasses import dataclass, field
 
-from . import config, dates
+from . import config, dates, money
 from .errors import BillError
 
 __all__ = ["Settings", "is_currency_code", "load"]
@@ -38,6 +38,24 @@ DEFAULT_KEYWORDS = (
 )
 _CODE = re.compile(r"^[A-Z0-9]{1,8}$")
 
+# 「大额」阈值的默认值，单位是**显示币种的主单位**（500 就是 £500）。
+# 注意它跟着 display 走：display 改成 CNY 之后，同样的数就变成 ¥500 / ¥2,000。
+DEFAULT_LARGE_OUT = 500
+DEFAULT_LARGE_IN = 2000
+
+
+def _threshold(value: object, label: str) -> int:
+    """把一个阈值（显示币种的主单位）换算成最小单位。0 表示这一侧不启用。"""
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        raise BillError(
+            f"大额阈值「{label}」不是个数字：{value!r}。不想要这一侧就写 0。"
+        ) from None
+    if amount < 0:
+        raise BillError(f"大额阈值「{label}」不能是负数，现在是 {amount:g}。")
+    return int(round(amount * 100))
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -46,6 +64,11 @@ class Settings:
     rates: dict[str, float] = field(default_factory=dict)
     # 所有时间都换算成这个时区显示（IANA 名字）。
     timezone: str = DEFAULT_TIMEZONE
+    # 单笔到这个数就算「大额」，不进合计（0 = 该侧不启用）。
+    # 单位是**显示币种的最小单位**，而且只对换算得到显示币种的币种生效——
+    # 没配汇率的币种比不了（见 repo._comparable）。
+    large_out_cents: int = DEFAULT_LARGE_OUT * 100
+    large_in_cents: int = DEFAULT_LARGE_IN * 100
     # 导入后自动检测并合并 AA。
     merge_enabled: bool = True
     # 收款落在支出之后多少小时内算同一次。
@@ -90,6 +113,26 @@ class Settings:
         else:
             money = f"金额以 {self.display_currency} 计"
         return f"{money}；时间均已换算到 {self.timezone}。"
+
+    def describe_large(self) -> str:
+        """给界面用的一句话：哪些没算进合计。
+
+        两侧都关着就返回空串——没有大额这回事时，页面上不该多出一句话。
+
+        币种代码必须写出来：``format_amount`` 只印裸数字，光说「≥ 500」没人知道
+        比的是哪个币种的 500，而同一个「500」在 GBP 账本和 CNY 账本下差着 8.9 倍。
+        """
+        sides = []
+        if self.large_out_cents:
+            sides.append(f"支出 ≥ {money.format_amount(self.large_out_cents)}")
+        if self.large_in_cents:
+            sides.append(f"收入 ≥ {money.format_amount(self.large_in_cents)}")
+        if not sides:
+            return ""
+        return (
+            f"单笔{'、'.join(sides)} {self.display_currency} 算大额，"
+            "不计入合计，单列在页面底部。"
+        )
 
     def describe_merge(self) -> str:
         """自动合并现在按什么规则跑。合并结果不对时，先看这一句。"""
@@ -148,6 +191,14 @@ def load() -> Settings:
         timezone = str(parsed.get("timezone") or DEFAULT_TIMEZONE)
         dates.zone(timezone)  # 名字写错就当场报，别等导入时才发现
 
+        # 逐键回落到默认值。**不能**写成「段缺失就关闭」：用户文件是**整体覆盖**
+        # 内置文件的，而 `load()` 读到第一个能读的文件就 return——官方文档教的
+        # 做法就是在用户目录放一份 settings.toml，所以多数老用户的文件里根本
+        # 没有 [large]。按段回落会让功能恰好在这批人身上静默失效。
+        large = parsed.get("large") or {}
+        large_out = _threshold(large.get("out", DEFAULT_LARGE_OUT), "out")
+        large_in = _threshold(large.get("in", DEFAULT_LARGE_IN), "in")
+
         merge = parsed.get("merge", {})
         window = float(merge.get("window_hours", DEFAULT_WINDOW_HOURS))
         if window <= 0:
@@ -172,6 +223,8 @@ def load() -> Settings:
             display_currency=display,
             rates=rates,
             timezone=timezone,
+            large_out_cents=large_out,
+            large_in_cents=large_in,
             merge_enabled=bool(merge.get("enabled", True)),
             merge_window_hours=window,
             merge_tolerance=tolerance,
