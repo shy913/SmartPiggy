@@ -19,7 +19,7 @@ def test_monthly_columns_draws_one_bar_per_non_zero_value():
     svg = charts.monthly_columns(
         months(("2026-01", 1200000, 3250), ("2026-02", 0, 50000))
     )
-    assert svg.startswith("<svg")
+    assert "<svg" in svg and "chart-scroll" in svg
     assert svg.count(f'fill="{charts.INCOME}"') == 1, "一月有收入、二月没有"
     assert svg.count(f'fill="{charts.EXPENSE}"') == 2
 

@@ -9,7 +9,7 @@ import json
 import sqlite3
 from collections.abc import Iterable, Sequence
 
-from . import db
+from . import db, settings
 from .errors import BillError
 from .models import Issue, ParsedRow
 
@@ -345,63 +345,108 @@ def _resolve_key(
 # 统计与查询
 # --------------------------------------------------------------------------
 
-_TOTALS = """
-COALESCE(SUM(CASE WHEN direction = 'in'  THEN amount_cents END), 0) AS income,
-COALESCE(SUM(CASE WHEN direction = 'out' THEN amount_cents END), 0) AS expense,
-COALESCE(SUM(CASE WHEN direction = 'neutral' THEN amount_cents END), 0) AS neutral_amount,
-COALESCE(SUM(CASE WHEN direction = 'neutral' THEN 1 ELSE 0 END), 0) AS neutral_count,
-COUNT(*) AS total
-"""
+# 换算相关的三个片段。币种代码来自 settings，已经被 _CODE 限成 [A-Z0-9]{1,8}，
+# 所以可以安全地内联进 SQL（没有引号可以逃逸出去）。
+
+
+def _group_by_display(conf, prefix: str = "") -> str:
+    """币种 -> 显示币种。
+
+    配了汇率的币种归到 display，其余**保持原样**——没配汇率的币种会自己成一组，
+    而不是被按 1:1 混进合计里。那正是最危险的一类错：不报错，数还是错的。
+    """
+    cases = " ".join(
+        f"WHEN '{code}' THEN '{conf.display_currency}'"
+        for code in sorted(conf.factors())
+    )
+    if not cases:
+        return f"{prefix}currency"
+    return f"CASE {prefix}currency {cases} ELSE {prefix}currency END"
+
+
+def _amount_in_display(conf, prefix: str = "", column: str = "amount_cents") -> str:
+    """把每笔金额换算到显示币种的最小单位。
+
+    逐行取整再相加，不是先加后换——每一行的数都得能对得上，误差也不该累积。
+    """
+    factors = conf.factors()
+    if not factors:
+        return f"{prefix}{column}"
+    cases = " ".join(
+        f"WHEN '{code}' THEN CAST(ROUND({prefix}{column} * {factor!r}) AS INTEGER)"
+        for code, factor in sorted(factors.items())
+    )
+    return f"CASE {prefix}currency {cases} ELSE {prefix}{column} END"
+
+
+def _totals(conf, prefix: str = "") -> str:
+    amount = _amount_in_display(conf, prefix)
+    return f"""
+    COALESCE(SUM(CASE WHEN {prefix}direction = 'in'  THEN {amount} END), 0) AS income,
+    COALESCE(SUM(CASE WHEN {prefix}direction = 'out' THEN {amount} END), 0) AS expense,
+    COALESCE(SUM(CASE WHEN {prefix}direction = 'neutral' THEN {amount} END), 0) AS neutral_amount,
+    COALESCE(SUM(CASE WHEN {prefix}direction = 'neutral' THEN 1 ELSE 0 END), 0) AS neutral_count,
+    COUNT(*) AS total
+    """
 
 
 def month_totals(connection: sqlite3.Connection, month: str) -> list[sqlite3.Row]:
-    """某个月（'YYYY-MM'）的收入、支出、中性金额，**按币种分开**。
+    """某个月（'YYYY-MM'）的收入、支出、中性金额，按显示币种换算后统计。
 
-    刻意返回一组而不是一个数：跨币种相加是没有意义的，把英镑和人民币凑成
-    一个「本月收入」只会得到一个看着像真的的错数。只有一个币种时，
-    调用方拿到的就是一条，界面看起来跟单币种没区别。
+    仍然返回一组而不是一个数：只要还有没配汇率的币种，它就会单独成一组，
+    不会被悄悄加成「本月收入」。
     """
+    conf = settings.load()
     return connection.execute(
         f"""
-        SELECT currency, {_TOTALS}
+        SELECT {_group_by_display(conf)} AS display_currency, {_totals(conf)}
         FROM transactions
         WHERE occurred_date LIKE ? || '%'
-        GROUP BY currency
-        ORDER BY currency
+        GROUP BY display_currency
+        ORDER BY display_currency
         """,
         (month,),
     ).fetchall()
 
 
 def overall_totals(connection: sqlite3.Connection) -> list[sqlite3.Row]:
+    conf = settings.load()
     return connection.execute(
         f"""
-        SELECT currency, {_TOTALS}
+        SELECT {_group_by_display(conf)} AS display_currency, {_totals(conf)}
         FROM transactions
-        GROUP BY currency
-        ORDER BY currency
+        GROUP BY display_currency
+        ORDER BY display_currency
         """
     ).fetchall()
 
 
 def currencies(connection: sqlite3.Connection) -> list[str]:
+    """账本里出现过的显示币种（换算之后）。"""
+    conf = settings.load()
     rows = connection.execute(
-        "SELECT DISTINCT currency FROM transactions ORDER BY currency"
+        f"""
+        SELECT DISTINCT {_group_by_display(conf)} AS display_currency
+        FROM transactions ORDER BY display_currency
+        """
     ).fetchall()
-    return [row["currency"] for row in rows]
+    return [row["display_currency"] for row in rows]
 
 
 def by_month(connection: sqlite3.Connection, limit: int = 60) -> list[sqlite3.Row]:
+    conf = settings.load()
+    amount = _amount_in_display(conf)
     return connection.execute(
-        """
-        SELECT substr(occurred_date, 1, 7) AS month, currency,
-               COALESCE(SUM(CASE WHEN direction = 'in'  THEN amount_cents END), 0) AS income,
-               COALESCE(SUM(CASE WHEN direction = 'out' THEN amount_cents END), 0) AS expense,
+        f"""
+        SELECT substr(occurred_date, 1, 7) AS month,
+               {_group_by_display(conf)} AS display_currency,
+               COALESCE(SUM(CASE WHEN direction = 'in'  THEN {amount} END), 0) AS income,
+               COALESCE(SUM(CASE WHEN direction = 'out' THEN {amount} END), 0) AS expense,
                COALESCE(SUM(CASE WHEN direction = 'neutral' THEN 1 ELSE 0 END), 0) AS neutral_count,
                COUNT(*) AS total
         FROM transactions
-        GROUP BY month, currency
-        ORDER BY month DESC, currency
+        GROUP BY month, display_currency
+        ORDER BY month DESC, display_currency
         LIMIT ?
         """,
         (limit,),
@@ -409,20 +454,23 @@ def by_month(connection: sqlite3.Connection, limit: int = 60) -> list[sqlite3.Ro
 
 
 def by_source_category(connection: sqlite3.Connection, limit: int = 60) -> list[sqlite3.Row]:
-    """按账单自带的分类汇总，同样按币种分开。
+    """按账单自带的分类汇总，同样换算到显示币种。
 
     这笔钱花在哪儿，账单里其实已经写了（支付宝的「交易分类」、Monzo 的
     「Category」），所以先照用，不做自动归类。空值归到「未分类」。
     """
+    conf = settings.load()
+    amount = _amount_in_display(conf)
     return connection.execute(
-        """
-        SELECT COALESCE(NULLIF(source_category, ''), '未分类') AS category, currency,
-               COALESCE(SUM(CASE WHEN direction = 'out' THEN amount_cents END), 0) AS expense,
-               COALESCE(SUM(CASE WHEN direction = 'in'  THEN amount_cents END), 0) AS income,
+        f"""
+        SELECT COALESCE(NULLIF(source_category, ''), '未分类') AS category,
+               {_group_by_display(conf)} AS display_currency,
+               COALESCE(SUM(CASE WHEN direction = 'out' THEN {amount} END), 0) AS expense,
+               COALESCE(SUM(CASE WHEN direction = 'in'  THEN {amount} END), 0) AS income,
                COUNT(*) AS total
         FROM transactions
-        GROUP BY category, currency
-        ORDER BY currency, expense DESC, income DESC
+        GROUP BY category, display_currency
+        ORDER BY display_currency, expense DESC, income DESC
         LIMIT ?
         """,
         (limit,),
@@ -458,9 +506,11 @@ def transactions_for_import(
 
     跟交易列表页保持一致：刚导完账，想先看的是最近发生了什么。
     """
+    amount = _amount_in_display(settings.load())
     return connection.execute(
-        """
-        SELECT * FROM transactions WHERE import_id = ?
+        f"""
+        SELECT *, {amount} AS display_cents FROM transactions
+        WHERE import_id = ?
         ORDER BY occurred_at DESC, id DESC LIMIT ?
         """,
         (import_id, limit),
@@ -479,9 +529,19 @@ def list_transactions(
 ) -> list[sqlite3.Row]:
     where, params = _transaction_filters(month, account_id, direction, search)
     params.extend([limit, offset])
+
+    # 列表上显示的是换算后的金额；原币种和原金额仍留在 t.currency /
+    # t.amount_cents 里，随时能对回去。
+    amount = _amount_in_display(settings.load(), "t.")
     return connection.execute(
         f"""
-        SELECT t.*, a.name AS account_name
+        SELECT t.*, a.name AS account_name,
+               {amount} AS display_cents,
+               CASE t.direction
+                 WHEN 'out' THEN -({amount})
+                 WHEN 'in'  THEN  ({amount})
+                 ELSE 0
+               END AS display_signed_cents
         FROM tx_signed t JOIN accounts a ON a.id = t.account_id
         WHERE {where}
         ORDER BY t.occurred_at DESC, t.id DESC

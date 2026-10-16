@@ -21,7 +21,7 @@ from flask import (
     url_for,
 )
 
-from . import charts, config, db, ingest, repo
+from . import charts, config, db, ingest, repo, settings
 from .errors import BillError, ProfileError, UploadError
 from .money import format_amount
 from .profiles import load_all, validate
@@ -81,10 +81,13 @@ def create_app() -> Flask:
             or repo.latest_month(connection)
             or current_month()
         )
+        conf = settings.load()
         currencies = repo.currencies(connection)
         return render_template(
             "index.html",
             month=month,
+            display_currency=conf.display_currency,
+            currency_note=conf.describe(),
             is_current_month=month == current_month(),
             month_totals=repo.month_totals(connection, month),
             overall=repo.overall_totals(connection),
@@ -236,6 +239,7 @@ def create_app() -> Flask:
         )
         return render_template(
             "transactions.html",
+            display_currency=settings.load().display_currency,
             rows=rows,
             accounts=repo.accounts(connection),
             total=total,
@@ -252,6 +256,7 @@ def create_app() -> Flask:
     @app.get("/summary")
     def summary():
         connection = get_conn()
+        conf = settings.load()
         currencies = repo.currencies(connection)
         months = repo.by_month(connection)
         categories = repo.by_source_category(connection)
@@ -265,17 +270,24 @@ def create_app() -> Flask:
             overall=repo.overall_totals(connection),
             currencies=currencies,
             multiple_currencies=len(currencies) > 1,
+            display_currency=conf.display_currency,
+            currency_note=conf.describe(),
             charts=[
                 {
                     "currency": currency,
                     "monthly": charts.monthly_columns(
                         sorted(
-                            (row for row in months if row["currency"] == currency),
+                            (
+                                row
+                                for row in months
+                                if row["display_currency"] == currency
+                            ),
                             key=lambda row: row["month"],
-                        )
+                        ),
+                        unit=currency,
                     ),
                     "categories": charts.category_bars(
-                        [row for row in categories if row["currency"] == currency]
+                        [row for row in categories if row["display_currency"] == currency]
                     ),
                 }
                 for currency in currencies

@@ -33,12 +33,18 @@ _RADIUS = 4.0
 _GAP = 2.0
 
 
-def monthly_columns(rows, *, width: int = 760, height: int = 236) -> Markup:
+def monthly_columns(
+    rows, *, width: int = 760, height: int = 236, limit: int = 12, unit: str = ""
+) -> Markup:
     """每月收支：每个月份一组两根柱子，共用一根零轴。
 
     刻意不做成「收入向上、支出向下」的双向柱——那等于两套刻度，一边大一边小
     时会互相骗人。共用一根轴才是可比的。
+
+    只画最近 ``limit`` 个月：月份再多柱子就细得看不出差别了，而更早的月份
+    在下面的表里仍然查得到。
     """
+    rows = list(rows)[-limit:]
     months = [str(row["month"]) for row in rows]
     income = [float(row["income"]) for row in rows]
     expense = [float(row["expense"]) for row in rows]
@@ -83,6 +89,13 @@ def monthly_columns(rows, *, width: int = 760, height: int = 236) -> Markup:
         f'stroke="{_AXIS}" stroke-width="1"/>'
     )
 
+    # 纵轴标明币种——换算之后金额不再是原币种，这个标注得有。
+    if unit:
+        parts.append(
+            f'<text x="{left}" y="{top - 6}" font-size="10" fill="{_MUTED}" '
+            f'class="axis">{escape(unit)}</text>'
+        )
+
     peak_income = max(income) if income else 0
     peak_expense = max(expense) if expense else 0
 
@@ -122,21 +135,30 @@ def monthly_columns(rows, *, width: int = 760, height: int = 236) -> Markup:
                 f'font-size="10" fill="{_MUTED}" class="axis">{month[2:]}</text>'
             )
 
-    return Markup(
+    total_income = sum(income)
+    total_expense = sum(expense)
+    return _block(
         f'<svg class="chart" viewBox="0 0 {width} {height}" role="img" '
         f'aria-label="每月收支柱状图" preserveAspectRatio="xMidYMid meet">'
         + "".join(parts)
-        + "</svg>"
+        + "</svg>",
+        [
+            ("合计收入", _money(total_income)),
+            ("合计支出", _money(total_expense)),
+            ("结余", _money(total_income - total_expense)),
+            ("月均支出", _money(total_expense / len(months))),
+        ],
     )
 
 
 def category_bars(rows, *, width: int = 760, limit: int = 10) -> Markup:
-    """分类支出：横向条形，按金额从大到小。
+    """分类支出：横向条形，按金额从大到小，每条带占比。
 
     单一序列，所以只有一种颜色、也不需要图例——标题已经说了画的是什么。
     这里**不**按金额深浅上色：那等于把长度再编码一遍，白白占掉唯一的颜色通道。
     """
-    ranked = [row for row in rows if float(row["expense"]) > 0][:limit]
+    everything = [row for row in rows if float(row["expense"]) > 0]
+    ranked = everything[:limit]
     if not ranked:
         return Markup('<p class="empty">这个币种还没有支出记录。</p>')
     if len(ranked) == 1:
@@ -158,8 +180,14 @@ def category_bars(rows, *, width: int = 760, limit: int = 10) -> Markup:
     # 会让中文分类名从左边框探出去（"个人护理用品…" 实测 143px，按 13 字截断
     # 后左端会跑到 x=-11）。
     shown = [_fit(name, font, _MAX_LABEL) for name, _ in entries]
+
+    # 每条尾巴上带个占比。算出文字再量宽度——「1,234.56  35%」比纯金额宽不少，
+    # 不留够位置它就会顶出右边界。
+    total = sum(value for _, value in entries)
+    trailing = [f"{_money(value)}  {value / total * 100:.0f}%" for _, value in entries]
+
     label_w = max(_text_width(text, font) for text in shown) + 8
-    value_w = max(_text_width(_money(value), font) for _, value in entries) + 18
+    value_w = max(_text_width(text, font) for text in trailing) + 18
     left = label_w + 12
     plot_w = width - value_w - left
     peak = max(value for _, value in entries)
@@ -167,7 +195,7 @@ def category_bars(rows, *, width: int = 760, limit: int = 10) -> Markup:
     height = int(top * 2 + len(entries) * row_h + (len(entries) - 1) * row_gap)
 
     parts: list[str] = []
-    for index, ((name, value), text) in enumerate(zip(entries, shown)):
+    for index, ((name, value), text, tail) in enumerate(zip(entries, shown, trailing)):
         y = top + index * (row_h + row_gap)
         bar_w = max(2.0, (value / peak) * plot_w)
 
@@ -182,15 +210,45 @@ def category_bars(rows, *, width: int = 760, limit: int = 10) -> Markup:
         )
         parts.append(
             f'<text x="{left + bar_w + 8:.1f}" y="{y + row_h - 3:.1f}" '
-            f'font-size="{font}" fill="{_TEXT}" class="axis">{_money(value)}</text>'
+            f'font-size="{font}" fill="{_TEXT}" class="axis">{tail}</text>'
         )
 
-    return Markup(
+    capped = f"（图中前 {len(entries)}）" if len(everything) > len(entries) else ""
+    return _block(
         f'<svg class="chart" viewBox="0 0 {width} {height}" role="img" '
         f'aria-label="分类支出条形图" preserveAspectRatio="xMidYMid meet">'
         + "".join(parts)
-        + "</svg>"
+        + "</svg>",
+        [
+            ("合计支出", _money(total)),
+            ("类目", f"{len(everything)} 类{capped}"),
+            ("最高一类", _money(peak)),
+        ],
     )
+
+
+# --------------------------------------------------------------------------
+# 图与图下的合计行
+# --------------------------------------------------------------------------
+
+
+def _block(svg: str, summary: list[tuple[str, str]]) -> Markup:
+    """图本体 + 图下的合计行。
+
+    SVG 外面套一层可横向滚动的容器，并给图一个最小宽度：等比缩放到手机屏宽
+    时字号只剩五六个像素，与其看不清，不如让它保持可读的尺寸让用户滚一下。
+
+    合计行用 HTML 排在图外面，而不是画进 SVG——那是文字，交给浏览器的排版
+    比在坐标系里手摆位置稳得多。
+    """
+    parts = [f'<div class="chart-scroll">{svg}</div>']
+    if summary:
+        items = "".join(
+            f"<span><em>{escape(label)}</em>{escape(value)}</span>"
+            for label, value in summary
+        )
+        parts.append(f'<div class="chart-summary">{items}</div>')
+    return Markup("".join(parts))
 
 
 # --------------------------------------------------------------------------

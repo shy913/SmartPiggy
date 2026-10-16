@@ -23,8 +23,9 @@
         账本覆盖 {{ coverage.first_day }} 至 {{ coverage.last_day }}，共
         {{ coverage.total }} 条记录。
       {% endif %}
+      {{ currency_note }}
       {% if multiple_currencies %}
-        账本里有多种币种，下面按币种分开列——不同币种不会相加。
+        还有没配汇率的币种，它们没被合并，单独列在下面。
       {% endif %}
     </p>
     <p>
@@ -39,7 +40,7 @@
     {% if month_totals %}
       {% for group in month_totals %}
         <div class="currency-block">
-          {% if multiple_currencies %}<h3 class="currency">{{ group.currency }}</h3>{% endif %}
+          {% if multiple_currencies %}<h3 class="currency">{{ group.display_currency }}</h3>{% endif %}
           <div class="stats">
             <div class="stat">
               <span class="stat-value money-in">{{ group.income | amount }}</span>
@@ -69,7 +70,7 @@
     <h2>账本总计</h2>
     {% for group in overall %}
       <div class="currency-block">
-        {% if multiple_currencies %}<h3 class="currency">{{ group.currency }}</h3>{% endif %}
+        {% if multiple_currencies %}<h3 class="currency">{{ group.display_currency }}</h3>{% endif %}
         <div class="stats">
           <div class="stat">
             <span class="stat-value money-in">{{ group.income | amount }}</span>

@@ -16,9 +16,11 @@ __all__ = [
     "PREVIEW_ROWS",
     "PREVIEW_TTL_SECONDS",
     "builtin_profiles_dir",
+    "builtin_settings_path",
     "data_dir",
     "db_path",
     "user_profiles_dir",
+    "user_settings_path",
 ]
 
 DEFAULT_DATA_DIR = "~/.local/share/bill"
@@ -57,3 +59,13 @@ def user_profiles_dir() -> Path:
 def builtin_profiles_dir() -> Path:
     """随代码走的列映射（支付宝 / 微信 / 银行模板）。"""
     return Path(__file__).resolve().parent / "data" / "profiles"
+
+
+def builtin_settings_path() -> Path:
+    """随代码走的默认设置（目前只有汇率）。"""
+    return Path(__file__).resolve().parent / "data" / "settings.toml"
+
+
+def user_settings_path() -> Path:
+    """用户的设置。存在就整体覆盖内置那份。"""
+    return data_dir() / "settings.toml"

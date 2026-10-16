@@ -36,7 +36,8 @@
   {% else %}
     <p class="error">
       没能确定这是哪种账单格式。换成下面任意一份配置试试，
-      或者照 <code>bank_generic_example.toml</code> 的注释写一份自己的。
+      或者照 <code>bank_generic_example.toml</code> 的注释写一份自己的——
+      <a href="{{ url_for('profiles_page') }}">列出所有列映射配置</a>。
     </p>
   {% endif %}
 
@@ -73,7 +74,10 @@
 {% if preview.error %}
   <section>
     <p class="error">{{ preview.error }}</p>
-    <p class="hint">下面是文件开头的原始内容，照着它改配置里的列名即可：</p>
+    <p class="hint">
+      下面是文件开头的原始内容，照着它改配置里的列名即可；
+      <a href="{{ url_for('profiles_page') }}">这里</a>能看到每份配置现在认哪些列名。
+    </p>
     <div class="table-scroll">
       <table class="data">
         <thead><tr><th class="row-number">#</th><th>内容</th></tr></thead>

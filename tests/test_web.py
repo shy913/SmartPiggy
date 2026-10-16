@@ -151,21 +151,21 @@ def test_currencies_are_shown_separately_never_added(client):
         assert client.post(f"/import/{token}/confirm").status_code == 303
 
     home = body(client.get("/"))
-    assert "多种币种" in home
+    assert "没配汇率" in home, "要说明为什么 GBP 没被并进 CNY 里"
     assert "CNY" in home and "GBP" in home
 
     summary = body(client.get("/summary"))
-    assert "不加在一起" in summary
+    assert "没配汇率" in summary
     assert "币种" in summary, "表格里要有币种列"
 
 
 def test_single_currency_pages_look_the_same_as_before(client):
-    """只有一个币种时不该冒出多余的分组标题。"""
+    """只有一个币种时不该冒出多余的分组标题和说明。"""
     token = token_of(upload(client, alipay_csv(), "支付宝账单.csv"))
     client.post(f"/import/{token}/confirm")
 
     home = body(client.get("/"))
-    assert "多种币种" not in home
+    assert "没配汇率" not in home
     assert "2026-01 的账" in home
 
 
@@ -190,8 +190,8 @@ def test_charts_are_not_shared_across_currencies(client):
         client.post(f"/import/{token}/confirm")
 
     summary = body(client.get("/summary"))
-    assert summary.count("<h4>每月收支</h4>") == 2, "每个币种一幅每日收支图"
-    assert summary.count("<h4>支出构成") == 2
+    assert summary.count("<h4>每月收支") == 2, "每个币种一幅每月收支图"
+    assert summary.count("支出构成") == 2
     assert "CNY" in summary and "GBP" in summary
 
     # 微信账单没有分类列，支出全归「未分类」——一根柱子的柱状图不如一句话。

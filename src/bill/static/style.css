@@ -411,6 +411,21 @@ tr.row-neutral td { color: var(--muted); }
   color: var(--text);
 }
 .chart-card .empty { margin: 0.5rem 0 0.9rem; }
+.chart-card h4 .muted { font-weight: 400; margin-left: 0.4rem; }
+
+/* 图下的合计行 */
+.chart-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.5rem;
+  padding: 0.7rem 0 0.5rem;
+  margin-top: 0.4rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+.chart-summary span { display: inline-flex; align-items: baseline; gap: 0.45rem; }
+.chart-summary em { font-style: normal; color: var(--muted); }
 
 /* 多币种时按币种分块，避免把英镑和人民币的合计并排放在一起看串 */
 .currency-block { margin-bottom: 1.25rem; }
@@ -544,3 +559,42 @@ tr.row-neutral td { color: var(--muted); }
 .paths p { margin: 0.4rem 0; }
 .profile { margin-bottom: 2rem; }
 .profile h2 { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+
+/* 响应式 ----------------------------------------------------------- */
+
+/* 统计块在窄屏自然折行，不用等到断点就已经能换行 */
+.stats { flex-wrap: wrap; }
+
+/* 图表放在可横向滚动的容器里，并给一个最小宽度。
+   SVG 会等比缩放到容器宽度，手机上缩到 375px 时字号只剩五六个像素，
+   与其看不清，不如让它保持可读的尺寸、让用户横向滚一下——
+   表格本来就是这个做法。 */
+.chart-scroll { overflow-x: auto; }
+.chart { min-width: 560px; }
+
+@media (max-width: 700px) {
+  main { padding: 1.5rem 0.9rem 2.5rem; }
+  .site-header { padding: 1rem 0.9rem 0; gap: 0.6rem; }
+  .site-header nav { gap: 0.95rem; font-size: 0.9rem; }
+
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.1rem; }
+  .lede { font-size: 0.95rem; }
+
+  .stats { gap: 1.2rem 1.75rem; margin: 1.25rem 0; }
+  .stat-value { font-size: 1.35rem; }
+
+  /* 筛选栏竖着排，每个控件占满整行——横着放手机点不准 */
+  .filters { flex-direction: column; align-items: stretch; gap: 0.65rem; }
+  .filters label { width: 100%; }
+  .filters input, .filters select { width: 100%; }
+
+  /* 确认、换配置这些操作条同理 */
+  .commit, .reprofile { flex-direction: column; align-items: stretch; }
+  .commit form { width: 100%; flex-direction: column; align-items: stretch; }
+  .commit button, .reprofile button, .reprofile select { width: 100%; }
+
+  .dropzone { padding: 1.25rem 0.9rem; }
+  .upload { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+  .paths, .chart-card { padding: 0.85rem 0.9rem; }
+}

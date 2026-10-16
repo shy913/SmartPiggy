@@ -6,8 +6,9 @@
 <p class="lede">
   收入、支出和结余只看「收/支」明确的行；转账、还款、退款这些中性行单列，
   不混进合计里。
+  {{ currency_note }}
   {% if multiple_currencies %}
-    <strong>账本里有多种币种，全部按币种分开统计——不同币种不加在一起。</strong>
+    <strong>有币种没配汇率，它们不会被合并，单独列出。</strong>
   {% endif %}
 </p>
 
@@ -15,7 +16,7 @@
   <h2>账本总计</h2>
   {% for group in overall %}
     <div class="currency-block">
-      {% if multiple_currencies %}<h3 class="currency">{{ group.currency }}</h3>{% endif %}
+      {% if multiple_currencies %}<h3 class="currency">{{ group.display_currency }}</h3>{% endif %}
       <div class="stats">
         <div class="stat"><span class="stat-value money-in">{{ group.income | amount }}</span><span class="stat-label">累计收入</span></div>
         <div class="stat"><span class="stat-value money-out">{{ group.expense | amount }}</span><span class="stat-label">累计支出</span></div>
@@ -36,11 +37,11 @@
   </p>
   {% for group in charts %}
     {% if multiple_currencies %}
-      <h3 class="currency">{{ group.currency }}</h3>
+      <h3 class="currency">{{ group.display_currency }}</h3>
     {% endif %}
 
     <div class="chart-card">
-      <h4>每月收支</h4>
+      <h4>每月收支 <span class="muted">最近 12 个月 · {{ group.display_currency }}</span></h4>
       <div class="legend">
         <span><i class="in"></i>收入</span>
         <span><i class="out"></i>支出</span>
@@ -49,7 +50,7 @@
     </div>
 
     <div class="chart-card">
-      <h4>支出构成（账单自带的分类，前 10）</h4>
+      <h4>支出构成 <span class="muted">账单自带的分类 · {{ group.display_currency }}</span></h4>
       {{ group.categories }}
     </div>
   {% endfor %}
@@ -72,7 +73,7 @@
           {% for row in months %}
             <tr>
               <td><a href="{{ url_for('transactions', month=row.month) }}">{{ row.month }}</a></td>
-              {% if multiple_currencies %}<td class="muted">{{ row.currency }}</td>{% endif %}
+              {% if multiple_currencies %}<td class="muted">{{ row.display_currency }}</td>{% endif %}
               <td class="num money-in">{{ row.income | amount }}</td>
               <td class="num money-out">{{ row.expense | amount }}</td>
               <td class="num">{{ (row.income - row.expense) | amount }}</td>
@@ -108,7 +109,7 @@
           {% for row in categories %}
             <tr>
               <td>{{ row.category }}</td>
-              {% if multiple_currencies %}<td class="muted">{{ row.currency }}</td>{% endif %}
+              {% if multiple_currencies %}<td class="muted">{{ row.display_currency }}</td>{% endif %}
               <td class="num money-out">{{ row.expense | amount }}</td>
               <td class="num money-in">{{ row.income | amount }}</td>
               <td class="num muted">{{ row.total }}</td>

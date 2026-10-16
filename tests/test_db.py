@@ -182,7 +182,7 @@ def test_month_totals_exclude_neutral_rows(conn):
     totals = repo.month_totals(conn, "2026-01")
     assert len(totals) == 1, "只有一个币种时应该只有一组"
     row = totals[0]
-    assert row["currency"] == "CNY"
+    assert row["display_currency"] == "CNY"
     assert row["income"] == 1200000
     assert row["expense"] == 3250
     assert row["neutral_count"] == 1
@@ -207,7 +207,7 @@ def test_currencies_are_never_summed_together(conn):
 
     assert repo.currencies(conn) == ["CNY", "GBP"]
 
-    totals = {row["currency"]: row for row in repo.overall_totals(conn)}
+    totals = {row["display_currency"]: row for row in repo.overall_totals(conn)}
     assert totals["CNY"]["income"] == 100000
     assert totals["CNY"]["expense"] == 0
     assert totals["GBP"]["income"] == 50000
@@ -215,10 +215,10 @@ def test_currencies_are_never_summed_together(conn):
     # 关键：没有任何一行是「合计」
     assert len(totals) == 2
 
-    by_month_currencies = {row["currency"] for row in repo.by_month(conn)}
+    by_month_currencies = {row["display_currency"] for row in repo.by_month(conn)}
     assert by_month_currencies == {"CNY", "GBP"}
 
-    by_category_currencies = {row["currency"] for row in repo.by_source_category(conn)}
+    by_category_currencies = {row["display_currency"] for row in repo.by_source_category(conn)}
     assert by_category_currencies == {"CNY", "GBP"}
 
 
