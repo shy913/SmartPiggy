@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}bill — {{ table.filename }}{% endblock %}
+
+{% block content %}
+<p class="breadcrumb"><a href="{{ url_for('upload') }}">← All uploads</a></p>
+<h1>{{ table.filename }}</h1>
+<p class="lede">
+  {{ table.kind|upper }} · {{ (table.size / 1024)|round(1) }} KB
+</p>
+
+<section class="stats">
+  {% for label, value in table.stats() %}
+    <div class="stat">
+      <span class="stat-value">{{ value }}</span>
+      <span class="stat-label">{{ label }}</span>
+    </div>
+  {% endfor %}
+</section>
+
+{% for sheet in table.sheets %}
+  {% if sheet.header %}
+    <h2>
+      {{ sheet.name }}
+      <span class="badge">{{ sheet.total_rows }} row{{ '' if sheet.total_rows == 1 else 's' }}</span>
+    </h2>
+    {% if sheet.truncated %}
+      <p class="hint">Showing the first {{ sheet.rows|length }} rows; the file has more.</p>
+    {% endif %}
+    <div class="table-scroll">
+      <table class="data">
+        <thead>
+          <tr>
+            <th class="row-number" scope="col">#</th>
+            {% for column in sheet.header %}<th scope="col">{{ column }}</th>{% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in sheet.rows %}
+            <tr>
+              <td class="row-number">{{ loop.index }}</td>
+              {% for cell in row %}<td>{{ cell }}</td>{% endfor %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <h2>{{ sheet.name }}</h2>
+    <p class="empty">This sheet is empty.</p>
+  {% endif %}
+{% endfor %}
+
+<p class="hint"><a href="{{ url_for('upload') }}">Upload another file</a></p>
+{% endblock %}

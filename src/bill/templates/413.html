@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}bill — too large{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <h1>That file is too large</h1>
+  <p class="lede">
+    Uploads are capped at {{ max_mb }} MB. Try trimming the file, or split it
+    into smaller pieces.
+  </p>
+  <p><a class="button" href="{{ url_for('upload') }}">Try another file →</a></p>
+</section>
+{% endblock %}

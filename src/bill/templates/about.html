@@ -5,7 +5,8 @@
 <h1>About</h1>
 <p class="lede">
   A minimal example site: Flask 3, Jinja templates, one hand-written stylesheet,
-  no database and no JavaScript.
+  no database and no JavaScript. CSV and Excel parsing is done server-side with
+  the standard library and <code>openpyxl</code>.
 </p>
 
 <h2>Routes</h2>
@@ -18,6 +19,9 @@
     <tr><td>GET</td><td><code>/notes</code></td><td>List every note</td></tr>
     <tr><td>POST</td><td><code>/notes</code></td><td>Add a note, then redirect</td></tr>
     <tr><td>POST</td><td><code>/notes/&lt;id&gt;/delete</code></td><td>Delete one note</td></tr>
+    <tr><td>GET</td><td><code>/upload</code></td><td>Upload form and recent files</td></tr>
+    <tr><td>POST</td><td><code>/upload</code></td><td>Parse a CSV/Excel file, then redirect</td></tr>
+    <tr><td>GET</td><td><code>/uploads/&lt;id&gt;</code></td><td>Preview of one uploaded file</td></tr>
     <tr><td>GET</td><td><code>/api/notes</code></td><td>Notes as JSON</td></tr>
     <tr><td>POST</td><td><code>/api/notes</code></td><td>Add a note from JSON</td></tr>
     <tr><td>GET</td><td><code>/healthz</code></td><td>Liveness check</td></tr>

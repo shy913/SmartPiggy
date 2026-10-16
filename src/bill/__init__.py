@@ -23,12 +23,17 @@ from flask import (
     url_for,
 )
 
+from .tabular import ACCEPT_ATTR, MAX_BYTES, Table, UploadError, parse_upload
+
 __all__ = ["create_app", "main"]
 
-# Notes live in memory, so they reset when the server restarts.
+# Notes and uploads live in memory, so they reset when the server restarts.
 _started_at = datetime.now(timezone.utc)
 _ids = itertools.count(1)
+_upload_ids = itertools.count(1)
 _notes: list[dict] = []
+_uploads: dict[int, Table] = {}
+RECENT_UPLOADS = 8
 
 SEED_NOTES = (
     "Welcome to the demo — this note lives in memory on the server.",
@@ -65,8 +70,22 @@ def uptime_seconds() -> int:
     return int((datetime.now(timezone.utc) - _started_at).total_seconds())
 
 
+def recent_uploads() -> list[tuple[int, Table]]:
+    """Newest upload first, capped for the listing."""
+    ids = sorted(_uploads, reverse=True)[:RECENT_UPLOADS]
+    return [(upload_id, _uploads[upload_id]) for upload_id in ids]
+
+
+def store_upload(table: Table) -> int:
+    upload_id = next(_upload_ids)
+    _uploads[upload_id] = table
+    return upload_id
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
+    # Reject oversized bodies before they're read into memory.
+    app.config["MAX_CONTENT_LENGTH"] = MAX_BYTES
 
     if not _notes:
         for body in SEED_NOTES:
@@ -102,6 +121,48 @@ def create_app() -> Flask:
             abort(404)
         return redirect(url_for("notes"))
 
+    @app.route("/upload")
+    def upload():
+        return render_template(
+            "upload.html",
+            uploads=recent_uploads(),
+            accept=ACCEPT_ATTR,
+            max_mb=MAX_BYTES // (1024 * 1024),
+            error=None,
+        )
+
+    @app.post("/upload")
+    def receive_upload():
+        file = request.files.get("file") or request.files.get("csv")
+
+        def failed(message: str, status: int = 400):
+            return (
+                render_template(
+                    "upload.html",
+                    uploads=recent_uploads(),
+                    accept=ACCEPT_ATTR,
+                    max_mb=MAX_BYTES // (1024 * 1024),
+                    error=message,
+                ),
+                status,
+            )
+
+        if file is None or not file.filename:
+            return failed("Choose a CSV or Excel file first.")
+        try:
+            table = parse_upload(file.filename, file.read())
+        except UploadError as error:
+            return failed(str(error))
+        # Post/Redirect/Get: the preview gets its own URL.
+        return redirect(url_for("upload_detail", upload_id=store_upload(table)))
+
+    @app.get("/uploads/<int:upload_id>")
+    def upload_detail(upload_id: int):
+        table = _uploads.get(upload_id)
+        if table is None:
+            abort(404)
+        return render_template("upload_detail.html", upload_id=upload_id, table=table)
+
     @app.route("/about")
     def about():
         return render_template("about.html", started=_started_at)
@@ -125,6 +186,15 @@ def create_app() -> Flask:
     @app.errorhandler(404)
     def not_found(_error):
         return render_template("404.html"), 404
+
+    @app.errorhandler(413)
+    def too_large(_error):
+        return (
+            render_template(
+                "413.html", max_mb=MAX_BYTES // (1024 * 1024), uploads=recent_uploads()
+            ),
+            413,
+        )
 
     return app
 

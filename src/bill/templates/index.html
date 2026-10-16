@@ -38,6 +38,14 @@
     </p>
   </article>
   <article class="card">
+    <h3>File uploads</h3>
+    <p>
+      Hand it a CSV, TSV or XLSX and it parses in memory and shows a preview
+      table. Oversized files are rejected up front.
+      <a href="{{ url_for('upload') }}">Try it →</a>
+    </p>
+  </article>
+  <article class="card">
     <h3>JSON API</h3>
     <p>
       <code>GET /api/notes</code> lists them, <code>POST /api/notes</code> adds

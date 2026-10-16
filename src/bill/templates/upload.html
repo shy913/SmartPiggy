@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}bill — upload{% endblock %}
+
+{% block content %}
+<h1>Upload a spreadsheet</h1>
+<p class="lede">
+  Drop in a CSV, TSV or Excel file and get an instant preview. Files are parsed
+  in memory and never written to disk; the last few stay in memory until you
+  restart the server.
+</p>
+
+<form class="upload-form" method="post" action="{{ url_for('receive_upload') }}"
+      enctype="multipart/form-data">
+  <label class="dropzone" for="file">
+    <strong>Choose a file</strong>
+    <span>CSV, TSV or XLSX · up to {{ max_mb }} MB</span>
+    <input id="file" name="file" type="file" accept="{{ accept }}" required>
+  </label>
+  <div class="row">
+    <button type="submit">Parse it</button>
+    <span class="hint">Nothing leaves this machine.</span>
+  </div>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+</form>
+
+{% if uploads %}
+  <h2>Recent uploads</h2>
+  <ul class="uploads">
+    {% for upload_id, table in uploads %}
+      <li class="upload">
+        <div>
+          <a href="{{ url_for('upload_detail', upload_id=upload_id) }}">{{ table.filename }}</a>
+          <p class="note-meta">
+            {{ table.kind|upper }} · {{ table.row_count }} rows ·
+            {{ table.sheets|length }} sheet{{ '' if table.sheets|length == 1 else 's' }} ·
+            {{ (table.size / 1024)|round(1) }} KB
+          </p>
+        </div>
+      </li>
+    {% endfor %}
+  </ul>
+{% endif %}
+{% endblock %}

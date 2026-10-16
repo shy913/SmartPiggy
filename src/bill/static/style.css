@@ -203,3 +203,115 @@ button:hover { filter: brightness(1.08); }
 .routes th, .routes td { text-align: left; padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--border); }
 .routes th { color: var(--muted); font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }
 .routes td:first-child { color: var(--muted); font-family: ui-monospace, monospace; font-size: 0.82rem; }
+
+/* Upload ---------------------------------------------------------- */
+
+.upload-form {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.1rem;
+  margin-bottom: 2rem;
+}
+
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  border: 1.5px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 2rem 1.25rem;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.dropzone:hover, .dropzone:focus-within { border-color: var(--accent); background: #0b0d11; }
+.dropzone strong { font-size: 1rem; }
+.dropzone span { color: var(--muted); font-size: 0.85rem; }
+.dropzone input[type="file"] { margin-top: 0.75rem; font-size: 0.85rem; color: var(--muted); max-width: 100%; }
+.dropzone input[type="file"]::file-selector-button {
+  background: var(--panel-hover);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85rem;
+  margin-right: 0.75rem;
+  padding: 0.4rem 0.8rem;
+}
+
+.upload-form .row { align-items: center; margin-top: 1rem; }
+.hint { color: var(--muted); font-size: 0.85rem; }
+
+.uploads { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+.upload {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.85rem 1.1rem;
+}
+.upload:hover { background: var(--panel-hover); }
+
+.breadcrumb { margin: 0 0 0.75rem; font-size: 0.85rem; }
+
+.badge {
+  background: var(--panel-hover);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  margin-left: 0.5rem;
+  padding: 0.15rem 0.6rem;
+  vertical-align: middle;
+}
+
+/* Data table ------------------------------------------------------ */
+
+.table-scroll {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: auto;
+  max-height: 32rem;
+  background: var(--panel);
+}
+
+table.data { border-collapse: separate; border-spacing: 0; font-size: 0.85rem; white-space: nowrap; }
+
+table.data th, table.data td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.45rem 0.7rem;
+  text-align: left;
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+table.data thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel-hover);
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 0.78rem;
+}
+table.data tbody tr:hover td { background: var(--panel-hover); }
+table.data tbody tr:last-child td { border-bottom: 0; }
+
+table.data .row-number {
+  color: var(--muted);
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+  position: sticky;
+  left: 0;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  text-align: right;
+  width: 1%;
+}
+table.data thead .row-number { background: var(--panel-hover); z-index: 2; }
+table.data tbody tr:hover .row-number { background: var(--panel-hover); }
