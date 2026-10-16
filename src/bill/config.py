@@ -19,6 +19,7 @@ __all__ = [
     "builtin_settings_path",
     "data_dir",
     "db_path",
+    "user_auth_path",
     "user_profiles_dir",
     "user_settings_path",
 ]
@@ -69,3 +70,8 @@ def builtin_settings_path() -> Path:
 def user_settings_path() -> Path:
     """用户的设置。存在就整体覆盖内置那份。"""
     return data_dir() / "settings.toml"
+
+
+def user_auth_path() -> Path:
+    """登录密码与会话密钥。**不存在** = 这个应用不设防（见 auth.load）。"""
+    return data_dir() / "auth.toml"

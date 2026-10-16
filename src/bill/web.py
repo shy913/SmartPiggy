@@ -7,8 +7,10 @@
 
 from __future__ import annotations
 
+import getpass
 import os
-from datetime import datetime, timezone
+import sys
+from datetime import datetime, timedelta, timezone
 
 from flask import (
     Flask,
@@ -18,10 +20,11 @@ from flask import (
     redirect,
     render_template,
     request,
+    session,
     url_for,
 )
 
-from . import charts, config, dates, db, entry, ingest, repo, settings, themes
+from . import auth, charts, config, dates, db, entry, ingest, repo, settings, themes
 from .errors import BillError, ProfileError, UploadError
 from .money import format_amount
 from .profiles import load_all, validate
@@ -31,6 +34,13 @@ __all__ = ["create_app", "main"]
 
 _started_at = datetime.now(timezone.utc)
 PAGE_SIZE = 100
+
+# 不登录也能进的地方：登录页自己，加一个给监控用的 /healthz（只回 uptime，
+# 不带任何账目数据），加静态文件——登录页的样式表就在那儿。
+# 404 的 endpoint 是 None，让它落到 404 页去，不必先登录。
+OPEN_ENDPOINTS = frozenset({"login_page", "login", "logout", "healthz", "static"})
+
+USAGE = "用法：bill [--set-password]"
 
 
 def uptime_seconds() -> int:
@@ -43,6 +53,20 @@ def _as_int(value: str) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _next_target(value: str | None) -> str:
+    """登录之后要回到哪一页。
+
+    只收本应用里的路径：这个值是从 URL 和表单里来的，放行 `//evil.example`
+    或者 `https://…` 就等于拿自己的登录页给别人做钓鱼跳板。
+    """
+    if not value or not value.startswith("/") or value.startswith("//"):
+        return ""
+    if "\\" in value:
+        # 有的浏览器把反斜杠当斜杠看，`/\evil.example` 就溜出去了。
+        return ""
+    return value
 
 
 def _autodetect_around(connection, conf, moment: str) -> int:
@@ -68,6 +92,55 @@ def create_app() -> Flask:
     app.config["MAX_CONTENT_LENGTH"] = config.MAX_BYTES
     app.jinja_env.filters["amount"] = format_amount
 
+    # ---------------------------------------------------------------- 登录
+
+    startup_auth = auth.load()
+    # 会话 cookie 是**客户端签名**的：内容摆在浏览器那边，改一个字节就验不过。
+    # 密钥跟着 auth.toml 走，重启服务不至于把登录状态清光。还没设密码的时候
+    # 会话根本用不上，随便给一把就行——这也意味着设完密码**不用重启**：本次
+    # 进程仍用这把临时的，下次起来才换成文件里那把，代价至多是重登一次。
+    app.secret_key = startup_auth.session_key if startup_auth else os.urandom(32)
+    app.config.update(
+        SESSION_COOKIE_HTTPONLY=True,
+        # 这个应用的表单全是 POST 且没有 CSRF token。Lax 让别的站点发起的跨站
+        # POST 带不上 cookie，正好把那条路堵掉（本站自己的跳转不受影响）。
+        SESSION_COOKIE_SAMESITE="Lax",
+        PERMANENT_SESSION_LIFETIME=timedelta(days=auth.SESSION_DAYS),
+        # 这个应用走的是明文 HTTP，SECURE 只能关着。密码和 cookie 在有嗅探的
+        # 网络上都是明摆着的——那道防线在网络层（防火墙 / SSH 隧道），不在这一层。
+    )
+
+    def current_auth() -> auth.Auth | None:
+        """这次请求读一次认证配置。
+
+        跟 settings.load 一样**不缓存**：文件小，读一遍的开销可以忽略，而缓存
+        会引出「密码改了没生效」这种最难查的毛病。
+        """
+        if "auth" not in g:
+            g.auth = auth.load()
+        return g.auth
+
+    attempts = auth.Attempts()
+
+    @app.before_request
+    def require_login():
+        """没登录就先去登录页，并记下本来要去哪。"""
+        conf = current_auth()
+        if conf is None or request.endpoint in OPEN_ENDPOINTS:
+            return None
+        if session.get("logged_in"):
+            return None
+        # 表单请求（POST）不记去向：登录完那份请求体也回不来了，把人送到那一页
+        # 反而像「刚才那一下成功了」。
+        where = request.full_path if request.query_string else request.path
+        # 首页不用记：登录完本来就去那儿
+        target = _next_target(where) if request.method == "GET" else ""
+        if target == "/":
+            target = ""
+        if target:
+            return redirect(url_for("login_page", next=target), code=303)
+        return redirect(url_for("login_page"), code=303)
+
     # ---------------------------------------------------------------- 连接
 
     def get_conn():
@@ -90,12 +163,65 @@ def create_app() -> Flask:
         """
         return redirect(url_for(endpoint, **values), code=303)
 
+    # ---------------------------------------------------------------- 登录页
+
+    def render_login(error: str | None, next_url: str, status: int = 200):
+        return (
+            render_template("login.html", error=error, next=next_url),
+            status,
+        )
+
+    @app.get("/login")
+    def login_page():
+        """没设密码的时候没有这一页——直接回首页。"""
+        if current_auth() is None:
+            return go("summary")
+        return render_login(None, _next_target(request.args.get("next")))
+
+    @app.post("/login")
+    def login():
+        conf = current_auth()
+        if conf is None:
+            return go("summary")
+        where = _next_target(request.form.get("next"))
+        # 按来源计数。有反向代理时 remote_addr 会是代理的地址，这里的部署没有
+        # 代理（直连 8001），够用。
+        source = request.remote_addr or "?"
+        wait = attempts.waiting(source)
+        if wait > 0:
+            return render_login(
+                f"密码错的次数太多了，等 {int(wait) + 1} 秒再试。", where, status=429
+            )
+
+        if not conf.check(request.form.get("password") or ""):
+            attempts.failed(source)
+            return render_login("密码不对。", where, status=401)
+
+        attempts.clear(source)
+        session.clear()  # 换一个新的会话，不接着用登录之前那一个
+        session["logged_in"] = True
+        session.permanent = True
+        return redirect(where or url_for("summary"), code=303)
+
+    @app.post("/logout")
+    def logout():
+        session.clear()
+        return go("login_page")
+
     # ---------------------------------------------------------------- 首页
 
     @app.context_processor
     def inject_palette():
-        """每个页面都得知道自己在用哪套配色——``<html data-theme>`` 靠它。"""
-        return {"palette": settings.load().palette()}
+        """每个页面都得知道自己在用哪套配色——``<html data-theme>`` 靠它。
+
+        顺带告诉模板有没有登录这回事：没设密码时顶上要挂提示条，设了就多一个
+        「退出」。
+        """
+        return {
+            "palette": settings.load().palette(),
+            "auth_enabled": current_auth() is not None,
+            "auth_missing": current_auth() is None,
+        }
 
     @app.get("/")
     def summary():
@@ -584,13 +710,49 @@ def create_app() -> Flask:
     return app
 
 
-def main() -> None:
+def _set_password_command(arguments: list[str]) -> None:
+    """``bill --set-password``：交互式问两遍，对上了才写。
+
+    标准输入不是终端（管道、脚本）时只读一行、不确认——``echo … | bill
+    --set-password`` 是给人拿来用的，多问一遍也没人答。
+    """
+    if arguments:
+        raise SystemExit(f"认不出的参数：{' '.join(arguments)}\n{USAGE}")
+    if sys.stdin.isatty():
+        first = getpass.getpass("新密码：")
+        if first != getpass.getpass("再输一遍："):
+            raise SystemExit("两遍不一样，没改。")
+    else:
+        first = sys.stdin.readline().rstrip("\n")
+    try:
+        auth.write(first)
+    except BillError as error:
+        raise SystemExit(str(error)) from None
+    print(f"密码已写入 {config.user_auth_path()}。下次打开页面就要登录。")
+
+
+def main(argv: list[str] | None = None) -> None:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments[:1] == ["--set-password"]:
+        _set_password_command(arguments[1:])
+        return
+    if arguments:
+        raise SystemExit(f"认不出的参数：{' '.join(arguments)}\n{USAGE}")
+
     app = create_app()
+    if auth.load() is None:
+        # 没设密码 = 跟以前一样不设防。这条只进日志：页面上另有一条提示条，
+        # 这里说给「翻日志找问题」的人听。
+        print(
+            "注意：还没设密码，凡是能访问到这台机器这个端口的人都能看到全部账目。"
+            "跑 `bill --set-password` 设一个（设完不用重启）。",
+            file=sys.stderr,
+        )
     app.run(
         # 默认绑所有网卡，方便从别的机器访问——本机开 127.0.0.1 也行。
-        # 注意这个应用没有登录认证：绑 0.0.0.0 等于凡能访问到本机这个端口的
-        # 人都能看到全部账目。放到共享网络或公网上时，要么靠防火墙兜住，
-        # 要么用 HOST=127.0.0.1 收回本机。
+        # 设了密码之后，绑 0.0.0.0 就不再等于把账本摆在网上：先要看得到密码。
+        # 但 HTTP 是明文，密码和会话 cookie 在有嗅探的网络上都是明摆着的，
+        # 真要隔着不受信任的网络用，还是靠防火墙兜住、或者走 SSH 隧道。
         host=os.environ.get("HOST", "0.0.0.0"),
         port=int(os.environ.get("PORT", "8001")),
         debug=os.environ.get("FLASK_DEBUG") == "1",

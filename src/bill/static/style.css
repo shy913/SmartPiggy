@@ -130,9 +130,40 @@ code {
 }
 .brand::before { content: "🧾 "; }
 
-.site-header nav { display: flex; gap: 1.25rem; }
+.site-header nav { display: flex; gap: 1.25rem; align-items: center; }
 .site-header nav a { color: var(--muted); font-size: 0.95rem; }
 .site-header nav a:hover { color: var(--text); text-decoration: none; }
+
+/* 顶部提示条：还没设密码时挂在每个页面顶上 */
+.notice {
+  max-width: 60rem;
+  margin: 1.25rem auto 0;
+  padding: 0.7rem 1rem;
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border));
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+}
+.notice code {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.05rem 0.35rem;
+}
+
+/* 登录页 ---------------------------------------------------------- */
+
+.login {
+  max-width: 22rem;
+  margin: 0 auto;
+  padding: 5rem 1.25rem;
+}
+.login h1 { margin-bottom: 1.25rem; }
+.login form { display: flex; flex-direction: column; gap: 1rem; align-items: flex-start; }
+.login label { display: flex; flex-direction: column; gap: 0.4rem; width: 100%; color: var(--muted); font-size: 0.9rem; }
+.login input[type="password"] { width: 100%; box-sizing: border-box; }
 
 main {
   flex: 1;
@@ -216,7 +247,8 @@ h3 { font-size: 1rem; margin: 0 0 0.5rem; }
 }
 .row { display: flex; gap: 0.6rem; }
 
-input[type="text"] {
+input[type="text"],
+input[type="password"] {
   flex: 1;
   background: var(--code-bg);
   border: 1px solid var(--border);
@@ -226,7 +258,8 @@ input[type="text"] {
   font-size: 0.95rem;
   padding: 0.6rem 0.75rem;
 }
-input[type="text"]:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+input[type="text"]:focus,
+input[type="password"]:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
 
 button {
   background: var(--accent);
