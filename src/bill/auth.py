@@ -86,7 +86,13 @@ def verify(password: str, encoded: str) -> bool:
 
     参数是**从文件里读来的**，所以认不出来就返回 False：一份被手改坏的哈希该是
     「谁都进不去」，不是让登录页 500，更不是放行。
+
+    长度上限也在这儿拦一道：登录表单是**没登录的人**能直接 POST 的，不能让他
+    把一兆的「密码」喂进 scrypt（见 MAX_LENGTH）。写的时候本来就存不下超过
+    上限的密码，所以这里拒绝等于认不出，不会把谁关在门外。
     """
+    if len(password) > MAX_LENGTH:
+        return False
     try:
         scheme, n, r, p, salt, key = str(encoded).split("$")
         if scheme != "scrypt":

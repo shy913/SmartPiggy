@@ -25,7 +25,7 @@
     </nav>
   </header>
 
-  {% if auth_missing %}
+  {% if not auth_enabled %}
     <p class="notice warn-text">
       还没设密码：能访问到这台机器这个端口的人都能看到全部账目。
       跑 <code>bill --set-password</code> 设一个。

@@ -37,7 +37,8 @@ PAGE_SIZE = 100
 
 # 不登录也能进的地方：登录页自己，加一个给监控用的 /healthz（只回 uptime，
 # 不带任何账目数据），加静态文件——登录页的样式表就在那儿。
-# 404 的 endpoint 是 None，让它落到 404 页去，不必先登录。
+# 这个名单是**逐个点名**的：没点到的都要先登录，认不出来的 URL（那种请求的
+# endpoint 是 None）也不例外——宁可让 404 也先走一趟登录页。
 OPEN_ENDPOINTS = frozenset({"login_page", "login", "logout", "healthz", "static"})
 
 USAGE = "用法：bill [--set-password]"
@@ -60,11 +61,18 @@ def _next_target(value: str | None) -> str:
 
     只收本应用里的路径：这个值是从 URL 和表单里来的，放行 `//evil.example`
     或者 `https://…` 就等于拿自己的登录页给别人做钓鱼跳板。
+
+    控制字符也一并挡掉。它们会被原样交给 ``redirect``，而 werkzeug 拒绝把
+    带换行的地址写进响应头——**输对密码那一刻**抛 500，等于一条链接就能让人
+    登不进来。（挡的是控制字符，不是非 ASCII：搜索关键词、备注里都有中文，
+    那些路径要能原样回得来。）
     """
     if not value or not value.startswith("/") or value.startswith("//"):
         return ""
     if "\\" in value:
         # 有的浏览器把反斜杠当斜杠看，`/\evil.example` 就溜出去了。
+        return ""
+    if any(character < " " or character == "\x7f" for character in value):
         return ""
     return value
 
@@ -125,10 +133,12 @@ def create_app() -> Flask:
     @app.before_request
     def require_login():
         """没登录就先去登录页，并记下本来要去哪。"""
-        conf = current_auth()
-        if conf is None or request.endpoint in OPEN_ENDPOINTS:
+        # 先看开放名单，再读配置：那几页不该因为 auth.toml 读不出来而跟着 500——
+        # 恰恰是登录坏掉的时候，登录页的那张样式表更要拿得到。
+        if request.endpoint in OPEN_ENDPOINTS:
             return None
-        if session.get("logged_in"):
+        conf = current_auth()
+        if conf is None or session.get("logged_in"):
             return None
         # 表单请求（POST）不记去向：登录完那份请求体也回不来了，把人送到那一页
         # 反而像「刚才那一下成功了」。
@@ -173,8 +183,8 @@ def create_app() -> Flask:
 
     @app.get("/login")
     def login_page():
-        """没设密码的时候没有这一页——直接回首页。"""
-        if current_auth() is None:
+        """没设密码的时候没有这一页；已经进来的人也不必再看它一眼。"""
+        if current_auth() is None or session.get("logged_in"):
             return go("summary")
         return render_login(None, _next_target(request.args.get("next")))
 
@@ -184,24 +194,27 @@ def create_app() -> Flask:
         if conf is None:
             return go("summary")
         where = _next_target(request.form.get("next"))
-        # 按来源计数。有反向代理时 remote_addr 会是代理的地址，这里的部署没有
-        # 代理（直连 8001），够用。
+        # 按来源计数
         source = request.remote_addr or "?"
+        # **先验密码，再数失败。** 这道闸门是给猜密码的人设的，不该把输对了
+        # 密码的那个人一起锁在门外：一个人的账本只有这一个密码，没有第二把
+        # 钥匙，而锁是按来源算的（这里直连 8001，没有反向代理；日志里见过
+        # Cloudflare 段的来访地址，那种情况下这条按代理地址聚合，会更粗）。
+        # 所以挨个试依旧会在 429 上撞墙，但对的密码什么时候都能进。
+        if conf.check(request.form.get("password") or ""):
+            attempts.clear(source)
+            session.clear()  # 换一个新的会话，不接着用登录之前那一个
+            session["logged_in"] = True
+            session.permanent = True
+            return redirect(where or url_for("summary"), code=303)
+
+        attempts.failed(source)
         wait = attempts.waiting(source)
         if wait > 0:
             return render_login(
                 f"密码错的次数太多了，等 {int(wait) + 1} 秒再试。", where, status=429
             )
-
-        if not conf.check(request.form.get("password") or ""):
-            attempts.failed(source)
-            return render_login("密码不对。", where, status=401)
-
-        attempts.clear(source)
-        session.clear()  # 换一个新的会话，不接着用登录之前那一个
-        session["logged_in"] = True
-        session.permanent = True
-        return redirect(where or url_for("summary"), code=303)
+        return render_login("密码不对。", where, status=401)
 
     @app.post("/logout")
     def logout():
@@ -220,7 +233,6 @@ def create_app() -> Flask:
         return {
             "palette": settings.load().palette(),
             "auth_enabled": current_auth() is not None,
-            "auth_missing": current_auth() is None,
         }
 
     @app.get("/")
