@@ -24,6 +24,11 @@ tests/fixtures/real/
 # 就会把那条链接提交进去。
 frontend/node_modules
 src/bill/static/app/
+# deploy.sh 换产物时留下的：上一份（回退用）和构建中的那一份。它们也是产物，
+# 同样不进版本库——不忽略的话 `git status` 里会一直挂着两条没用的东西，
+# 手一滑 `git add -A` 就把几百 KB 的 bundle 提交了。
+src/bill/static/app.last/
+src/bill/static/app.next/
 
 # 主题的 CSS 变量块和 TS 常量都是从 theme.json 生成的（建构建前先跑
 # `npm run themes`）。不进版本库，是为了让 theme.json 成为**唯一**来源：
