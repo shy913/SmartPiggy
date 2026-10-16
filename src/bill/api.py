@@ -158,6 +158,10 @@ MEMBER_FIELDS = (
     "description",
     "effective_category",
     "display_cents",
+    # display_cents 是哪个币种的数。跟 amount_cents / currency 一起发过去，
+    # 界面才能分清「这个数是换算来的」和「这个数本来就是原币」——后者再跟着
+    # 标一份原币金额就是同一个数印两遍。
+    "display_currency",
 )
 
 

@@ -204,4 +204,66 @@ describe("交易记录页", () => {
     await waitFor(() => expect(screen.getByText("美团平台商户")).toBeInTheDocument());
     expect(screen.queryByTitle("")).toBeNull();
   });
+
+  it("展开合并组：主数跟组头净额一个口径，换过币种的那笔另跟一份原币金额", async () => {
+    // 组里跨币种（微信代付 + Monzo 刷卡）。主数是显示币种，加起来正好是组头
+    // 那个净额；换过币种的那笔后面再跟一份原币金额，好跟微信里那条转账对回去。
+    // 以前这两份是错位的：跟着的是**原币种**，数却是换算过的，于是印出
+    // 「-77.53 CNY」——一个英镑的数字顶着人民币的标签。
+    draw(
+      listBody({
+        rows: [
+          row({
+            id: null,
+            group_id: 8,
+            member_count: 2,
+            amount_cents: 8545,
+            currency: "GBP",
+            display_cents: -8545,
+            counterparty: "Sainsbury",
+          }),
+        ],
+        members: {
+          "8": [
+            {
+              id: 91,
+              group_id: 8,
+              occurred_at: "2026-10-15 13:29:59",
+              direction: "out",
+              amount_cents: 69000,
+              currency: "CNY",
+              counterparty: "月亮（代付）",
+              description: "",
+              effective_category: "",
+              display_cents: 7753,
+              display_currency: "GBP",
+              emoji: "",
+            },
+            {
+              id: 86,
+              group_id: 8,
+              occurred_at: "2026-10-15 14:32:37",
+              direction: "out",
+              amount_cents: 792,
+              currency: "GBP",
+              counterparty: "Sainsbury’s",
+              description: "",
+              effective_category: "",
+              display_cents: 792,
+              display_currency: "GBP",
+              emoji: "",
+            },
+          ],
+        },
+        total: 1,
+      }),
+    );
+    await waitFor(() => expect(screen.getByText("月亮（代付）")).toBeInTheDocument());
+
+    expect(screen.getByText("-77.53")).toBeInTheDocument();
+    expect(screen.getByText("-690.00 CNY")).toBeInTheDocument();
+    // 本来就是显示币种的那笔，没有第二份。
+    expect(screen.getByText("-7.92")).toBeInTheDocument();
+    expect(screen.queryByText("-7.92 GBP")).toBeNull();
+  });
 });
