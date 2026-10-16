@@ -4,6 +4,13 @@
 {% block content %}
 <h1>交易记录</h1>
 
+<p class="actions">
+  <a class="button" href="{{ url_for('transaction_new') }}">记一笔</a>
+  {% if group_count %}
+    <a class="button ghost" href="{{ url_for('groups_page') }}">合并组 {{ group_count }} 个</a>
+  {% endif %}
+</p>
+
 <form class="filters" method="get" action="{{ url_for('transactions') }}">
   <label>月份 <input type="month" name="month" value="{{ filters.month }}"></label>
   <label>账户
@@ -30,41 +37,137 @@
   <a class="button ghost" href="{{ url_for('transactions') }}">清空</a>
 </form>
 
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
 <p class="hint">共 {{ total }} 条，第 {{ page }} / {{ pages }} 页。</p>
 
 {% if rows %}
-  <div class="table-scroll">
-    <table class="data">
-      <thead>
-        <tr>
-          <th>日期</th><th>收支</th><th class="num">金额（{{ display_currency }}）</th>
-          <th>交易对方</th><th>说明</th><th>账单分类</th>
-          <th>账户</th><th>原币种</th><th class="num">计入合计</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for tx in rows %}
+  {# 整张表包在一个表单里，是为了勾选之后能一键合并、一键改分类。
+     行内的「删」靠 button 的 formaction 转到删除那个地址——表单不能嵌套，
+     这样既是一条合法的 HTML，也不用为此上 JS。
+
+     没有 JS 就没有「全选本页」：批量操作只作用于手勾的那些行。 #}
+  <form method="post" action="{{ url_for('transactions_bulk') }}">
+    <input type="hidden" name="month" value="{{ filters.month }}">
+    <input type="hidden" name="direction" value="{{ filters.direction }}">
+    <input type="hidden" name="account" value="{{ filters.account or '' }}">
+    <input type="hidden" name="q" value="{{ filters.q }}">
+    <input type="hidden" name="page" value="{{ page }}">
+
+    <div class="table-scroll">
+      <table class="data">
+        <thead>
           <tr>
-            <td>{{ tx.occurred_at }}</td>
-            <td>
-              {% if tx.direction == 'in' %}<span class="tag tag-in">收入</span>
-              {% elif tx.direction == 'out' %}<span class="tag tag-out">支出</span>
-              {% else %}<span class="tag tag-neutral">中性</span>{% endif %}
-            </td>
-            <td class="num {{ 'money-in' if tx.direction == 'in' else 'money-out' if tx.direction == 'out' else 'muted' }}">
-              {{ tx.display_cents | amount }}
-            </td>
-            <td>{{ tx.counterparty }}</td>
-            <td>{{ tx.description }}</td>
-            <td class="muted">{{ tx.source_category }}</td>
-            <td class="muted">{{ tx.account_name }}</td>
-            <td class="muted">{{ tx.currency }}</td>
-            <td class="num muted">{{ tx.display_signed_cents | amount }}</td>
+            <th class="pick"></th>
+            <th>日期</th><th>收支</th><th class="num">金额（{{ display_currency }}）</th>
+            <th>交易对方</th><th>说明</th><th>分类</th>
+            <th>账户</th><th>原币种</th><th class="num">计入合计</th><th></th>
           </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+        </thead>
+        <tbody>
+          {% for tx in rows %}
+            {% if tx.group_id %}
+              {# 合并行：金额是组内各笔的净额，本身不是一条记录，所以不能勾选、
+                 也没有「编辑」——它下面那一行才是原样的几笔。 #}
+              <tr class="row-group">
+                <td class="pick muted" title="这是合并之后的净额行，不是一条记录，所以不能勾选">合</td>
+                <td>{{ tx.occurred_at }}</td>
+                <td>
+                  {% if tx.direction == 'in' %}<span class="tag tag-in">收入</span>
+                  {% elif tx.direction == 'out' %}<span class="tag tag-out">支出</span>
+                  {% else %}<span class="tag tag-neutral">中性</span>{% endif %}
+                </td>
+                <td class="num {{ 'money-in' if tx.direction == 'in' else 'money-out' if tx.direction == 'out' else 'muted' }}">
+                  {{ tx.display_cents | amount }}
+                </td>
+                <td>{{ tx.counterparty }}</td>
+                <td>{{ tx.description }}</td>
+                <td class="muted">{{ tx.effective_category }}</td>
+                <td class="muted">{{ tx.account_name }}</td>
+                <td class="muted">{{ tx.currency }}</td>
+                <td class="num muted">{{ tx.display_signed_cents | amount }}</td>
+                <td>
+                  <button type="submit" class="link-button"
+                          formaction="{{ url_for('group_dissolve', group_id=tx.group_id) }}"
+                          formmethod="post">取消合并</button>
+                </td>
+              </tr>
+              <tr class="row-group-members">
+                <td colspan="11">
+                  <details>
+                    <summary>展开 {{ tx.member_count }} 笔（净额 {{ tx.display_cents | amount }} {{ display_currency }}）</summary>
+                    <ul class="members">
+                      {% for member in members.get(tx.group_id, []) %}
+                        <li>
+                          <span class="muted">{{ member.occurred_at }}</span>
+                          {% if member.direction == 'in' %}<span class="tag tag-in">收入</span>
+                          {% elif member.direction == 'out' %}<span class="tag tag-out">支出</span>
+                          {% else %}<span class="tag tag-neutral">中性</span>{% endif %}
+                          {# 组员显示的是**原始**金额和币种（账单上就是这么写的）；
+                             跨币种时补一个换算值，免得以为净额是拿原始数字加出来的。 #}
+                          <span class="num {{ 'money-in' if member.direction == 'in' else 'money-out' if member.direction == 'out' else 'muted' }}">{{ member.amount_cents | amount }}</span>
+                          <span class="muted">{{ member.currency }}</span>
+                          {% if member.currency != display_currency %}
+                            <span class="muted">≈ {{ member.display_cents | amount }} {{ display_currency }}</span>
+                          {% endif %}
+                          {{ member.counterparty or member.description }}
+                          {# 组内每一笔都是真记录，也能单独改；自动组被改了金额之类会解散。 #}
+                          <a class="link-button" href="{{ url_for('transaction_edit', txn_id=member.id) }}">改</a>
+                        </li>
+                      {% endfor %}
+                    </ul>
+                  </details>
+                </td>
+              </tr>
+            {% else %}
+              <tr>
+                <td class="pick">
+                  <input type="checkbox" name="txn" value="{{ tx.id }}"
+                         aria-label="选中这一笔">
+                </td>
+                <td>{{ tx.occurred_at }}</td>
+                <td>
+                  {% if tx.direction == 'in' %}<span class="tag tag-in">收入</span>
+                  {% elif tx.direction == 'out' %}<span class="tag tag-out">支出</span>
+                  {% else %}<span class="tag tag-neutral">中性</span>{% endif %}
+                </td>
+                <td class="num {{ 'money-in' if tx.direction == 'in' else 'money-out' if tx.direction == 'out' else 'muted' }}">
+                  {{ tx.display_cents | amount }}
+                </td>
+                <td>{{ tx.counterparty }}</td>
+                <td>{{ tx.description }}</td>
+                <td class="muted">
+                  {{ tx.effective_category }}
+                  {% if tx.edited_at %}<span class="tag tag-warn" title="手改过（{{ tx.edited_at }}）">已改</span>{% endif %}
+                </td>
+                <td class="muted">{{ tx.account_name }}</td>
+                <td class="muted">{{ tx.currency }}</td>
+                <td class="num muted">{{ tx.display_signed_cents | amount }}</td>
+                <td>
+                  <a class="link-button" href="{{ url_for('transaction_edit', txn_id=tx.id) }}">改</a>
+                  <button type="submit" class="link-button"
+                          formaction="{{ url_for('transaction_delete', txn_id=tx.id) }}"
+                          formmethod="post"
+                          onclick="return confirm('删掉这一笔？')">删</button>
+                </td>
+              </tr>
+            {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="bulk">
+      <span class="hint">勾选之后：</span>
+      <button type="submit" name="action" value="merge">合并所选</button>
+      <span class="hint">或把分类一起改成</span>
+      <input type="text" name="category" list="categories" placeholder="分类名" size="12">
+      <button type="submit" name="action" value="reclassify" class="button ghost">改分类</button>
+    </div>
+    <datalist id="categories">
+      {% for category in categories %}<option value="{{ category }}"></option>{% endfor %}
+    </datalist>
+  </form>
 
   {% if pages > 1 %}
     <nav class="pager">

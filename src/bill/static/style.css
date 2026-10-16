@@ -560,6 +560,146 @@ tr.row-neutral td { color: var(--muted); }
 .profile { margin-bottom: 2rem; }
 .profile h2 { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 
+/* 记一笔 / 改一笔 --------------------------------------------------- */
+
+/* 页头那一排动作（记一笔、合并组入口） */
+.actions { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin: 0.75rem 0 1.25rem; }
+.actions form { margin: 0; }
+
+.entry {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.15rem;
+  margin-bottom: 2rem;
+}
+
+/* 字段排成自适应网格：窄屏自动落成一列，不用写两套断点 */
+.entry .fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.85rem 1rem;
+}
+.entry label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.entry input,
+.entry select {
+  padding: 0.5rem 0.65rem;
+  background: #0b0d11;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font: inherit;
+  font-size: 0.9rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+.entry input:disabled { color: var(--muted); opacity: 0.8; }
+.entry .row { align-items: center; margin-top: 1.15rem; }
+
+/* 批量操作条：勾选之后的合并 / 改分类 */
+.bulk {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.85rem;
+  padding: 0.85rem 1.15rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.bulk input[type="text"] {
+  flex: 0 0 auto;
+  width: 9rem;
+}
+
+/* 勾选列钉在左边：表格横向滚动时还能勾 */
+table.data .pick {
+  position: sticky;
+  left: 0;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  width: 1%;
+  text-align: center;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+}
+table.data thead .pick { background: var(--panel-hover); z-index: 2; }
+table.data tbody tr:hover .pick { background: var(--panel-hover); }
+table.data .pick input { margin: 0; }
+
+/* 合并行：金额是净额，本身不是一条记录，用底色和上边框跟真记录分开 */
+tr.row-group td { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+tr.row-group:hover td { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+tr.row-group-members td { background: transparent; padding-top: 0; }
+tr.row-group-members details { font-size: 0.8rem; }
+tr.row-group-members summary { cursor: pointer; color: var(--muted); }
+
+/* 成员清单：列表页展开的、合并组页列出的，同一套 */
+ul.members {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+}
+ul.members li { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+ul.members .num { font-variant-numeric: tabular-nums; }
+
+/* 合并组页 ---------------------------------------------------------- */
+
+.scan {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+  margin: 1rem 0 1.5rem;
+}
+
+.groups { display: flex; flex-direction: column; gap: 1.15rem; }
+.group {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.15rem;
+}
+.group header h2 { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin: 0 0 0.25rem; }
+.group header h2 .num { font-variant-numeric: tabular-nums; }
+.group header .hint { margin: 0; }
+
+.group-edit {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 0.85rem 0 0;
+}
+.group-edit label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  flex: 1 1 12rem;
+}
+.group-edit input {
+  padding: 0.42rem 0.6rem;
+  background: #0b0d11;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font: inherit;
+  font-size: 0.85rem;
+}
+
 /* 响应式 ----------------------------------------------------------- */
 
 /* 统计块在窄屏自然折行，不用等到断点就已经能换行 */
@@ -597,4 +737,12 @@ tr.row-neutral td { color: var(--muted); }
   .dropzone { padding: 1.25rem 0.9rem; }
   .upload { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
   .paths, .chart-card { padding: 0.85rem 0.9rem; }
+
+  /* 记一笔的字段在窄屏是一列（网格本来就会落下来），操作条再摊开一点 */
+  .entry .row { align-items: stretch; flex-direction: column; }
+  .bulk { flex-direction: column; align-items: stretch; }
+  .bulk input[type="text"] { width: 100%; }
+  .group-edit { flex-direction: column; align-items: stretch; }
+  .group-edit button { width: 100%; }
+  .scan { flex-direction: column; align-items: stretch; }
 }

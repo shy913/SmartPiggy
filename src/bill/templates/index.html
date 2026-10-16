@@ -23,6 +23,10 @@
         账本覆盖 {{ coverage.first_day }} 至 {{ coverage.last_day }}，共
         {{ coverage.total }} 条记录。
       {% endif %}
+      {% if merged_groups %}
+        其中 {{ merged_groups }} 组 AA / 拼单按净额合并着算（原始记录一笔没删，
+        <a href="{{ url_for('groups_page') }}">看是哪些</a>）。
+      {% endif %}
       {{ currency_note }}
       {% if multiple_currencies %}
         还有没配汇率的币种，它们没被合并，单独列在下面。

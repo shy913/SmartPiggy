@@ -127,6 +127,58 @@ MIGRATIONS: list[list[str]] = [
         """,
         "CREATE INDEX ix_transactions_currency ON transactions(currency)",
     ],
+    [
+        # v3：手改与 AA 合并。
+        #
+        # category 是**用户改的**分类，跟账单自带的 source_category 分开存：
+        # 手改一次就把账单原文盖掉的话，原始数据就回不来了。空值回落到
+        # source_category（见 repo 里的 effective_category），所以老数据行为不变。
+        """
+        ALTER TABLE transactions
+        ADD COLUMN category TEXT NOT NULL DEFAULT ''
+        """,
+        # 只用来在界面上标「手改过」。不参与任何计算，也**不参与去重**：
+        # 编辑绝不重算 dedup_key / content_hash，否则重新导入同一份账单时
+        # 对不上指纹，会把同一笔又插一遍——账翻倍而且不报错。
+        "ALTER TABLE transactions ADD COLUMN edited_at TEXT",
+        # 这次导入顺手自动合并了几组。让人知道导入不是「只做了它说的那些事」。
+        "ALTER TABLE imports ADD COLUMN merged_count INTEGER NOT NULL DEFAULT 0",
+        """
+        CREATE TABLE tx_groups (
+          id         INTEGER PRIMARY KEY,
+          -- auto = 自动检测出来的，manual = 用户自己勾选合并的。
+          -- 分开记是因为两者语义不同：自动组合并的依据是那套等额数学，
+          -- 前提被改动就该重判；手动组是用户的断言，改一笔不撤销。
+          origin     TEXT NOT NULL CHECK (origin IN ('auto','manual')),
+          title      TEXT NOT NULL DEFAULT '',
+          category   TEXT NOT NULL DEFAULT '',
+          note       TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE tx_group_members (
+          group_id       INTEGER NOT NULL REFERENCES tx_groups(id)    ON DELETE CASCADE,
+          transaction_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+          PRIMARY KEY (group_id, transaction_id),
+          -- 一笔只能属于一个组。这条约束是「净额不会被算两遍」的唯一保证，
+          -- 也是它顺带的索引（查询组内成员全走它）。
+          UNIQUE (transaction_id)
+        )
+        """,
+        "CREATE INDEX ix_group_members_group ON tx_group_members(group_id)",
+        # 自动检测要按 occurred_at 开时间窗，而现有的索引只有 occurred_date（按天）。
+        "CREATE INDEX ix_transactions_occurred_at ON transactions(occurred_at)",
+        # 你手动取消过的自动合并，按**那笔支出**记一笔，免得下次扫描又合回来。
+        # 记「这笔支出别再自动合并」而不是「这几笔别再合成一组」：后者在后来又来
+        # 一笔还款时会换个组合冒出来，反而更难理解。你真心想合的时候手动勾一下就行。
+        """
+        CREATE TABLE tx_group_vetoes (
+          anchor_id  INTEGER PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,
+          created_at TEXT NOT NULL
+        )
+        """,
+    ],
 ]
 
 

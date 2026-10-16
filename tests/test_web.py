@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import re
 
 import pytest
 
@@ -267,3 +268,305 @@ def test_pages_are_declared_inline_and_nosniffed(client):
     response = client.get("/")
     assert response.headers["X-Content-Type-Options"] == "nosniff"
     assert response.headers["Content-Disposition"] == "inline"
+
+
+# --------------------------------------------------------------------------
+# 记一笔 / 改一笔 / 合并
+# --------------------------------------------------------------------------
+
+
+def entry_form(**overrides) -> dict[str, str]:
+    values = {
+        "occurred_at": "2026-03-01T19:00:00",
+        "direction": "out",
+        "amount": "12.30",
+        "currency": "CNY",
+        "category": "餐饮",
+        "counterparty": "海底捞",
+        "counterparty_account": "",
+        "description": "晚饭",
+        "memo": "",
+        "payment_method": "",
+        "account_name": "手动记账",
+    }
+    values.update(overrides)
+    return values
+
+
+def record(client, **values) -> None:
+    assert client.post("/transactions/new", data=entry_form(**values)).status_code == 303
+
+
+def txn_ids(client) -> list[int]:
+    """页面上能改的交易 id（普通行 + 合并组展开的成员）。
+
+    拿不到复选框的 id 时用这个：合并组本身不能勾选，组内每一笔才是真记录。
+    """
+    return [int(v) for v in re.findall(r"/transactions/(\d+)/edit", body(client.get("/transactions")))]
+
+
+def checkboxes(client) -> list[int]:
+    page = body(client.get("/transactions"))
+    return [int(value) for value in re.findall(r'name="txn" value="(\d+)"', page)]
+
+
+def aa_trio(client) -> None:
+    """记下一次三人 AA：£120 的聚餐 + 两位朋友各还 £40。
+
+    第三笔一录进来就会自动合上——所以别指望还能在页面上勾选这三笔。
+    """
+    record(client, direction="out", amount="120.00", counterparty="海底捞", category="聚餐")
+    record(
+        client, direction="in", amount="40.00", occurred_at="2026-03-01T21:00:00",
+        counterparty="小王转账", description="微信转账",
+    )
+    record(
+        client, direction="in", amount="40.00", occurred_at="2026-03-02T06:00:00",
+        counterparty="小李转账", description="微信转账",
+    )
+
+
+def couple(client) -> list[int]:
+    """两笔互不相干的支出：金额对不上任何 AA 形状，不会被自动合上。"""
+    record(client, amount="100.00", counterparty="超市")
+    record(client, amount="313.37", counterparty="书店")
+    return checkboxes(client)
+
+
+def test_empty_groups_page_renders(client):
+    html = body(client.get("/groups"))
+    assert "还没有合并组" in html
+    # 自动合并当前按什么规则跑，得写在页面上——合错了第一眼看的就是这里
+    assert "12" in html and "转账" in html
+
+
+def test_recording_a_manual_entry(client):
+    assert client.post("/transactions/new", data=entry_form()).status_code == 303
+
+    html = body(client.get("/transactions"))
+    assert "海底捞" in html and "12.30" in html
+    # 手动记的账落在自己的账户里，跟导入进来的分开
+    assert "手动记账" in html
+
+
+def test_a_bad_form_comes_back_filled_in(client):
+    response = client.post(
+        "/transactions/new", data=entry_form(occurred_at="昨天", amount="-12.30")
+    )
+    assert response.status_code == 400
+    html = body(response)
+    assert "认不出" in html and "正数" in html
+    # 填过的内容要交回去，不能让人重填一遍
+    assert "海底捞" in html
+
+
+def test_editing_a_transaction(client):
+    client.post("/transactions/new", data=entry_form())
+    page = body(client.get("/transactions"))
+    txn_id = int(re.findall(r'name="txn" value="(\d+)"', page)[0])
+
+    form_page = body(client.get(f"/transactions/{txn_id}/edit"))
+    assert "海底捞" in form_page and "2026-03-01T19:00:00" in form_page
+
+    response = client.post(
+        f"/transactions/{txn_id}/edit",
+        data=entry_form(amount="15.00", category="朋友聚餐", memo="那顿 AA"),
+    )
+    assert response.status_code == 303
+    html = body(client.get("/transactions"))
+    assert "15.00" in html and "朋友聚餐" in html and "已改" in html
+
+
+def test_editing_something_that_is_not_there_404s(client):
+    assert client.get("/transactions/999/edit").status_code == 404
+    assert client.post("/transactions/999/edit", data=entry_form()).status_code == 404
+    assert client.post("/transactions/999/delete").status_code == 404
+
+
+def test_deleting_a_transaction(client):
+    client.post("/transactions/new", data=entry_form())
+    txn_id = int(re.findall(r'name="txn" value="(\d+)"', body(client.get("/transactions")))[0])
+
+    assert client.post(f"/transactions/{txn_id}/delete").status_code == 303
+    assert "没有符合条件的记录" in body(client.get("/transactions"))
+
+
+def test_bulk_reclassify(client):
+    ids = couple(client)
+    response = client.post(
+        "/transactions/bulk", data={"action": "reclassify", "txn": ids, "category": "朋友聚会"}
+    )
+    assert response.status_code == 303
+    assert "朋友聚会" in body(client.get("/transactions"))
+    assert "朋友聚会" in body(client.get("/summary"))
+
+
+def test_bulk_merge_and_dissolve(client):
+    ids = couple(client)
+    response = client.post("/transactions/bulk", data={"action": "merge", "txn": ids})
+    assert response.status_code == 303
+
+    html = body(client.get("/transactions"))
+    assert "取消合并" in html and "展开 2 笔" in html
+    # 100 和 313.37 合成一行，净额 -413.37
+    assert "413.37" in html
+
+    group_id = int(re.findall(r"/groups/(\d+)/dissolve", body(client.get("/groups")))[0])
+    assert client.post(f"/groups/{group_id}/dissolve").status_code == 303
+    assert "取消合并" not in body(client.get("/transactions"))
+    assert checkboxes(client) == ids, "取消合并之后三笔都回到列表里"
+
+
+def test_bulk_actions_need_a_selection(client):
+    couple(client)
+    response = client.post("/transactions/bulk", data={"action": "merge"})
+    assert response.status_code == 303
+    assert "先在左边勾选几笔" in body(client.get(response.headers["Location"]))
+
+
+def test_merging_something_already_merged_says_so(client):
+    ids = couple(client)
+    client.post("/transactions/bulk", data={"action": "merge", "txn": ids})
+    response = client.post("/transactions/bulk", data={"action": "merge", "txn": ids})
+    # 失败会带着原因回到列表页，而不是静默什么都不做
+    assert "已经在别的合并组里" in body(client.get(response.headers["Location"]))
+
+
+def test_the_auto_merge_is_visible_and_reversible(client):
+    """自动合上的那一组，页面上要看得出来、汇总要跟着净额走、取消要能撤销。"""
+    aa_trio(client)
+    html = body(client.get("/transactions"))
+    assert "取消合并" in html and "展开 3 笔" in html
+
+    # 花出去 120、收回来 80：实际只花了 40，收入也不虚增
+    assert "40.00" in body(client.get("/"))
+    assert "80.00" not in body(client.get("/summary"))
+
+    group_id = int(re.findall(r"/groups/(\d+)/dissolve", body(client.get("/groups")))[0])
+    assert client.post(f"/groups/{group_id}/dissolve").status_code == 303
+    assert "取消合并" not in body(client.get("/transactions"))
+    assert "120.00" in body(client.get("/")), "散开之后又回到 120 的支出"
+
+
+def test_group_rows_never_become_negative_transaction_urls(client):
+    """合成行的 id 是负值哨兵，Werkzeug 的 <int:> 不收负数——模板里必须按
+    group_id 分支，不然会生成 /transactions/-1 这种一点就 404 的链接。"""
+    aa_trio(client)
+    html = body(client.get("/transactions"))
+    assert "/transactions/-" not in html
+    assert "/groups/" in html
+
+
+def test_importing_an_aa_shape_merges_it_right_away(client):
+    """导入时就该认出 AA，不用人管。"""
+    response = upload(
+        client,
+        bank_csv(
+            [
+                ["20260201", "聚餐", "海底捞", "-120.00", "1000.00"],
+                ["20260201", "转账", "小王转账", "+40.00", "1040.00"],
+                ["20260201", "转账", "小李转账", "+40.00", "1080.00"],
+            ]
+        ),
+        "银行.csv",
+    )
+    confirmed = client.post(f"/import/{token_of(response)}/confirm")
+    assert confirmed.status_code == 303
+
+    detail = body(client.get(confirmed.headers["Location"]))
+    assert "顺手合并" in detail, "导入详情要说清它顺手做了什么"
+    # 但这一页仍然逐条列原始行：它回答的是「这个文件带进来什么」
+    assert "海底捞" in detail
+    assert "取消合并" in body(client.get("/transactions"))
+
+
+def test_scanning_finds_aa_among_existing_records(client):
+    """功能上线前就记好的账，靠「重新扫描」补上。"""
+    record(client, direction="out", amount="120.00")
+    record(
+        client, direction="in", amount="40.00", occurred_at="2026-03-01T20:00:00",
+        counterparty="小王转账",
+    )
+    # 只还了三分之一：一个人还在还钱，但凑不出「每人一份」的形状
+    assert "取消合并" not in body(client.get("/transactions"))
+
+    # 第二个人也还了一份，这笔一录进来就该合上
+    record(
+        client, direction="in", amount="40.00", occurred_at="2026-03-01T21:00:00",
+        counterparty="小李转账",
+    )
+    assert "取消合并" in body(client.get("/transactions"))
+
+    # 手动取消之后就别再自己回来——这正是那张否决表存在的理由
+    group_id = int(re.findall(r"/groups/(\d+)/dissolve", body(client.get("/groups")))[0])
+    assert client.post(f"/groups/{group_id}/dissolve").status_code == 303
+    assert client.post("/groups/scan").status_code == 303
+    assert "取消合并" not in body(client.get("/transactions"))
+
+
+def test_group_edit_shows_up_in_the_list(client):
+    aa_trio(client)
+    group_id = int(re.findall(r"/groups/(\d+)/dissolve", body(client.get("/groups")))[0])
+
+    response = client.post(
+        f"/groups/{group_id}/edit",
+        data={"title": "上个月的聚餐", "category": "社交", "note": "三个人"},
+    )
+    assert response.status_code == 303
+    html = body(client.get("/groups"))
+    assert "上个月的聚餐" in html and "社交" in html
+    assert "上个月的聚餐" in body(client.get("/transactions"))
+
+
+def test_editing_an_auto_group_member_dissolves_it(client):
+    aa_trio(client)
+    assert "取消合并" in body(client.get("/transactions"))
+    # 组里那笔 £120 的支出
+    anchor = max(txn_ids(client))
+
+    response = client.post(
+        f"/transactions/{anchor}/edit",
+        data=entry_form(direction="out", amount="119.00", counterparty="海底捞"),
+    )
+    assert response.status_code == 303
+    assert "取消合并" not in body(client.get("/transactions"))
+
+
+def test_dissolving_something_that_is_not_there_404s(client):
+    assert client.post("/groups/999/dissolve").status_code == 404
+
+
+def test_group_members_can_be_edited_from_the_list(client):
+    """合成行本身不能改（它不是一条记录），但组里每一笔都能单独改。"""
+    aa_trio(client)
+    html = body(client.get("/transactions"))
+    for txn_id in txn_ids(client):
+        assert f"/transactions/{txn_id}/edit" in html
+
+
+def test_cross_currency_group_shows_both_amounts(client, isolated_data_dir):
+    """跨币种的组员必须同时看得见原始金额和换算值。
+
+    只写换算后的数字、币种却标着原币种，就成了「¥27.75」——数字对不上账单，
+    而那正好是净额算出来的来源。原始金额是账单上写的那个，两个都给出来。
+    """
+    (isolated_data_dir / "settings.toml").write_text(
+        'timezone = "Europe/London"\n\n[currency]\ndisplay = "GBP"\nrates = { CNY = 8.9 }\n',
+        encoding="utf-8",
+    )
+    record(
+        client, direction="out", amount="55.40", currency="GBP",
+        counterparty="Happy Lamb Hotpot", category="餐饮",
+    )
+    record(
+        client, direction="in", amount="247.00", currency="CNY",
+        occurred_at="2026-03-01T21:00:00", counterparty="龚必勋", description="微信转账",
+    )
+
+    html = body(client.get("/transactions"))
+    assert "取消合并" in html
+    assert "247.00" in html and "CNY" in html
+    assert "≈ 27.75 GBP" in html
+    # 净额 = 55.40 − 27.75
+    assert "27.65" in html
+    assert "27.65" in body(client.get("/groups"))

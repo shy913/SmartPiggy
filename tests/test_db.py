@@ -37,6 +37,63 @@ def test_init_db_is_idempotent(conn):
     assert conn.execute("PRAGMA user_version").fetchone()[0] == len(db.MIGRATIONS)
 
 
+def test_upgrading_an_old_ledger_keeps_the_data(tmp_path):
+    """从上一版的库升上来：老记录一笔不动，新加的列有合理的默认值。
+
+    这是真实路径——已经记了几个月的人下个版本一起就是走这里，而 ALTER TABLE
+    是在**有数据**的表上加列，跟建新库不是一回事。
+    """
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    for statement in db.MIGRATIONS[0] + db.MIGRATIONS[1]:  # 只跑到 v2
+        old.execute(statement)
+    old.execute("PRAGMA user_version = 2")
+    old.execute(
+        "INSERT INTO accounts (name, kind, created_at) VALUES ('支付宝', 'alipay', '2026-01-01')"
+    )
+    old.execute(
+        "INSERT INTO imports (account_id, profile_name, filename, file_sha256,"
+        " size_bytes, uploaded_at, row_count) VALUES (1, 'alipay', 'a.csv', 's', 1,"
+        " '2026-01-01', 1)"
+    )
+    old.execute(
+        """
+        INSERT INTO transactions (
+          account_id, import_id, occurred_at, occurred_date, direction, amount_cents,
+          currency, source_category, dedup_key, content_hash, created_at
+        ) VALUES (1, 1, '2026-01-05 12:30:45', '2026-01-05', 'out', 3250,
+                  'CNY', '餐饮', 'id:A', 'hA', '2026-01-01')
+        """
+    )
+    old.commit()
+    old.close()
+
+    connection = db.connect(path)
+    assert db.init_db(connection) == len(db.MIGRATIONS)
+    connection.close()
+
+    connection = db.connect(path)
+    row = repo.list_transactions(connection)[0]
+    assert row["amount_cents"] == 3250
+    assert row["category"] == "", "老记录没手改过分类"
+    assert row["effective_category"] == "餐饮", "空值要回落到账单自带的分类"
+    assert row["edited_at"] is None
+    assert row["group_id"] is None
+    # 合并组、编辑、统计这些新东西在升上来的库上照样能用
+    with connection:
+        txn_id = connection.execute(
+            "INSERT INTO transactions (account_id, occurred_at, occurred_date,"
+            " direction, amount_cents, currency, counterparty, dedup_key,"
+            " content_hash, created_at) VALUES (1, '2026-01-05 13:30:45', '2026-01-05',"
+            " 'in', 1625, 'CNY', '小王转账', 'k2', 'h2', '2026-01-01')"
+        ).lastrowid
+        repo.create_group(connection, origin="manual", transaction_ids=[row["id"], txn_id])
+    assert repo.list_transactions(connection)[0]["display_cents"] == 1625
+    connection.close()
+
+
 def test_ensure_account_is_idempotent(conn):
     first = repo.ensure_account(conn, "支付宝", "alipay")
     assert repo.ensure_account(conn, "支付宝", "alipay") == first

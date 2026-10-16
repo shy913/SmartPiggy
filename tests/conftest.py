@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from bill import db, ingest
+from bill import db, ingest, repo
+from bill.models import Transaction
 
 
 @pytest.fixture(autouse=True)
@@ -40,6 +41,46 @@ def conn():
     db.init_db(connection)
     yield connection
     connection.close()
+
+
+@pytest.fixture
+def book(conn):
+    """往账本里塞几笔的快捷方式：``book([{...}, {...}]) -> [id, ...]``。
+
+    走的是手动记账那条 insert（比拼 ParsedRow 短，也顺手覆盖了它），测的是
+    「记录进来之后怎么算」，不是解析——解析那边有 factories.py。
+
+    每一项是一个 dict，字段同 ``Transaction``（``direction`` / ``amount_cents`` /
+    ``occurred_at`` / ``currency`` / ``counterparty`` / ``description`` /
+    ``source_category`` …），另加两个只在这里用的键：``account``（账户名，默认
+    「支付宝」）和 ``category``（手改的分类）。
+    """
+    accounts: dict[str, int] = {}
+
+    def account_id(name: str) -> int:
+        if name not in accounts:
+            accounts[name] = repo.ensure_account(conn, name, "other")
+        return accounts[name]
+
+    def seed(rows):
+        ids = []
+        for row in rows:
+            fields = dict(row)
+            category = fields.pop("category", "")
+            where = account_id(fields.pop("account", "支付宝"))
+            fields.setdefault("occurred_at", "2026-01-05 12:30:45")
+            ids.append(
+                repo.insert_manual_transaction(
+                    conn,
+                    account_id=where,
+                    transaction=Transaction(**fields),
+                    category=category,
+                )
+            )
+        conn.commit()
+        return ids
+
+    return seed
 
 
 @pytest.fixture

@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .errors import BillError
 
-__all__ = ["DEFAULT_FORMATS", "convert_timezone", "parse_datetime", "zone"]
+__all__ = ["DEFAULT_FORMATS", "convert_timezone", "parse_datetime", "shift", "zone"]
 
 DEFAULT_FORMATS = (
     "%Y-%m-%d %H:%M:%S",
@@ -62,6 +62,20 @@ def parse_datetime(
         return f"{serial.strftime('%Y-%m-%d')} {default_time}"
 
     return None
+
+
+def shift(moment: str, *, hours: float) -> str | None:
+    """把 ``'YYYY-MM-DD HH:MM:SS'`` 挪几个小时。
+
+    给「前后各扩一个时间窗」这类范围计算用（AA 检测要往外放宽一个窗口，
+    才能看到支出之后才到账的那几笔）。认不出来就返回 None——宁可不给范围，
+    也不要给一个算错的。
+    """
+    try:
+        moved = datetime.strptime(moment, "%Y-%m-%d %H:%M:%S") + timedelta(hours=hours)
+    except (TypeError, ValueError):
+        return None
+    return moved.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def zone(name: str) -> ZoneInfo:

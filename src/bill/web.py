@@ -21,7 +21,7 @@ from flask import (
     url_for,
 )
 
-from . import charts, config, db, ingest, repo, settings
+from . import charts, config, dates, db, entry, ingest, repo, settings
 from .errors import BillError, ProfileError, UploadError
 from .money import format_amount
 from .profiles import load_all, validate
@@ -43,6 +43,31 @@ def current_month() -> str:
 
 def uptime_seconds() -> int:
     return int((datetime.now(timezone.utc) - _started_at).total_seconds())
+
+
+def _as_int(value: str) -> int | None:
+    """表单里来的 id。认不出来就当没有——勾选列表本来就可能被改坏。"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _autodetect_around(connection, conf, moment: str) -> int:
+    """手动记一笔之后，顺手看一眼这附近有没有 AA。
+
+    手工补的账跟导入进来的一样该合并：补了一笔替朋友垫的支出，又把朋友的还款
+    补上，那就是一次 AA。范围只在那一笔前后各一个窗口，不扫全库——手动记一笔
+    不该顺带把整个账本重算一遍。
+    """
+    if not conf.merge_enabled or not moment:
+        return 0
+    reach = conf.merge_window_hours
+    return repo.autodetect(
+        connection,
+        since=dates.shift(moment, hours=-reach),
+        until=dates.shift(moment, hours=reach),
+    )
 
 
 def create_app() -> Flask:
@@ -98,6 +123,7 @@ def create_app() -> Flask:
             currencies=currencies,
             multiple_currencies=len(currencies) > 1,
             coverage=repo.coverage(connection),
+            merged_groups=repo.count_groups(connection),
             imports=repo.list_imports(connection, 5),
             uptime=uptime_seconds(),
         )
@@ -216,6 +242,19 @@ def create_app() -> Flask:
 
     # ---------------------------------------------------------------- 账目
 
+    def back_to_list(**extra):
+        """回到列表页，把原来的筛选条件带上。
+
+        只看表单里的那几个筛选字段，不接受整串查询串——省得redirect的落点
+        被 URL 里的东西牵着走。
+        """
+        still = {
+            name: value
+            for name in ("month", "direction", "account", "q", "page")
+            if (value := (request.form.get(name) or "").strip())
+        }
+        return go("transactions", **still, **extra)
+
     @app.get("/transactions")
     def transactions():
         connection = get_conn()
@@ -241,14 +280,26 @@ def create_app() -> Flask:
             limit=PAGE_SIZE,
             offset=(page - 1) * PAGE_SIZE,
         )
+        # 合并行只带锚点那一笔的文字，要看全组成员得另外取——而且只取这一页
+        # 用得到的那些组。
+        members: dict[int, list] = {}
+        for member in repo.group_members(
+            connection, [row["group_id"] for row in rows if row["group_id"]]
+        ):
+            members.setdefault(member["group_id"], []).append(member)
+
         return render_template(
             "transactions.html",
             display_currency=settings.load().display_currency,
             rows=rows,
+            members=members,
+            group_count=repo.count_groups(connection),
             accounts=repo.accounts(connection),
+            categories=repo.transaction_categories(connection),
             total=total,
             page=page,
             pages=max((total + PAGE_SIZE - 1) // PAGE_SIZE, 1),
+            error=(request.args.get("error") or "").strip() or None,
             filters={
                 "month": month,
                 "direction": direction,
@@ -256,6 +307,166 @@ def create_app() -> Flask:
                 "q": search,
             },
         )
+
+    @app.post("/transactions/bulk")
+    def transactions_bulk():
+        """勾选之后的两件事：合并成一组，或者把分类一起改掉。"""
+        connection = get_conn()
+        action = (request.form.get("action") or "").strip()
+        ids = [value for value in map(_as_int, request.form.getlist("txn")) if value]
+        if not ids:
+            return back_to_list(error="先在左边勾选几笔。")
+
+        if action == "merge":
+            try:
+                with connection:
+                    repo.create_group(connection, origin="manual", transaction_ids=ids)
+            except BillError as error:
+                return back_to_list(error=str(error))
+            # 合完直接去合并组页：那一页能看见合成了什么、净额多少，也能一键取消。
+            return go("groups_page")
+
+        if action == "reclassify":
+            category = (request.form.get("category") or "").strip()
+            with connection:
+                repo.reclassify(connection, ids, category)
+            return back_to_list()
+
+        return back_to_list(error="认不出这个操作。")
+
+    # ---------------------------------------------------------------- 记一笔 / 改一笔
+
+    def entry_page(*, values, errors, transaction=None, status: int = 200):
+        connection = get_conn()
+        return (
+            render_template(
+                "transaction_form.html",
+                values=values,
+                errors=errors,
+                transaction=transaction,
+                accounts=repo.accounts(connection),
+                currencies=repo.transaction_currencies(connection),
+                categories=repo.transaction_categories(connection),
+                display_currency=settings.load().display_currency,
+            ),
+            status,
+        )
+
+    @app.get("/transactions/new")
+    def transaction_new():
+        return entry_page(
+            values=entry.blank(settings.load().display_currency), errors=[]
+        )
+
+    @app.post("/transactions/new")
+    def transaction_create():
+        connection = get_conn()
+        conf = settings.load()
+        draft = entry.read(request.form, display_currency=conf.display_currency)
+        if not draft.ok:
+            # 校验没过就原样把填过的内容交回去，不让人重填一遍。
+            return entry_page(values=dict(request.form), errors=draft.errors, status=400)
+
+        with connection:
+            account_id = repo.ensure_account(connection, draft.account_name, "manual")
+            repo.insert_manual_transaction(
+                connection,
+                account_id=account_id,
+                transaction=draft.transaction(),
+                category=draft.category,
+            )
+            _autodetect_around(connection, conf, draft.occurred_at)
+        return go("transactions", month=draft.month)
+
+    @app.get("/transactions/<int:txn_id>/edit")
+    def transaction_edit(txn_id: int):
+        connection = get_conn()
+        row = repo.get_transaction(connection, txn_id)
+        if row is None:
+            abort(404)
+        return entry_page(values=entry.from_row(row), errors=[], transaction=row)
+
+    @app.post("/transactions/<int:txn_id>/edit")
+    def transaction_update(txn_id: int):
+        connection = get_conn()
+        row = repo.get_transaction(connection, txn_id)
+        if row is None:
+            abort(404)
+        draft = entry.read(
+            request.form, display_currency=settings.load().display_currency
+        )
+        if not draft.ok:
+            return entry_page(
+                values=dict(request.form),
+                errors=draft.errors,
+                transaction=row,
+                status=400,
+            )
+
+        with connection:
+            repo.update_transaction(connection, txn_id, draft.fields())
+        return go("transactions", month=draft.month)
+
+    @app.post("/transactions/<int:txn_id>/delete")
+    def transaction_delete(txn_id: int):
+        connection = get_conn()
+        with connection:
+            if not repo.delete_transaction(connection, txn_id):
+                abort(404)
+        return back_to_list()
+
+    # ---------------------------------------------------------------- 合并组
+
+    @app.get("/groups")
+    def groups_page():
+        connection = get_conn()
+        conf = settings.load()
+        found = repo.list_groups(connection)
+        members: dict[int, list] = {}
+        for member in repo.group_members(connection, [row["id"] for row in found]):
+            members.setdefault(member["group_id"], []).append(member)
+        return render_template(
+            "groups.html",
+            groups=found,
+            members=members,
+            created=request.args.get("created", type=int),
+            display_currency=conf.display_currency,
+            merge_note=conf.describe_merge(),
+            merge_enabled=conf.merge_enabled,
+        )
+
+    @app.post("/groups/scan")
+    def groups_scan():
+        """把整个账本重新扫一遍。
+
+        给「功能上线之前就记了几个月」的账本补检测用的；平时导入时会自动扫，
+        不用来这儿手点。
+        """
+        connection = get_conn()
+        with connection:
+            created = repo.autodetect(connection)
+        return go("groups_page", created=created)
+
+    @app.post("/groups/<int:group_id>/dissolve")
+    def group_dissolve(group_id: int):
+        connection = get_conn()
+        with connection:
+            if not repo.dissolve_group(connection, group_id, veto=True):
+                abort(404)
+        return go("groups_page")
+
+    @app.post("/groups/<int:group_id>/edit")
+    def group_update(group_id: int):
+        connection = get_conn()
+        with connection:
+            repo.update_group(
+                connection,
+                group_id,
+                title=(request.form.get("title") or "").strip(),
+                category=(request.form.get("category") or "").strip(),
+                note=(request.form.get("note") or "").strip(),
+            )
+        return go("groups_page")
 
     @app.get("/summary")
     def summary():

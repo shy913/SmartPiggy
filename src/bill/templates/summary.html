@@ -50,7 +50,7 @@
     </div>
 
     <div class="chart-card">
-      <h4>支出构成 <span class="muted">账单自带的分类 · {{ group.display_currency }}</span></h4>
+      <h4>支出构成 <span class="muted">按分类 · {{ group.display_currency }}</span></h4>
       {{ group.categories }}
     </div>
   {% endfor %}
@@ -90,10 +90,11 @@
 </section>
 
 <section>
-  <h2>按账单自带的分类</h2>
+  <h2>按分类</h2>
   <p class="hint">
-    这是账单文件里「交易分类 / 交易类型」那一列的原值（Monzo 用它的 Category），
-    直接照用。没有分类列的账单（微信）归在「未分类」。
+    默认用账单文件里「交易分类 / 交易类型」那一列的原值（Monzo 用它的 Category）。
+    没有分类列的账单（微信）归在「未分类」——在<a href="{{ url_for('transactions') }}">交易记录</a>页
+    可以把它们手改成你要的分类（勾选几笔一起改也行），这里跟着变。
   </p>
   {% if categories %}
     <div class="table-scroll">

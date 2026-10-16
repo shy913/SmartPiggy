@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}记账 — 合并组{% endblock %}
+
+{% block content %}
+<p class="breadcrumb"><a href="{{ url_for('transactions') }}">← 回到交易记录</a></p>
+
+<h1>合并组</h1>
+
+<p class="hint">
+  AA / 拼单：一笔支出加上之后跟着来的几笔等额转入，合并成一行按 <strong>净额</strong> 算。
+  原始记录一笔都没改——这里取消合并，它们就原样回到列表里。
+</p>
+<p class="hint">{{ merge_note }}</p>
+
+{% if created is not none %}
+  <p class="hint">
+    {% if created %}刚扫出 {{ created }} 组新的。{% else %}扫完了，没有新的组合。{% endif %}
+  </p>
+{% endif %}
+
+<form method="post" action="{{ url_for('groups_scan') }}" class="scan">
+  <button type="submit">重新扫描整个账本</button>
+  <span class="hint">
+    {% if merge_enabled %}
+      平时导入时会自动扫，这一下是给以前就记好的账补上，或者改了汇率/窗口之后重算。
+    {% else %}
+      设置里关掉了自动合并，这一下只按你现在的规则扫一遍，不会改变「以后导入不再自动合并」。
+    {% endif %}
+  </span>
+</form>
+
+{% if groups %}
+  <div class="groups">
+    {% for group in groups %}
+      <section class="group">
+        <header>
+          <h2>
+            {% if group.net_cents < 0 %}<span class="tag tag-out">支出</span>
+            {% elif group.net_cents > 0 %}<span class="tag tag-in">收入</span>
+            {% else %}<span class="tag tag-neutral">中性</span>{% endif %}
+            <span class="num">{{ group.net_cents | abs | amount }}</span> {{ display_currency }}
+          </h2>
+          <p class="hint">
+            {{ group.first_at[:10] }} ·
+            {{ group.member_count }} 笔 ·
+            {% if group.origin == 'auto' %}自动合并{% else %}手动合并{% endif %}
+            {% if group.currency_count > 1 %}· 跨 {{ group.currency_count }} 种币种，按显示汇率折算{% endif %}
+          </p>
+        </header>
+
+        <ul class="members">
+          {% for member in members.get(group.id, []) %}
+            <li>
+              <span class="muted">{{ member.occurred_at }}</span>
+              {% if member.direction == 'in' %}<span class="tag tag-in">收入</span>
+              {% elif member.direction == 'out' %}<span class="tag tag-out">支出</span>
+              {% else %}<span class="tag tag-neutral">中性</span>{% endif %}
+              {# 原始金额 + 原币种：账单上就是这么写的。跨币种时补一个换算值，
+                 净额是按换算后的数字算的，这一点得看得见。 #}
+              <span class="num {{ 'money-in' if member.direction == 'in' else 'money-out' if member.direction == 'out' else 'muted' }}">{{ member.amount_cents | amount }}</span>
+              <span class="muted">{{ member.currency }}</span>
+              {% if member.currency != display_currency %}
+                <span class="muted">≈ {{ member.display_cents | amount }} {{ display_currency }}</span>
+              {% endif %}
+              {{ member.counterparty or member.description }}
+              <a class="link-button" href="{{ url_for('transaction_edit', txn_id=member.id) }}">改</a>
+            </li>
+          {% endfor %}
+        </ul>
+
+        <form class="group-edit" method="post"
+              action="{{ url_for('group_update', group_id=group.id) }}">
+          <label>标题 <input type="text" name="title" value="{{ group.title }}" placeholder="留空就用那笔支出的对方"></label>
+          <label>分类 <input type="text" name="category" value="{{ group.category }}" placeholder="留空就用那笔支出的分类"></label>
+          <label>备注 <input type="text" name="note" value="{{ group.note }}"></label>
+          <button type="submit" class="button ghost">保存</button>
+        </form>
+
+        <div class="actions">
+          {# 合成行落在组内最早那一笔的月份上，所以按那个月去列表里找就行。 #}
+          <a class="button ghost" href="{{ url_for('transactions', month=group.first_at[:7]) }}">在列表里看这一行</a>
+          <form method="post" action="{{ url_for('group_dissolve', group_id=group.id) }}"
+                onsubmit="return confirm('取消这一组合并？原始记录一笔都不会删。')">
+            <button type="submit" class="button ghost">取消合并</button>
+          </form>
+        </div>
+      </section>
+    {% endfor %}
+  </div>
+{% else %}
+  <p class="empty">
+    还没有合并组。导入一份账单，或者点上面的「重新扫描整个账本」看看有没有
+    符合 AA 形状的组合。
+  </p>
+{% endif %}
+{% endblock %}

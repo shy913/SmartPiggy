@@ -15,7 +15,7 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 
-from . import config, dedup, repo, settings
+from . import config, dates, dedup, repo, settings
 from .errors import BillError, ProfileError
 from .importer import parse
 from .models import ImportPlan
@@ -349,6 +349,22 @@ def confirm(connection: sqlite3.Connection, token: str) -> int:
         )
 
         repo.save_issues(connection, import_id, plan.issues)
+
+        # AA 合并的自动检测放在同一个事务里：要么「导入 + 合并」一起成功，
+        # 要么都不发生，不会留下导进来了却没检测的半截状态。
+        #
+        # 范围往外放宽一个窗口：判定一笔支出是不是 AA，要用到它**之后**的收款，
+        # 而那份收款可能不在这份文件里（上一份导过）或刚好落在文件末尾之后。
+        merged = 0
+        conf = settings.load()
+        if conf.merge_enabled and coverage_start and coverage_end:
+            reach = conf.merge_window_hours
+            merged = repo.autodetect(
+                connection,
+                since=dates.shift(coverage_start, hours=-reach),
+                until=dates.shift(coverage_end, hours=reach),
+            )
+
         repo.finalize_import(
             connection,
             import_id,
@@ -356,6 +372,7 @@ def confirm(connection: sqlite3.Connection, token: str) -> int:
             duplicates=duplicates,
             errors=sum(1 for issue in plan.issues if issue.level == "error"),
             warnings=sum(1 for issue in plan.issues if issue.level == "warning"),
+            merged=merged,
         )
 
     store.drop(token)

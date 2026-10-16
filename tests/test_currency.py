@@ -145,3 +145,60 @@ def test_bad_settings_are_reported_not_ignored(isolated_data_dir, body, fragment
     write_settings(isolated_data_dir, body)
     with pytest.raises(BillError, match=fragment):
         settings.load().factors()
+
+
+# --------------------------------------------------------------------------
+# [merge]：自动合并的参数
+# --------------------------------------------------------------------------
+
+
+def test_missing_merge_section_keeps_the_defaults(isolated_data_dir):
+    """只写了汇率的那份设置里，[merge] 的每一项都得落到默认值上。
+
+    这里最容易出的错是「没写」被当成「写了个空的」：那一来关键词过滤会悄悄
+    关掉，自动合并比内置默认激进得多，而屏幕上什么都看不出来。
+    """
+    (isolated_data_dir / "settings.toml").unlink()  # 用内置那份
+    conf = settings.load()
+    assert conf.merge_enabled is True
+    assert conf.merge_window_hours == 12
+    assert conf.tolerance_cents() == 50
+    assert conf.merge_keywords == settings.DEFAULT_KEYWORDS
+
+
+def test_the_builtin_file_lists_the_same_keywords(isolated_data_dir):
+    """内置 settings.toml 里那份词表必须跟代码里的默认值一致。
+
+    覆盖了内置文件的用户（自己那份没写 [merge]）拿到的是代码里的默认值，
+    两处不一致就会出现「改了文件、行为却没变」这种最难查的毛病。
+    跟 CSS 和 charts.py 里那对颜色是同一类问题。
+    """
+    (isolated_data_dir / "settings.toml").unlink()
+    assert settings.load().merge_keywords == settings.DEFAULT_KEYWORDS
+
+
+def test_keywords_can_be_turned_off_on_purpose(isolated_data_dir):
+    """显式写空列表是「我知道我在关掉这道过滤」，跟缺省不是一回事。"""
+    write_settings(isolated_data_dir, '[merge]\nkeywords = []\n')
+    assert settings.load().merge_keywords == ()
+
+
+def test_bad_merge_settings_are_reported(isolated_data_dir):
+    for body, fragment in (
+        ("[merge]\nwindow_hours = 0\n", "窗口"),
+        ("[merge]\nwindow_hours = -1\n", "窗口"),
+        ("[merge]\ntolerance = -0.1\n", "容差"),
+    ):
+        write_settings(isolated_data_dir, body)
+        with pytest.raises(BillError, match=fragment):
+            settings.load()
+
+
+def test_describe_merge_says_what_is_on(isolated_data_dir):
+    """合并结果不对劲时，页面上那句话要能解释清楚现在按什么规则跑。"""
+    (isolated_data_dir / "settings.toml").unlink()  # 用内置那份（GBP、12 小时）
+    note = settings.load().describe_merge()
+    assert "12" in note and "0.5" in note and "转账" in note
+
+    write_settings(isolated_data_dir, "[merge]\nenabled = false\n")
+    assert "不再自动合并" in settings.load().describe_merge()
