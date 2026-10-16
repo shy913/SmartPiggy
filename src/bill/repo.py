@@ -29,6 +29,7 @@ __all__ = [
     "get_import",
     "imports_overlapping",
     "insert_rows",
+    "large_transactions",
     "latest_month",
     "list_imports",
     "list_transactions",
@@ -379,13 +380,54 @@ def _amount_in_display(conf, prefix: str = "", column: str = "amount_cents") -> 
     return f"CASE {prefix}currency {cases} ELSE {prefix}{column} END"
 
 
+def _comparable(conf, prefix: str = "") -> str:
+    """这一行的金额能不能跟阈值比大小。
+
+    只有换算得到显示币种的行才比得了。没配汇率的币种，金额还是它**自己**那个
+    币种的最小单位，拿显示币种的阈值去比没有意义——而且会得出一个不报错的错数，
+    正是这个项目最忌讳的那类错。所以这类行一律判为「不是大额」。
+    """
+    return f"{_group_by_display(conf, prefix)} = '{conf.display_currency}'"
+
+
+def _is_large(conf, prefix: str = "") -> str:
+    """这一行算不算「大额」。**永远产出 0 或 1，绝不产出 NULL。**
+
+    外面多包一层 CASE 不是啰嗦：`NOT NULL` 求值还是 NULL，而 `CASE WHEN NULL`
+    走不到 THEN——那一行就会被静默踢出合计。写死成 0/1 之后，链路上将来哪一列
+    变成可空，最坏也只是判错一笔，不会整批钱不声不响地消失。
+
+    调用处当布尔用就行：`AND {_is_large(...)}` 或 `AND NOT {_is_large(...)}`。
+    """
+    amount = _amount_in_display(conf, prefix)
+    sides = []
+    if conf.large_out_cents:
+        sides.append(f"({prefix}direction = 'out' AND {amount} >= {conf.large_out_cents})")
+    if conf.large_in_cents:
+        sides.append(f"({prefix}direction = 'in' AND {amount} >= {conf.large_in_cents})")
+    if not sides:
+        # 两侧都关掉。这里**必须**返回一个字面量：返回空串会让调用处拼出
+        # 「AND NOT ()」，是个语法错，整个汇总页直接 500。
+        return "0"
+    return (
+        f"(CASE WHEN {_comparable(conf, prefix)} AND ({' OR '.join(sides)})"
+        f" THEN 1 ELSE 0 END)"
+    )
+
+
 def _totals(conf, prefix: str = "") -> str:
     amount = _amount_in_display(conf, prefix)
+    large = _is_large(conf, prefix)
+    # 大额行仍然算进 total / 中性笔数（它们确实在账本里），但不进金额——
+    # 中性行早就是这个待遇了，条数描述的是账本，金额描述的是「日常水平」。
     return f"""
-    COALESCE(SUM(CASE WHEN {prefix}direction = 'in'  THEN {amount} END), 0) AS income,
-    COALESCE(SUM(CASE WHEN {prefix}direction = 'out' THEN {amount} END), 0) AS expense,
+    COALESCE(SUM(CASE WHEN {prefix}direction = 'in'  AND NOT {large} THEN {amount} END), 0) AS income,
+    COALESCE(SUM(CASE WHEN {prefix}direction = 'out' AND NOT {large} THEN {amount} END), 0) AS expense,
     COALESCE(SUM(CASE WHEN {prefix}direction = 'neutral' THEN {amount} END), 0) AS neutral_amount,
     COALESCE(SUM(CASE WHEN {prefix}direction = 'neutral' THEN 1 ELSE 0 END), 0) AS neutral_count,
+    COALESCE(SUM(CASE WHEN {prefix}direction = 'in'  AND {large} THEN {amount} END), 0) AS large_income,
+    COALESCE(SUM(CASE WHEN {prefix}direction = 'out' AND {large} THEN {amount} END), 0) AS large_expense,
+    COALESCE(SUM({large}), 0) AS large_count,
     COUNT(*) AS total
     """
 
@@ -436,12 +478,13 @@ def currencies(connection: sqlite3.Connection) -> list[str]:
 def by_month(connection: sqlite3.Connection, limit: int = 60) -> list[sqlite3.Row]:
     conf = settings.load()
     amount = _amount_in_display(conf)
+    large = _is_large(conf)
     return connection.execute(
         f"""
         SELECT substr(occurred_date, 1, 7) AS month,
                {_group_by_display(conf)} AS display_currency,
-               COALESCE(SUM(CASE WHEN direction = 'in'  THEN {amount} END), 0) AS income,
-               COALESCE(SUM(CASE WHEN direction = 'out' THEN {amount} END), 0) AS expense,
+               COALESCE(SUM(CASE WHEN direction = 'in'  AND NOT {large} THEN {amount} END), 0) AS income,
+               COALESCE(SUM(CASE WHEN direction = 'out' AND NOT {large} THEN {amount} END), 0) AS expense,
                COALESCE(SUM(CASE WHEN direction = 'neutral' THEN 1 ELSE 0 END), 0) AS neutral_count,
                COUNT(*) AS total
         FROM transactions
@@ -461,12 +504,13 @@ def by_source_category(connection: sqlite3.Connection, limit: int = 60) -> list[
     """
     conf = settings.load()
     amount = _amount_in_display(conf)
+    large = _is_large(conf)
     return connection.execute(
         f"""
         SELECT COALESCE(NULLIF(source_category, ''), '未分类') AS category,
                {_group_by_display(conf)} AS display_currency,
-               COALESCE(SUM(CASE WHEN direction = 'out' THEN {amount} END), 0) AS expense,
-               COALESCE(SUM(CASE WHEN direction = 'in'  THEN {amount} END), 0) AS income,
+               COALESCE(SUM(CASE WHEN direction = 'out' AND NOT {large} THEN {amount} END), 0) AS expense,
+               COALESCE(SUM(CASE WHEN direction = 'in'  AND NOT {large} THEN {amount} END), 0) AS income,
                COUNT(*) AS total
         FROM transactions
         GROUP BY category, display_currency
@@ -517,6 +561,32 @@ def transactions_for_import(
     ).fetchall()
 
 
+def large_transactions(connection: sqlite3.Connection) -> list[sqlite3.Row]:
+    """被剔出合计的大额交易，按显示币种分好组、组内金额从大到小。
+
+    只可能出现在**换算得到显示币种**的记录里：没配汇率的币种一笔都不判大额
+    （见 `_comparable`）。所以这里每行的 `display_cents` 都是显示币种的最小单位，
+    可以直接拿它排序和显示，不会出现拿英镑的数跟人民币的数比大小。
+
+    不分页也不截断。大额本来就是稀有事件；截断会造出「说明里写着 N 笔、
+    列表里只有几笔」这种对不上账的情形，那正是这个页面要避免的。
+    真把阈值设得极低，那长长的列表本身也是明摆着的。
+    """
+    conf = settings.load()
+    amount = _amount_in_display(conf)
+    return connection.execute(
+        f"""
+        SELECT *, {amount} AS display_cents,
+               {_group_by_display(conf)} AS display_currency,
+               CASE WHEN direction = 'out' THEN -({amount}) ELSE ({amount}) END
+                 AS display_signed_cents
+        FROM transactions
+        WHERE {_is_large(conf)}
+        ORDER BY display_currency, display_cents DESC, occurred_at DESC, id DESC
+        """
+    ).fetchall()
+
+
 def list_transactions(
     connection: sqlite3.Connection,
     *,
@@ -532,16 +602,22 @@ def list_transactions(
 
     # 列表上显示的是换算后的金额；原币种和原金额仍留在 t.currency /
     # t.amount_cents 里，随时能对回去。
-    amount = _amount_in_display(settings.load(), "t.")
+    conf = settings.load()
+    amount = _amount_in_display(conf, "t.")
+    large = _is_large(conf, "t.")
     return connection.execute(
         f"""
         SELECT t.*, a.name AS account_name,
                {amount} AS display_cents,
-               CASE t.direction
-                 WHEN 'out' THEN -({amount})
-                 WHEN 'in'  THEN  ({amount})
-                 ELSE 0
-               END AS display_signed_cents
+               -- 大额先判：这一列在页面上叫「计入合计」，把它显示成 -1000.00
+               -- 等于在页面上写了个假数，那笔钱明明已经不进合计了。中性行本来
+               -- 就在这一列显示 0.00，大额同理。
+               CASE WHEN {large} THEN 0
+                    WHEN t.direction = 'out' THEN -({amount})
+                    WHEN t.direction = 'in'  THEN  ({amount})
+                    ELSE 0
+               END AS display_signed_cents,
+               {large} AS is_large
         FROM tx_signed t JOIN accounts a ON a.id = t.account_id
         WHERE {where}
         ORDER BY t.occurred_at DESC, t.id DESC

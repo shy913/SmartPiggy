@@ -349,6 +349,8 @@ table.data th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .tag-in      { color: var(--in);      border-color: color-mix(in srgb, var(--in) 40%, var(--border)); }
 .tag-out     { color: var(--out);     border-color: color-mix(in srgb, var(--out) 40%, var(--border)); }
 .tag-neutral { color: var(--neutral); border-color: var(--border); }
+/* 大额：在账本里，但不进合计。跟中性一样走 muted——它不是错误，是另一种「不算数」 */
+.tag-large   { color: var(--muted);   border-color: var(--border); }
 .tag-ok      { color: var(--muted);   border-color: var(--border); }
 .tag-dup     { color: var(--muted);   border-color: var(--border); opacity: 0.7; }
 .tag-warn    { color: #e8c07d; border-color: color-mix(in srgb, #e8c07d 40%, var(--border)); }

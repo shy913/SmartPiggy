@@ -21,10 +21,16 @@ def isolated_data_dir(tmp_path, monkeypatch):
     # 都要在心里除以 8.9、再挪几个钟头，改一次设置得改几十个数字。
     # 换算（汇率与时区）那条线由 test_currency.py / test_timezone.py 自带设置覆盖。
     #
+    # [large] 显式关掉，理由同上一段：断言「本月支出 = 123.45」的用例不该顺手
+    # 依赖大额阈值的默认值。不关的话，支付宝夹具里那笔 ¥12,000 工资会撞上默认的
+    # ¥2,000 收入阈值被剔掉，好几个用例会莫名其妙地挂。阈值那条线由
+    # test_large.py 自带设置覆盖，那里也专门断言了「段缺席时默认值仍然生效」。
+    #
     # 注意 timezone 必须写在 [currency] **之前**——TOML 里表头之后的键都属于
     # 那张表，写到后面就成了 currency.timezone，顶层读不到。
     (tmp_path / "settings.toml").write_text(
-        'timezone = "Asia/Shanghai"\n\n[currency]\ndisplay = "CNY"\nrates = {}\n',
+        'timezone = "Asia/Shanghai"\n\n[currency]\ndisplay = "CNY"\nrates = {}\n'
+        "\n[large]\nout = 0\nin = 0\n",
         encoding="utf-8",
     )
 

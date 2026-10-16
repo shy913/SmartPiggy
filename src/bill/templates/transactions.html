@@ -30,7 +30,13 @@
   <a class="button ghost" href="{{ url_for('transactions') }}">清空</a>
 </form>
 
-<p class="hint">共 {{ total }} 条，第 {{ page }} / {{ pages }} 页。</p>
+<p class="hint">
+  共 {{ total }} 条，第 {{ page }} / {{ pages }} 页。
+  {% if large_note %}
+    标着「大额」的记录<strong>不计入汇总合计</strong>，它们的「计入合计」一列显示 0.00。
+    {{ large_note }}
+  {% endif %}
+</p>
 
 {% if rows %}
   <div class="table-scroll">
@@ -53,6 +59,7 @@
             </td>
             <td class="num {{ 'money-in' if tx.direction == 'in' else 'money-out' if tx.direction == 'out' else 'muted' }}">
               {{ tx.display_cents | amount }}
+              {% if tx.is_large %}<span class="tag tag-large">大额</span>{% endif %}
             </td>
             <td>{{ tx.counterparty }}</td>
             <td>{{ tx.description }}</td>

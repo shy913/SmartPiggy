@@ -92,6 +92,9 @@ def create_app() -> Flask:
             month=month,
             display_currency=conf.display_currency,
             currency_note=conf.describe(),
+            # 首页的合计数也剔除了大额，所以这里必须同样说明一声。只在汇总页
+            # 说明的话，两页会对同一段时间给出两个数，而且谁都不解释。
+            large_note=conf.describe_large(),
             is_current_month=month == current_month(),
             month_totals=repo.month_totals(connection, month),
             overall=repo.overall_totals(connection),
@@ -241,9 +244,11 @@ def create_app() -> Flask:
             limit=PAGE_SIZE,
             offset=(page - 1) * PAGE_SIZE,
         )
+        conf = settings.load()
         return render_template(
             "transactions.html",
-            display_currency=settings.load().display_currency,
+            display_currency=conf.display_currency,
+            large_note=conf.describe_large(),
             rows=rows,
             accounts=repo.accounts(connection),
             total=total,
@@ -276,6 +281,8 @@ def create_app() -> Flask:
             multiple_currencies=len(currencies) > 1,
             display_currency=conf.display_currency,
             currency_note=conf.describe(),
+            large_note=conf.describe_large(),
+            large=repo.large_transactions(connection),
             charts=[
                 {
                     "currency": currency,

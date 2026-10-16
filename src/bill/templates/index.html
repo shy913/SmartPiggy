@@ -23,6 +23,7 @@
         账本覆盖 {{ coverage.first_day }} 至 {{ coverage.last_day }}，共
         {{ coverage.total }} 条记录。
       {% endif %}
+      {% if large_note %}{{ large_note }}{% endif %}
       {{ currency_note }}
       {% if multiple_currencies %}
         还有没配汇率的币种，它们没被合并，单独列在下面。
@@ -59,6 +60,13 @@
               <span class="stat-label">中性笔数</span>
             </div>
           </div>
+          {% if large_note and group.large_count %}
+            <p class="hint">
+              本月已剔掉 {{ group.large_count }} 笔大额（支出 {{ group.large_expense | amount }}、
+              收入 {{ group.large_income | amount }} {{ group.display_currency }}），
+              明细在<a href="{{ url_for('summary') }}">汇总页底部</a>。
+            </p>
+          {% endif %}
         </div>
       {% endfor %}
     {% else %}
@@ -89,6 +97,13 @@
             <span class="stat-label">记录条数</span>
           </div>
         </div>
+        {% if large_note and group.large_count %}
+          <p class="hint">
+            累计已剔掉 {{ group.large_count }} 笔大额（支出 {{ group.large_expense | amount }}、
+            收入 {{ group.large_income | amount }} {{ group.display_currency }}），
+            明细在<a href="{{ url_for('summary') }}">汇总页底部</a>。
+          </p>
+        {% endif %}
       </div>
     {% endfor %}
   </section>
