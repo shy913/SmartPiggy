@@ -121,7 +121,7 @@ def create_app() -> Flask:
             abort(404)
         return redirect(url_for("notes"))
 
-    @app.route("/upload")
+    @app.route("/upload", strict_slashes=False)
     def upload():
         return render_template(
             "upload.html",
@@ -182,6 +182,21 @@ def create_app() -> Flask:
         if not body:
             return jsonify(error="'body' is required"), 400
         return jsonify(note=add_note(body)), 201
+
+    @app.after_request
+    def render_inline(response):
+        """Leave no room for a client to mistake a page for a file.
+
+        A browser only offers to *download* a response it can't render, so say
+        explicitly that these are pages: an inline disposition, plus nosniff so
+        nothing sniffs the body and reclassifies it. Routes that genuinely want
+        to send a file can still set `attachment` themselves — this only fills
+        in the default.
+        """
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        if response.mimetype == "text/html":
+            response.headers.setdefault("Content-Disposition", "inline")
+        return response
 
     @app.errorhandler(404)
     def not_found(_error):

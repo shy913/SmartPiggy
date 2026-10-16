@@ -58,6 +58,15 @@ What happens to it:
 - Legacy `.xls`, oversized files, and anything unparseable are rejected with a
   readable message instead of a stack trace.
 
+## Response headers
+
+Every HTML response carries `Content-Disposition: inline` and
+`X-Content-Type-Options: nosniff`. Without them a browser or an intermediary
+proxy may decide that an extensionless path like `/upload` is a file and offer
+to *download* it instead of rendering the page. A future route that genuinely
+wants to send a file sets `attachment` itself; the hook only supplies the
+default.
+
 ## Layout
 
 ```
