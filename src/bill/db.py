@@ -179,6 +179,29 @@ MIGRATIONS: list[list[str]] = [
         )
         """,
     ],
+    [
+        # v4：隐藏某一笔。跟删除是两回事——隐藏是**看的时候**的口径，记录还在，
+        # 只是不进任何合计；删除是不可逆的，而这里点一下就能还原。
+        #
+        # 不放在 edited_at 那一套里：那一列是「手改过」的标记，显示在分类旁边。
+        # 隐藏改的是这笔算不算数，跟分类改没改是两件事，混用一个标记，
+        # 界面就会把「隐藏过」写成「已改」，反过来也一样。
+        "ALTER TABLE transactions ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0",
+        # v1 那个视图的 `t.*` 在建视图的时候就展开成了当时的列清单，所以它不会
+        # 自己长出 hidden 来。不重建的话，后面按 hidden 过滤的查询会直接报
+        # 「no such column」——这条倒是会响，不是那种不报错的错。
+        "DROP VIEW tx_signed",
+        """
+        CREATE VIEW tx_signed AS
+        SELECT t.*,
+               CASE t.direction
+                 WHEN 'out' THEN -t.amount_cents
+                 WHEN 'in'  THEN  t.amount_cents
+                 ELSE 0
+               END AS signed_cents
+        FROM transactions t
+        """,
+    ],
 ]
 
 

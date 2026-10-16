@@ -11,48 +11,73 @@
   {% endif %}
 </p>
 
-<form class="filters" method="get" action="{{ url_for('transactions') }}">
-  <label>月份 <input type="month" name="month" value="{{ filters.month }}"></label>
-  <label>账户
-    <select name="account">
-      <option value="">全部</option>
-      {% for account in accounts %}
-        <option value="{{ account.id }}"
-          {{ 'selected' if filters.account == account.id else '' }}>
-          {{ account.name }}
-        </option>
-      {% endfor %}
-    </select>
-  </label>
-  <label>收支
-    <select name="direction">
-      <option value="" {{ 'selected' if not filters.direction else '' }}>全部</option>
-      <option value="in" {{ 'selected' if filters.direction == 'in' else '' }}>收入</option>
-      <option value="out" {{ 'selected' if filters.direction == 'out' else '' }}>支出</option>
-      <option value="neutral" {{ 'selected' if filters.direction == 'neutral' else '' }}>中性</option>
-    </select>
-  </label>
-  <label>搜索 <input type="search" name="q" value="{{ filters.q }}" placeholder="对方 / 说明 / 备注"></label>
-  <button type="submit">筛选</button>
-  <a class="button ghost" href="{{ url_for('transactions') }}">清空</a>
-</form>
+{# 筛选栏能收起来。收起来的时候，把生效的条件明写在标题旁边——不写的话这一屏
+   看着就跟全部记录一样，而合计数是按筛过的算的，两边对不上还找不到缘故。
+
+   一有筛选就默认收起：面板是用来挑条件的，挑完就把地方让给记录本身。想看
+   自己筛了什么、或者要改，标题那一行就是当前条件。 #}
+<details class="filter-panel" {{ 'open' if not active_filters else '' }}>
+  <summary>
+    筛选
+    {% if active_filters %}
+      <span class="filter-state">{{ active_filters | join(' · ') }}</span>
+    {% endif %}
+  </summary>
+
+  <form class="filters" method="get" action="{{ url_for('transactions') }}">
+    <label>月份 <input type="month" name="month" value="{{ filters.month }}"></label>
+    <label>账户
+      <select name="account">
+        <option value="">全部</option>
+        {% for account in accounts %}
+          <option value="{{ account.id }}"
+            {{ 'selected' if filters.account == account.id else '' }}>
+            {{ account.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>收支
+      <select name="direction">
+        <option value="" {{ 'selected' if not filters.direction else '' }}>全部</option>
+        <option value="in" {{ 'selected' if filters.direction == 'in' else '' }}>收入</option>
+        <option value="out" {{ 'selected' if filters.direction == 'out' else '' }}>支出</option>
+        <option value="neutral" {{ 'selected' if filters.direction == 'neutral' else '' }}>中性</option>
+      </select>
+    </label>
+    <label>已隐藏
+      <select name="hidden">
+        <option value="" {{ 'selected' if not filters.hidden else '' }}>照常列出</option>
+        <option value="0" {{ 'selected' if filters.hidden == '0' else '' }}>不列出</option>
+        <option value="1" {{ 'selected' if filters.hidden == '1' else '' }}>只看它们</option>
+      </select>
+    </label>
+    <label>搜索 <input type="search" name="q" value="{{ filters.q }}" placeholder="对方 / 说明 / 备注"></label>
+    <button type="submit">筛选</button>
+    <a class="button ghost" href="{{ url_for('transactions') }}">清空</a>
+  </form>
+</details>
 
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 
-<p class="hint">共 {{ total }} 条，第 {{ page }} / {{ pages }} 页。</p>
+<p class="hint">
+  共 {{ total }} 条{% if shown_hidden %}，其中 {{ shown_hidden }} 条已隐藏{% endif %}。
+</p>
 
 {% if rows %}
   {# 整张表包在一个表单里，是为了勾选之后能一键合并、一键改分类。
-     行内的「删」靠 button 的 formaction 转到删除那个地址——表单不能嵌套，
+     行内的「删」「隐藏」靠 button 的 formaction 转到各自的地址——表单不能嵌套，
      这样既是一条合法的 HTML，也不用为此上 JS。
 
-     没有 JS 就没有「全选本页」：批量操作只作用于手勾的那些行。 #}
+     没有 JS 就没有「全选本页」：批量操作只作用于手勾的那些行。隐藏的行连勾选框
+     都没有——它是「不算数」的那一档，合进合并组里会让净额和笔数对不上。 #}
   <form method="post" action="{{ url_for('transactions_bulk') }}">
     <input type="hidden" name="month" value="{{ filters.month }}">
     <input type="hidden" name="direction" value="{{ filters.direction }}">
     <input type="hidden" name="account" value="{{ filters.account or '' }}">
     <input type="hidden" name="q" value="{{ filters.q }}">
-    <input type="hidden" name="page" value="{{ page }}">
+    <input type="hidden" name="hidden" value="{{ filters.hidden }}">
+    <input type="hidden" name="limit" value="{{ limit }}">
 
     <div class="table-scroll">
       <table class="data">
@@ -61,15 +86,17 @@
             <th class="pick"></th>
             <th>日期</th><th>收支</th><th class="num">金额（{{ display_currency }}）</th>
             <th>交易对方</th><th>说明</th><th>分类</th>
-            <th>账户</th><th>原币种</th><th class="num">计入合计</th><th></th>
+            <th>账户</th><th>原币种</th><th class="num">计入合计</th><th class="row-actions"></th>
           </tr>
         </thead>
         <tbody>
           {% for tx in rows %}
+            {# 每一行都带个行号 id：底下的「继续下滑加载更多」跳到下一段的第一行，
+               点完停在原地，而不是被甩回页首。 #}
             {% if tx.group_id %}
               {# 合并行：金额是组内各笔的净额，本身不是一条记录，所以不能勾选、
                  也没有「编辑」——它下面那一行才是原样的几笔。 #}
-              <tr class="row-group">
+              <tr class="row-group" id="row-{{ loop.index0 }}">
                 <td class="pick muted" title="合并净额行">合</td>
                 <td>{{ tx.occurred_at }}</td>
                 <td>
@@ -87,7 +114,7 @@
                 <td class="muted">{{ tx.account_name }}</td>
                 <td class="muted">{{ tx.currency }}</td>
                 <td class="num muted">{{ tx.display_signed_cents | amount }}</td>
-                <td>
+                <td class="row-actions">
                   <button type="submit" class="link-button"
                           formaction="{{ url_for('group_dissolve', group_id=tx.group_id) }}"
                           formmethod="post">取消合并</button>
@@ -121,10 +148,15 @@
                 </td>
               </tr>
             {% else %}
-              <tr>
+              <tr{% if tx.hidden %} class="row-hidden"{% endif %} id="row-{{ loop.index0 }}">
                 <td class="pick">
-                  <input type="checkbox" name="txn" value="{{ tx.id }}"
-                         aria-label="选中这一笔">
+                  {% if tx.hidden %}
+                    {# 隐藏的行不给勾选框：它不进合计，也就不该能被合进一组。 #}
+                    <span class="tag tag-hidden" title="已隐藏">隐</span>
+                  {% else %}
+                    <input type="checkbox" name="txn" value="{{ tx.id }}"
+                           aria-label="选中这一笔">
+                  {% endif %}
                 </td>
                 <td>{{ tx.occurred_at }}</td>
                 <td>
@@ -145,8 +177,17 @@
                 <td class="muted">{{ tx.account_name }}</td>
                 <td class="muted">{{ tx.currency }}</td>
                 <td class="num muted">{{ tx.display_signed_cents | amount }}</td>
-                <td>
+                <td class="row-actions">
                   <a class="link-button" href="{{ url_for('transaction_edit', txn_id=tx.id) }}">改</a>
+                  {% if tx.hidden %}
+                    <button type="submit" class="link-button"
+                            formaction="{{ url_for('transaction_unhide', txn_id=tx.id) }}"
+                            formmethod="post">显示</button>
+                  {% else %}
+                    <button type="submit" class="link-button"
+                            formaction="{{ url_for('transaction_hide', txn_id=tx.id) }}"
+                            formmethod="post">隐藏</button>
+                  {% endif %}
                   <button type="submit" class="link-button"
                           formaction="{{ url_for('transaction_delete', txn_id=tx.id) }}"
                           formmethod="post"
@@ -171,15 +212,15 @@
     </datalist>
   </form>
 
-  {% if pages > 1 %}
-    <nav class="pager">
-      {% if page > 1 %}
-        <a class="button ghost" href="{{ url_for('transactions', month=filters.month, direction=filters.direction, account=filters.account, q=filters.q, page=page-1) }}">← 上一页</a>
-      {% endif %}
-      {% if page < pages %}
-        <a class="button ghost" href="{{ url_for('transactions', month=filters.month, direction=filters.direction, account=filters.account, q=filters.q, page=page+1) }}">下一页 →</a>
-      {% endif %}
-    </nav>
+  {# 不分页：一次给一段，底下这一条把下一段接在后面。跳到新那一段的第一行，
+     所以点完之后停在原地，不会被送回页首。 #}
+  {% if remaining %}
+    <p class="more">
+      <a class="button ghost"
+         href="{{ url_for('transactions', month=filters.month, direction=filters.direction, account=filters.account or '', q=filters.q, hidden=filters.hidden, limit=next_limit) }}#row-{{ limit }}">
+        继续下滑加载更多（还有 {{ remaining }} 条）
+      </a>
+    </p>
   {% endif %}
 {% else %}
   <p class="empty">没有符合条件的记录。</p>
