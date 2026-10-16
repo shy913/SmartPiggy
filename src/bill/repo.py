@@ -674,81 +674,130 @@ def month_totals(connection: sqlite3.Connection, month: str) -> list[sqlite3.Row
     ).fetchall()
 
 
-def overall_totals(connection: sqlite3.Connection) -> list[sqlite3.Row]:
+def _range_where(start: str | None, end: str | None) -> tuple[str, list]:
+    """按交易日圈一个区间，汇总页那几处共用。
+
+    直接借交易列表那份 `_transaction_filters`：两端都算在内、日期是定长文本、
+    字典序就是时间序——这些规矩只写在一处。各写一份的话，改歪一处不会有任何
+    报错，只是列表和汇总各算各的。
+
+    它写的是 ``t.occurred_date``，所以调用方的表**必须**别名成 ``t``。
+    """
+    return _transaction_filters(start, end, None, None, None)
+
+
+def overall_totals(
+    connection: sqlite3.Connection, *, start: str | None = None, end: str | None = None
+) -> list[sqlite3.Row]:
+    """整本账（或其中一段）的收入、支出，按显示币种分组。
+
+    ``start`` / ``end`` 是交易日闭区间，两端都可以缺——缺哪端就是那头不限，
+    两端都缺就是整本账。
+    """
     conf = settings.load()
+    where, params = _range_where(start, end)
     return connection.execute(
         f"""
         {_effective_cte(conf)}
-        SELECT {_group_by_display(conf)} AS display_currency, {_totals(conf)}
-        FROM effective
+        SELECT {_group_by_display(conf, "t.")} AS display_currency, {_totals(conf, "t.")}
+        FROM effective t
+        WHERE {where}
         GROUP BY display_currency
         ORDER BY display_currency
-        """
+        """,
+        params,
     ).fetchall()
 
 
-def currencies(connection: sqlite3.Connection) -> list[str]:
-    """账本里出现过的显示币种（换算之后）。"""
+def currencies(
+    connection: sqlite3.Connection, *, start: str | None = None, end: str | None = None
+) -> list[str]:
+    """账本里出现过的显示币种（换算之后）。
+
+    也收区间：这一段里一笔都没有的币种不该还占着页面上一块空的位置。
+    """
     conf = settings.load()
+    where, params = _range_where(start, end)
     rows = connection.execute(
         f"""
         {_effective_cte(conf)}
-        SELECT DISTINCT {_group_by_display(conf)} AS display_currency
-        FROM effective ORDER BY display_currency
-        """
+        SELECT DISTINCT {_group_by_display(conf, "t.")} AS display_currency
+        FROM effective t WHERE {where} ORDER BY display_currency
+        """,
+        params,
     ).fetchall()
     return [row["display_currency"] for row in rows]
 
 
-def by_month(connection: sqlite3.Connection, limit: int = 60) -> list[sqlite3.Row]:
+def by_month(
+    connection: sqlite3.Connection,
+    limit: int | None = 60,
+    *,
+    start: str | None = None,
+    end: str | None = None,
+) -> list[sqlite3.Row]:
     conf = settings.load()
-    amount = _amount_in_display(conf)
-    large = _is_large(conf)
+    amount = _amount_in_display(conf, "t.")
+    large = _is_large(conf, "t.")
+    where, params = _range_where(start, end)
+    tail = "" if limit is None else "LIMIT ?"
     return connection.execute(
         f"""
         {_effective_cte(conf)}
-        SELECT substr(occurred_date, 1, 7) AS month,
-               {_group_by_display(conf)} AS display_currency,
-               COALESCE(SUM(CASE WHEN direction = 'in'  AND NOT {large} THEN {amount} END), 0) AS income,
-               COALESCE(SUM(CASE WHEN direction = 'out' AND NOT {large} THEN {amount} END), 0) AS expense,
-               COALESCE(SUM(CASE WHEN direction = 'neutral' THEN 1 ELSE 0 END), 0) AS neutral_count,
+        SELECT substr(t.occurred_date, 1, 7) AS month,
+               {_group_by_display(conf, "t.")} AS display_currency,
+               COALESCE(SUM(CASE WHEN t.direction = 'in'  AND NOT {large} THEN {amount} END), 0) AS income,
+               COALESCE(SUM(CASE WHEN t.direction = 'out' AND NOT {large} THEN {amount} END), 0) AS expense,
+               COALESCE(SUM(CASE WHEN t.direction = 'neutral' THEN 1 ELSE 0 END), 0) AS neutral_count,
                COUNT(*) AS total
-        FROM effective
+        FROM effective t
+        WHERE {where}
         GROUP BY month, display_currency
         ORDER BY month DESC, display_currency
-        LIMIT ?
+        {tail}
         """,
-        (limit,),
+        [*params, *(() if limit is None else (limit,))],
     ).fetchall()
 
 
-def by_source_category(connection: sqlite3.Connection, limit: int = 60) -> list[sqlite3.Row]:
+def by_source_category(
+    connection: sqlite3.Connection,
+    limit: int = 60,
+    *,
+    start: str | None = None,
+    end: str | None = None,
+) -> list[sqlite3.Row]:
     """按分类汇总，同样换算到显示币种。
 
     分类优先用**你手改过的**那一列（``category``），没改过才回落到账单自带的
     ``source_category``（支付宝的「交易分类」、Monzo 的「Category」）。两个都空
     就是「未分类」。合并组另有一行：组的分类，或者它那笔支出的分类。
+
+    排序是「先显示币种、币种内支出从高到低」。跨币种那段**不是**全局降序，
+    这是故意的：把人民币的数和英镑的数排进同一条榜，正是这个项目最忌讳的错。
     """
     conf = settings.load()
-    amount = _amount_in_display(conf)
-    large = _is_large(conf)
+    amount = _amount_in_display(conf, "t.")
+    large = _is_large(conf, "t.")
+    where, params = _range_where(start, end)
     # 注意 GROUP BY 里必须重写整个表达式，不能写别名 category：effective 里本来
     # 就有一列叫 category（用户手改的那一列），SQLite 的分组会认输入列而不是输出
     # 别名，于是所有记录都按那一列分组，分类汇总会静默地全归到一类。
     return connection.execute(
         f"""
         {_effective_cte(conf)}
-        SELECT COALESCE(NULLIF(effective_category, ''), '未分类') AS category,
-               {_group_by_display(conf)} AS display_currency,
-               COALESCE(SUM(CASE WHEN direction = 'out' AND NOT {large} THEN {amount} END), 0) AS expense,
-               COALESCE(SUM(CASE WHEN direction = 'in'  AND NOT {large} THEN {amount} END), 0) AS income,
+        SELECT COALESCE(NULLIF(t.effective_category, ''), '未分类') AS category,
+               {_group_by_display(conf, "t.")} AS display_currency,
+               COALESCE(SUM(CASE WHEN t.direction = 'out' AND NOT {large} THEN {amount} END), 0) AS expense,
+               COALESCE(SUM(CASE WHEN t.direction = 'in'  AND NOT {large} THEN {amount} END), 0) AS income,
                COUNT(*) AS total
-        FROM effective
-        GROUP BY COALESCE(NULLIF(effective_category, ''), '未分类'), display_currency
+        FROM effective t
+        WHERE {where}
+        GROUP BY COALESCE(NULLIF(t.effective_category, ''), '未分类'), display_currency
         ORDER BY display_currency, expense DESC, income DESC
         LIMIT ?
         """,
-        (limit,),
+        [*params, limit],
     ).fetchall()
 
 
@@ -808,7 +857,9 @@ def transactions_for_import(
     ).fetchall()
 
 
-def large_transactions(connection: sqlite3.Connection) -> list[sqlite3.Row]:
+def large_transactions(
+    connection: sqlite3.Connection, *, start: str | None = None, end: str | None = None
+) -> list[sqlite3.Row]:
     """被剔出合计的大额交易，按显示币种分好组、组内金额从大到小。
 
     只可能出现在**换算得到显示币种**的记录里：没配汇率的币种一笔都不判大额
@@ -825,18 +876,110 @@ def large_transactions(connection: sqlite3.Connection) -> list[sqlite3.Row]:
     「剔掉的是组、这里一笔也列不出来」，或者反过来「这里列了一笔、合计里其实算着它」。
     """
     conf = settings.load()
-    amount = _amount_in_display(conf)
+    amount = _amount_in_display(conf, "t.")
+    where, params = _range_where(start, end)
     return connection.execute(
         f"""
         {_effective_cte(conf)}
-        SELECT *, {amount} AS display_cents,
-               {_group_by_display(conf)} AS display_currency,
-               CASE WHEN direction = 'out' THEN -({amount}) ELSE ({amount}) END
+        SELECT t.*, {amount} AS display_cents,
+               {_group_by_display(conf, "t.")} AS display_currency,
+               CASE WHEN t.direction = 'out' THEN -({amount}) ELSE ({amount}) END
                  AS display_signed_cents
-        FROM effective
-        WHERE {_is_large(conf)}
-        ORDER BY display_currency, display_cents DESC, occurred_at DESC, id DESC
-        """
+        FROM effective t
+        WHERE {where} AND {_is_large(conf, "t.")}
+        ORDER BY display_currency, display_cents DESC, t.occurred_at DESC, t.id DESC
+        """,
+        params,
+    ).fetchall()
+
+
+def expense_ranking(
+    connection: sqlite3.Connection,
+    *,
+    start: str | None = None,
+    end: str | None = None,
+    per_currency: int | None = 20,
+) -> list[sqlite3.Row]:
+    """区间内的支出，逐笔按金额从大到小——「钱花在哪几笔上」。
+
+    跟 `large_transactions` 同一个来路（``effective``），所以这几件事是白得的：
+
+    - 隐藏行已经不在里面（``_effective_cte`` 默认排除）；
+    - 中性行不是 ``'out'``，不会进来；
+    - **AA 合并组按净额算一行**：一笔 −£120 的支出加上两笔 +£40 的还款，在
+      ``effective`` 里就是一行 −£40，排名里也按 £40 参与，不会按原始的 120 排。
+      这正是「开销从高到低」要的口径——不然榜首永远是被 AA 掉的那几笔。
+
+    **排除大额**：页面上那个「不计入合计的大额」块是同一件事的另一半。不排除的话
+    同一笔会在两处各出现一次，而且这里的名次会跟上方的「支出」合计对不上账
+    （合计剔了大额，排行没剔）——那是这一页最不该有的那种对不上。
+
+    **按显示币种分开排**：没配汇率的币种，金额还是它自己那个币种的最小单位，
+    拿它跟显示币种的数比大小会得到一个不报错的错名次。所以这里照
+    ``large_transactions`` 的老办法，先按币种分组、组内再降序。
+
+    ``per_currency`` 是每个币种留多少条（``None`` ＝ 全列）。**不能**简单地在
+    SQL 里 ``LIMIT n``：``ORDER BY display_currency`` 打头，那样会先把第一个
+    币种凑满、把后面的币种整个挤掉。所以截断在分组之后做，调用方另取
+    ``expense_ranking_counts`` 才知道「还有多少笔没列出来」。
+    """
+    conf = settings.load()
+    rows = _ranked_expenses(connection, conf, start, end)
+    if per_currency is None:
+        return rows
+    kept: list[sqlite3.Row] = []
+    seen: dict[str, int] = {}
+    for row in rows:
+        code = row["display_currency"]
+        seen[code] = seen.get(code, 0) + 1
+        if seen[code] <= per_currency:
+            kept.append(row)
+    return kept
+
+
+def expense_ranking_counts(
+    connection: sqlite3.Connection,
+    *,
+    start: str | None = None,
+    end: str | None = None,
+) -> dict[str, int]:
+    """每个显示币种在区间里一共有多少笔计入合计的支出。
+
+    跟 `expense_ranking` 同源同条件，所以「列出了 20 笔、另有 N 笔」这两个数
+    不会各说各话。页面要的是**总数**，不是「没列出来的数」——后者是客户端减出来的，
+    减错一次也没人看得出来。
+    """
+    conf = settings.load()
+    counts: dict[str, int] = {}
+    for row in _ranked_expenses(connection, conf, start, end):
+        code = row["display_currency"]
+        counts[code] = counts.get(code, 0) + 1
+    return counts
+
+
+def _ranked_expenses(
+    connection: sqlite3.Connection,
+    conf,
+    start: str | None,
+    end: str | None,
+) -> list[sqlite3.Row]:
+    amount = _amount_in_display(conf, "t.")
+    where, params = _range_where(start, end)
+    return connection.execute(
+        f"""
+        {_effective_cte(conf)}
+        SELECT t.id, t.group_id, t.member_count, t.occurred_at, t.occurred_date,
+               t.counterparty, t.description, t.memo, t.effective_category,
+               {amount} AS display_cents,
+               -({amount}) AS display_signed_cents,
+               {_group_by_display(conf, "t.")} AS display_currency
+        FROM effective t
+        WHERE {where}
+          AND t.direction = 'out'
+          AND NOT {_is_large(conf, "t.")}
+        ORDER BY display_currency, display_cents DESC, t.occurred_at DESC, t.id DESC
+        """,
+        params,
     ).fetchall()
 
 

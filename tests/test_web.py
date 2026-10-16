@@ -901,7 +901,7 @@ def test_the_range_survives_acting_on_a_row_and_loading_more(client, book, monke
     列表是按区间筛过的，操作之后回到一个没筛过的页面，等于把刚才那一屏换掉了
     ——在一段自定义区间里隐掉一笔，回来发现自己站在另一个区间上。
     """
-    monkeypatch.setattr("bill.web.LIST_STEP", 2)
+    monkeypatch.setattr("bill.params.LIST_STEP", 2)
     book([
         {"direction": Direction.OUT, "amount_cents": 100 * i, "currency": "CNY",
          "occurred_at": f"2026-01-0{i} 09:00:00", "counterparty": f"第 {i} 笔"}

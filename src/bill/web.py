@@ -26,6 +26,7 @@ from flask import (
 )
 
 from . import (
+    api,
     auth,
     categories,
     charts,
@@ -34,27 +35,28 @@ from . import (
     db,
     entry,
     ingest,
+    params,
     repo,
     settings,
     themes,
 )
+from .api import list_counts
 from .errors import BillError, ProfileError, UploadError
 from .money import format_amount
+from .params import (
+    active_filter_labels,
+    clean_date,
+    default_range,
+    list_hint,
+    list_query,
+)
+from .params import as_int as _as_int
 from .profiles import load_all, validate
 from .readers import ACCEPT_ATTR
 
 __all__ = ["create_app", "main"]
 
 _started_at = datetime.now(timezone.utc)
-
-# 交易记录页一次列多少条。这一页不分页——「下一页」会把人从刚才那一屏拽走，
-# 而账目是要一路翻着看的。改成一次给一段，底下挂一个「继续下滑加载更多」，
-# 点一下这一段接着往下长，位置不动。
-#
-# 本地应用没有 JS（全站唯一的那点内联 JS 是几处删除确认），所以做不到「滚到底
-# 自动取下一段」：那要么得上 IntersectionObserver，要么得有个能追加行的接口。
-# 一次给 200 条，日常一个月的账一屏就到底了，多数情况一下都不用点。
-LIST_STEP = 200
 
 # 不登录也能进的地方：登录页自己，加一个给监控用的 /healthz（只回 uptime，
 # 不带任何账目数据），加静态文件——登录页的样式表就在那儿。
@@ -110,90 +112,6 @@ def uptime_seconds() -> int:
     return int((datetime.now(timezone.utc) - _started_at).total_seconds())
 
 
-_DIRECTION_WORDS = {"in": "收入", "out": "支出", "neutral": "中性"}
-_HIDDEN_WORDS = {"0": "不含隐藏", "1": "只看隐藏"}
-
-
-def default_range(conf) -> dict[str, str]:
-    """筛选栏没给条件时落回的那个区间：当月 1 号到今天。
-
-    按**显示时区**算「今天」，不按服务器本地时间：``occurred_date`` 入库时
-    就按显示时区换算过（见 dates.convert_timezone），拿另一套时钟去比，月初和
-    月末那两天会差出一天——屏幕上就是「昨天的账不见了」。
-
-    返回的形状跟 ``dates.month_range`` 一样（``start`` / ``end``），两者都是
-    「一个区间」，链接和取数都直接展开用。
-    """
-    today = datetime.now(conf.tz()).date()
-    return {"start": today.replace(day=1).isoformat(), "end": today.isoformat()}
-
-
-def clean_date(value: str | None) -> str:
-    """筛选栏里的一个日期。认不出来就返回空串（＝那一端不限）。
-
-    只认 ``'YYYY-MM-DD'`` 这一种写法，认出来之后**重新写一遍**：库里的
-    ``occurred_date`` 是定长的，比较靠的是字典序，放过 ``'2026-1-5'`` 这种
-    看着对、比出来错的写法，等于给出一个不报错的错结果。手改地址栏塞进来的
-    东西也一样——与其在筛选栏里留一个查不出记录的隐形条件，不如当没给。
-    """
-    text = (value or "").strip()
-    try:
-        return date.fromisoformat(text).isoformat()
-    except ValueError:
-        return ""
-
-
-def active_filter_labels(
-    accounts,
-    *,
-    start="",
-    end="",
-    direction="",
-    account_id=None,
-    search="",
-    hidden="",
-) -> list[str]:
-    """当前生效的筛选条件，写成几个短标签。
-
-    筛选栏是能收起来的，收起来之后页面上就只剩一个标题——不把这些条件明写出来，
-    这一屏看着就跟全部记录一模一样，而合计数又是按筛过的算的，两边对不上还
-    找不到原因。账户写名字不写 id：id 是给人看的表格里最没用的一种数。
-
-    顺序跟着筛选栏里那几个控件走，读到的和看到的对得上。
-    """
-    labels = []
-    # 两个日期都在的时候只写一行「甲 至 乙」：它们是同一个条件的两个端点，
-    # 拆成两条读起来像两个并排的条件。
-    if start and end:
-        labels.append(f"{start} 至 {end}")
-    elif start:
-        labels.append(f"{start} 起")
-    elif end:
-        labels.append(f"至 {end}")
-    if account_id:
-        labels.append(
-            next(
-                (row["name"] for row in accounts if row["id"] == account_id),
-                "账户已不在",
-            )
-        )
-    if word := _DIRECTION_WORDS.get(direction):
-        labels.append(word)
-    if word := _HIDDEN_WORDS.get(hidden):
-        labels.append(word)
-    if search:
-        labels.append(f"搜「{search}」")
-    return labels
-
-
-def _as_int(value: str) -> int | None:
-    """表单里来的 id。认不出来就当没有——勾选列表本来就可能被改坏。"""
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _next_target(value: str | None) -> str:
     """登录之后要回到哪一页。
 
@@ -236,6 +154,9 @@ def create_app() -> Flask:
     app = Flask(__name__)
     # 在请求体被读进内存之前就挡掉超大文件。
     app.config["MAX_CONTENT_LENGTH"] = config.MAX_BYTES
+    # JSON 接口（前端 SPA 取数的地方）。它自己带 url_prefix="/api"，
+    # 认证仍走下面那条 app 级的闸门——API 的路由名不在开放名单里，默认要登录。
+    app.register_blueprint(api.blueprint)
     app.jinja_env.filters["amount"] = format_amount
     # 分类在列表页上只留一个 emoji（见 categories.py）。
     app.jinja_env.filters["category_emoji"] = categories.emoji
@@ -546,72 +467,9 @@ def create_app() -> Flask:
 
     # ---------------------------------------------------------------- 账目
 
-    # 列表页那几个筛选条件、页头两个数、那一行字，GET 和「隐藏」那一下共用一份。
-    # 各写一份的话，改的时候只要漏一处，两处就会各说各话——而「共 N 条 / 其中
-    # M 条已隐藏」正是拿来解释「列表数含隐藏、汇总数不含」那个差的。
-
-    def list_query(source) -> dict:
-        """从查询串或表单里取那几个筛选字段。认不出的 hidden 落回「照常列出」。"""
-        hidden = (source.get("hidden") or "").strip()
-        if hidden not in ("0", "1"):
-            hidden = ""
-        # 起止日期就是原来那个「月份」筛选，只是把一头拆成两头。没给参数时落回
-        # 「当月 1 号到今天」——这一页平时看的就是本月的账。
-        #
-        # 判的是参数**在不在**，不是值空不空：清空两个输入框提交，得到的是
-        # ``?start=&end=``，意思是「不限」，跟没给参数（＝回到默认的当月）是两件
-        # 事。要分清这两种，只能看 key。GET 和「隐藏」那一下都走这里，所以两边的
-        # 落点是同一个。
-        if "start" in source or "end" in source:
-            bounds = {
-                "start": clean_date(source.get("start")),
-                "end": clean_date(source.get("end")),
-            }
-        else:
-            bounds = default_range(settings.load())
-        return {
-            **bounds,
-            "direction": (source.get("direction") or "").strip(),
-            "account_id": _as_int(source.get("account") or ""),
-            "search": (source.get("q") or "").strip(),
-            "hidden": hidden,
-            # limit 是「这一段给到哪」，不是页大小，所以只往上加：链接里手改出来的
-            # 小数不至于把列表缩成一条。
-            "limit": max(source.get("limit", type=int) or LIST_STEP, LIST_STEP),
-        }
-
-    def list_counts(connection, query) -> tuple[int, int]:
-        """（符合条件的条数，其中隐藏的条数）。两个数同一个口径，都是全表。
-
-        隐藏那一档不能只数页面上渲染出来的行：一段 200 条以上的列表上会写成个
-        偏小的数，被隐的那笔要是正好不在这段里，页面上干脆什么都不说。
-        """
-        common = {
-            "start": query["start"] or None,
-            "end": query["end"] or None,
-            "account_id": query["account_id"],
-            "direction": query["direction"] or None,
-            "search": query["search"] or None,
-        }
-        total = repo.count_transactions(
-            connection, **common, hidden=query["hidden"] or None
-        )
-        if query["hidden"] == "1":
-            return total, total  # 这一档整页都是隐藏的
-        if query["hidden"] == "0":
-            return total, 0  # 这一档一条隐藏的都不列
-        return total, repo.count_transactions(connection, **common, hidden="1")
-
-    def list_hint(total: int, hidden_total: int) -> str:
-        """页头那一行字。
-
-        字写在服务端，是因为「隐藏」那一下（见 transactions.html 里那段 JS）不重载
-        页面，得拿同一条字回去把页头换掉——写两遍迟早会写歪一处。
-        """
-        line = f"共 {total} 条"
-        if hidden_total:
-            line += f"，其中 {hidden_total} 条已隐藏"
-        return line + "。"
+    # 列表页那几个筛选条件、页头两个数、那一行字：解析在 `params`，数数在
+    # `api`（那两处都是接口与旧页面共用的）。留在这里的话，同一套语义就有两份，
+    # 改漏一处不会报错，只会让列表页和汇总页对同一个区间各算各的。
 
     def back_to_list(**extra):
         """回到列表页，把原来的筛选条件带上。
@@ -643,7 +501,8 @@ def create_app() -> Flask:
     @app.get("/transactions")
     def transactions():
         connection = get_conn()
-        query = list_query(request.args)
+        conf = settings.load()
+        query = list_query(request.args, conf)
         total, hidden_total = list_counts(connection, query)
         # 两个日期填反了。不吭声的话这就是一个干干净净的「没有符合条件的记录」，
         # 看着跟「这个月真没记账」一模一样——把话说出来，别让人去别处找账。
@@ -666,7 +525,6 @@ def create_app() -> Flask:
         )
         # 合并行只带锚点那一笔的文字，要看全组成员得另外取——而且只取这一段
         # 用得到的那些组。
-        conf = settings.load()
         members: dict[int, list] = {}
         for member in repo.group_members(
             connection, [row["group_id"] for row in rows if row["group_id"]]
@@ -697,7 +555,9 @@ def create_app() -> Flask:
             ),
             limit=query["limit"],
             remaining=max(total - len(rows), 0),
-            next_limit=query["limit"] + LIST_STEP,
+            # 直接读 params 上那一个：写成 import 进来的名字，就等于多了一份绑定，
+            # 测试改了常量只有一半代码跟着变。
+            next_limit=query["limit"] + params.LIST_STEP,
             error=(request.args.get("error") or "").strip() or backwards,
             filters={
                 "start": query["start"],
@@ -871,7 +731,7 @@ def create_app() -> Flask:
             return back_to_list()
         # 页面上那一行自己重画，不再整页重载（见 transactions.html 里那段 JS）。
         # 所以页头那两个数得服务端算准了交回去——「全表还隐藏着几笔」客户端算不出来。
-        query = list_query(request.form)
+        query = list_query(request.form, settings.load())
         total, hidden_total = list_counts(connection, query)
         row = repo.get_transaction(connection, txn_id)
         if row is None:

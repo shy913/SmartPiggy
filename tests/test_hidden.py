@@ -378,7 +378,7 @@ def test_the_row_is_dropped_from_a_view_that_filters_it_out(client):
 
 
 def test_the_json_count_is_the_whole_list_too(client, monkeypatch):
-    monkeypatch.setattr("bill.web.LIST_STEP", 2)
+    monkeypatch.setattr("bill.params.LIST_STEP", 2)
     for i in range(5):
         record(client, counterparty=f"第 {i} 笔")
     ids = checkbox_ids(client, limit=5)
@@ -428,7 +428,7 @@ def test_the_hidden_count_covers_the_whole_list_not_just_this_chunk(client, monk
     N 是全表口径，M 只数这一段渲染出来的行就不对了——而这一行字正好是拿来解释
     「列表数含隐藏、汇总数不含」那个差的，写小了等于把差解释错了。
     """
-    monkeypatch.setattr("bill.web.LIST_STEP", 2)
+    monkeypatch.setattr("bill.params.LIST_STEP", 2)
     for i in range(5):
         record(client, counterparty=f"第 {i} 笔")
     ids = checkbox_ids(client, limit=5)
@@ -442,7 +442,7 @@ def test_the_hidden_count_covers_the_whole_list_not_just_this_chunk(client, monk
 
 
 def test_the_only_hidden_view_counts_itself(client, monkeypatch):
-    monkeypatch.setattr("bill.web.LIST_STEP", 2)
+    monkeypatch.setattr("bill.params.LIST_STEP", 2)
     for i in range(5):
         record(client, counterparty=f"第 {i} 笔")
     for txn_id in checkbox_ids(client, limit=5):
@@ -453,7 +453,7 @@ def test_the_only_hidden_view_counts_itself(client, monkeypatch):
 
 
 def test_the_not_listed_view_says_none_are_shown(client, monkeypatch):
-    monkeypatch.setattr("bill.web.LIST_STEP", 2)
+    monkeypatch.setattr("bill.params.LIST_STEP", 2)
     for i in range(3):
         record(client, counterparty=f"第 {i} 笔")
     client.post(f"/transactions/{checkbox_ids(client)[0]}/hide")
@@ -465,7 +465,7 @@ def test_the_not_listed_view_says_none_are_shown(client, monkeypatch):
 def test_acting_on_a_row_keeps_your_place(client, monkeypatch):
     """行尾那几个按钮把自己的行号交上来，回来落回那一行——
     长列表上隐一笔被甩回页首，等于每次都要重新翻一遍。"""
-    monkeypatch.setattr("bill.web.LIST_STEP", 2)
+    monkeypatch.setattr("bill.params.LIST_STEP", 2)
     for i in range(6):
         record(client, counterparty=f"第 {i} 笔")
     txn_id = checkbox_ids(client, limit=6)[4]
@@ -508,7 +508,7 @@ def test_the_list_grows_instead_of_paging(client, monkeypatch):
     把一段调成 2 条来测：真按 200 条测，要么造 250 笔把用例拖成几十秒，要么
     就只能测到「没有下一页」这半句。
     """
-    monkeypatch.setattr("bill.web.LIST_STEP", 2)
+    monkeypatch.setattr("bill.params.LIST_STEP", 2)
     for i in range(5):
         record(client, counterparty=f"第 {i} 笔")
 
@@ -527,7 +527,7 @@ def test_the_list_grows_instead_of_paging(client, monkeypatch):
 
 def test_a_typo_small_limit_does_not_shrink_the_list(client, monkeypatch):
     """limit 是「这一段给到哪」，不是页大小——链接里手改出来的小数不该把列表缩成一条。"""
-    monkeypatch.setattr("bill.web.LIST_STEP", 2)
+    monkeypatch.setattr("bill.params.LIST_STEP", 2)
     for i in range(3):
         record(client, counterparty=f"第 {i} 笔")
     assert len(checkbox_ids(client, limit=1)) == 2
