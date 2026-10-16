@@ -312,7 +312,11 @@ def create_app() -> Flask:
 def main() -> None:
     app = create_app()
     app.run(
-        host=os.environ.get("HOST", "127.0.0.1"),
+        # 默认绑所有网卡，方便从别的机器访问——本机开 127.0.0.1 也行。
+        # 注意这个应用没有登录认证：绑 0.0.0.0 等于凡能访问到本机这个端口的
+        # 人都能看到全部账目。放到共享网络或公网上时，要么靠防火墙兜住，
+        # 要么用 HOST=127.0.0.1 收回本机。
+        host=os.environ.get("HOST", "0.0.0.0"),
         port=int(os.environ.get("PORT", "8001")),
         debug=os.environ.get("FLASK_DEBUG") == "1",
     )
