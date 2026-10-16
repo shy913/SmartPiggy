@@ -19,7 +19,10 @@ tests/fixtures/real/
 
 # 前端依赖与构建产物都不进版本库：产物在部署时现构建（见 README「部署」一节）。
 # 好处是仓库里不会有一份「改了源码忘了重建」的偏差；代价是回退时要重跑一次构建。
-frontend/node_modules/
+# 不带结尾的斜杠：worktree 里 `node_modules` 常常是一条指向主 checkout 的**符号
+# 链接**（重新 npm install 一遍太慢），而带斜杠的写法匹配不到符号链接，`git add -A`
+# 就会把那条链接提交进去。
+frontend/node_modules
 src/bill/static/app/
 
 # 主题的 CSS 变量块和 TS 常量都是从 theme.json 生成的（建构建前先跑
