@@ -270,10 +270,50 @@ def test_the_dashboard_never_mixes_currencies(client, book, tmp_path):
     assert body["currency"] == "CNY"
     assert body["stats"]["expense"] == 1000
 
+    # 地址栏的 currency 不再能改首页口径：设置说 CNY，这里就只算 CNY。
     british = dashboard(client, currency="GBP")
-    assert british["currency"] == "GBP"
-    assert british["stats"]["expense"] == 2000
+    assert british["currency"] == "CNY"
+    assert british["stats"]["expense"] == 1000
+    # 没配汇率的 GBP 没被混进合计，但笔数要说出来。
+    assert british["unconverted"] == [{"currency": "GBP", "count": 1}]
+    assert british["unconverted_count"] == 1
     assert british["currencies"] == ["CNY", "GBP"]
+
+
+def test_a_configured_rate_folds_every_currency_into_the_display_one(
+    client, book, tmp_path
+):
+    (tmp_path / "settings.toml").write_text(
+        'timezone = "Asia/Shanghai"\n\n[currency]\n'
+        'display = "CNY"\nrates = { GBP = 0.5 }\n'
+        "\n[large]\nout = 0\nin = 0\n",
+        encoding="utf-8",
+    )
+    now = today()
+    book(
+        [
+            {
+                "occurred_at": f"{now.isoformat()} 09:00:00",
+                "direction": "out",
+                "amount_cents": 1000,
+                "currency": "CNY",
+            },
+            {
+                "occurred_at": f"{now.isoformat()} 10:00:00",
+                "direction": "out",
+                "amount_cents": 2000,
+                "currency": "GBP",
+            },
+        ]
+    )
+    body = dashboard(client)
+    # 1 CNY = 0.5 GBP，所以 £20.00 是 ¥40.00；两笔都折进 CNY。
+    assert body["currency"] == "CNY"
+    assert body["stats"]["expense"] == 5000
+    assert body["currencies"] == ["CNY"]
+    assert body["multi_currency"] is False
+    assert body["unconverted"] == []
+    assert body["unconverted_count"] == 0
 
 
 def test_the_category_ranking_links_back_to_the_same_rows(client, book):

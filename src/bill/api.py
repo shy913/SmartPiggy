@@ -158,6 +158,10 @@ LIST_FIELDS = (
     "hidden",
     "edited_at",
     "display_cents",
+    # display_cents 是哪个币种的数。没配汇率的币种这里就是原币种，
+    # 界面据此决定要不要另附一份「原币金额」——只比 currency 不看这一列，
+    # 没汇率的那几笔就会把同一个数印两遍。
+    "display_currency",
     "is_large",
 )
 
@@ -358,8 +362,8 @@ def dashboard():
     """首页概览：区间数字、预测、平均、趋势、两个排行。
 
     跟 ``/summary`` 共用同一套区间参数（``params.summary_range``），所以两个
-    接口对「本月」的边界不可能各说各话。这里只多一个 ``currency``：多币种时
-    一次看一个币种，绝不把两个币种加进同一张卡。
+    接口对「本月」的边界不可能各说各话。币种固定用设置里的显示币种；没配
+    汇率的币种不会混进来，只在 ``unconverted`` 里报出笔数。
     """
     conf = settings.load()
     connection = get_conn()
@@ -579,8 +583,12 @@ def settings_page():
     「JSON 里没有浮点」——数字是字符串。
     """
     conf = settings.load()
+    connection = get_conn()
     return jsonify(
         values=settings.as_form(conf),
+        # 账本里实际出现过的币种及笔数：设置页拿它把没配汇率的币种也列出来，
+        # 不用人自己猜「我是不是还有美元没管」。
+        currencies=rows(repo.currency_counts(connection)),
         errors=[],
         saved=False,
         path=str(config.user_settings_path()),

@@ -144,10 +144,14 @@ export type TrendPoint = { key: string; expense: number; income: number };
 export type Dashboard = {
   today: string;
   has_data: boolean;
+  /** 恒等于 display_currency；保留字段是为了旧地址栏参数兼容。 */
   currency: string;
   currencies: string[];
   multi_currency: boolean;
   display_currency: string;
+  /** 这一区间里没配汇率、因而不在以上数字里的币种及笔数。 */
+  unconverted: { currency: string; count: number }[];
+  unconverted_count: number;
   range: DashboardRange;
   stats: DashboardStats;
   previous: {
@@ -241,6 +245,8 @@ export type TransactionRow = {
   hidden: number;
   edited_at: string | null;
   display_cents: number;
+  /** `display_cents` 是哪个币种的数；跟 `currency` 不同就说明这一行换算过。 */
+  display_currency: string;
   is_large: number;
   /** 分类退化成的一个 emoji（名字在 effective_category 里，挂在 tooltip 上）。
    *  没分类时是空串；列表上会补一个问号占住那个位置。 */
@@ -330,6 +336,9 @@ export type TransactionFields = {
   direction: Direction;
   amount_cents: number;
   currency: string;
+  display_cents: number;
+  /** `display_cents` 是哪个币种的数；跟 `currency` 不同就说明这一笔换算过。 */
+  display_currency: string;
   counterparty: string;
   counterparty_account: string;
   description: string;
@@ -473,7 +482,13 @@ export type SettingsValues = {
   theme: string;
   display: string;
   timezone: string;
-  rates: { code: string; rate: string }[];
+  /** `detected` / `count` 只给设置页用：账本里有、但还没配汇率的币种。 */
+  rates: {
+    code: string;
+    rate: string;
+    detected?: boolean;
+    count?: number;
+  }[];
   large_out: string;
   large_in: string;
   merge_enabled: boolean;
@@ -488,6 +503,8 @@ export type SettingsValues = {
 
 export type SettingsPayload = {
   values: SettingsValues;
+  /** 账本里出现过的原币种及笔数，设置页用它补出还没配汇率的行。 */
+  currencies: { currency: string; count: number }[];
   errors: string[];
   saved: boolean;
   path: string;

@@ -27,6 +27,8 @@ function detail(overrides: Partial<TransactionDetail> = {}): TransactionDetail {
       direction: "out",
       amount_cents: 3250,
       currency: "CNY",
+      display_cents: 3250,
+      display_currency: "CNY",
       counterparty: "美团平台商户",
       counterparty_account: "",
       description: "午饭",
@@ -69,13 +71,16 @@ function detail(overrides: Partial<TransactionDetail> = {}): TransactionDetail {
   };
 }
 
-function draw(state?: BackState) {
+function draw(
+  state?: BackState,
+  overrides: Partial<TransactionDetail> = {},
+) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => ({
       ok: true,
       status: 200,
-      text: async () => JSON.stringify(detail()),
+      text: async () => JSON.stringify(detail(overrides)),
     })),
   );
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -113,6 +118,25 @@ describe("这一笔", () => {
       "href",
       "/transactions?start=2026-10-01&end=",
     );
+  });
+
+  it("主金额是换算后的显示币种，原金额小字跟在旁边、明细里也留着", async () => {
+    const base = detail();
+    draw(undefined, {
+      display_currency: "GBP",
+      transaction: {
+        ...base.transaction,
+        amount_cents: 69000,
+        currency: "CNY",
+        display_cents: 7753,
+        display_currency: "GBP",
+      },
+    });
+    await waitFor(() => expect(screen.getByText("-77.53")).toBeInTheDocument());
+    expect(screen.getByText("GBP")).toBeInTheDocument();
+    expect(screen.getByText("-690.00 CNY")).toBeInTheDocument();
+    // 明细里的「原金额」仍是账单上那个数。
+    expect(screen.getByText("690.00 CNY")).toBeInTheDocument();
   });
 
   it("删掉之后回到列表，并把列表自己的来路带回去", async () => {

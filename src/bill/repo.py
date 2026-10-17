@@ -1183,6 +1183,7 @@ def list_transactions(
         {_effective_cte(conf, include_hidden=hidden != "0")}
         SELECT t.*, a.name AS account_name,
                {amount} AS display_cents,
+               {_group_by_display(conf, "t.")} AS display_currency,
                -- 大额不进合计这件事，列表页上只靠 is_large 那个标记交代：
                -- 金额照原样显示，标记说明它不算进上面的数。早先另有一列叫
                -- 「计入合计」，大额在那列写 0.00——列删了，理由还成立。
@@ -1311,6 +1312,7 @@ def get_transaction(
     return connection.execute(
         f"""
         SELECT t.*, a.name AS account_name, {amount} AS display_cents,
+               {_group_by_display(conf, "t.")} AS display_currency,
                {_large_flag(conf, "t.")} AS is_large,
                {_effective_category("t.")} AS effective_category,
                m.group_id AS group_id, g.origin AS group_origin, g.title AS group_title
@@ -1511,6 +1513,24 @@ def transaction_currencies(connection: sqlite3.Connection) -> list[str]:
         "SELECT DISTINCT currency FROM transactions ORDER BY currency"
     ).fetchall()
     return [row["currency"] for row in rows]
+
+
+def currency_counts(connection: sqlite3.Connection) -> list[dict]:
+    """库里每个原币种有多少笔，给设置页列「账本里出现过的币种」。
+
+    只是「有哪些币种要管」的清单，**不参与任何合计**——统计一律走
+    `_effective_cte` 的合并后口径。隐藏记录也算：设置页管的是账本里真实
+    存在过的币种，恢复之后仍然要有汇率。
+    """
+    rows = connection.execute(
+        """
+        SELECT currency, COUNT(*) AS count
+        FROM transactions
+        GROUP BY currency
+        ORDER BY currency
+        """
+    ).fetchall()
+    return [{"currency": row["currency"], "count": row["count"]} for row in rows]
 
 
 # --------------------------------------------------------------------------

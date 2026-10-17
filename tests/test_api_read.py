@@ -757,6 +757,49 @@ def test_group_members_say_which_currency_their_amount_is_in(client, conn, book,
     assert members["GBP"]["display_currency"] == "GBP"
 
 
+def test_each_transaction_row_says_which_currency_its_display_amount_is_in(
+    client, book, tmp_path
+):
+    """列表和详情都要逐行带 ``display_currency``。
+
+    没配汇率的币种会原样返回金额，界面只拿 `currency` 判断就会把同一个数
+    印两遍；拿到这一列才知道「这一行到底换算过没有」。
+    """
+    (tmp_path / "settings.toml").write_text(
+        'timezone = "Asia/Shanghai"\n\n[currency]\ndisplay = "GBP"\nrates = { CNY = 8.9 }\n',
+        encoding="utf-8",
+    )
+    ids = book(
+        [
+            {
+                "occurred_at": "2026-01-05 12:00:00",
+                "direction": "out",
+                "amount_cents": 69000,
+                "currency": "CNY",
+            },
+            {
+                "occurred_at": "2026-01-06 12:00:00",
+                "direction": "out",
+                "amount_cents": 500,
+                "currency": "USD",
+            },
+        ]
+    )
+    rows = {row["currency"]: row for row in payload(client.get("/api/transactions"))["rows"]}
+
+    assert rows["CNY"]["display_currency"] == "GBP"
+    assert rows["CNY"]["display_cents"] == 7753
+    assert rows["CNY"]["amount_cents"] == 69000
+    assert rows["USD"]["display_currency"] == "USD", "没配汇率时就是原币种"
+    assert rows["USD"]["display_cents"] == 500, "没配汇率的金额原样返回"
+
+    detail = payload(client.get(f"/api/transactions/{ids[0]}"))["transaction"]
+    assert detail["display_currency"] == "GBP"
+    assert detail["display_cents"] == 7753
+    assert detail["amount_cents"] == 69000
+    assert detail["currency"] == "CNY"
+
+
 def test_settings_come_back_as_the_form_shaped_them(client):
     body = payload(client.get("/api/settings"))
     values = body["values"]

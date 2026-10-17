@@ -59,6 +59,7 @@ function row(overrides: Partial<TransactionRow> = {}): TransactionRow {
     hidden: 0,
     edited_at: null,
     display_cents: 3250,
+    display_currency: "CNY",
     is_large: 0,
     emoji: "🍜",
     ...overrides,
@@ -198,6 +199,7 @@ describe("交易记录页", () => {
             hidden: 0,
             edited_at: null,
             display_cents: 88800,
+            display_currency: "CNY",
             is_large: 1,
             emoji: "📱",
           },
@@ -232,6 +234,7 @@ describe("交易记录页", () => {
             hidden: 1,
             edited_at: null,
             display_cents: 3250,
+            display_currency: "CNY",
             is_large: 0,
             emoji: "",
           },
@@ -417,13 +420,31 @@ describe("交易记录页", () => {
     expect(screen.getByText("+3.00").className).toContain("text-in");
   });
 
-  it("展开合并组：主数是原币金额，换算过的那笔后面再跟一份换算结果", async () => {
-    // 组里跨币种（微信代付 + Monzo 刷卡）。主数就是账单上那个数，好跟微信里
-    // 那条转账对回去；换过币种的那笔后面跟一份换算到显示币种的数，好跟组头
-    // 那个净额对得上。以前这两份是错位的：跟着的是**原币种**，数却是换算过的，
-    // 于是印出「-77.53 CNY」——一个英镑的数字顶着人民币的标签。
+  it("普通行以换算金额为主，原币金额用小字跟着", async () => {
     draw(
       listBody({
+        display_currency: "GBP",
+        rows: [
+          row({
+            amount_cents: 69000,
+            currency: "CNY",
+            display_cents: 7753,
+            display_currency: "GBP",
+          }),
+        ],
+        total: 1,
+      }),
+    );
+    await waitFor(() => expect(screen.getByText("-77.53 GBP")).toBeInTheDocument());
+    expect(screen.getByText("-690.00 CNY")).toBeInTheDocument();
+  });
+
+  it("展开合并组：主数是换算金额，原币金额用小字跟着", async () => {
+    // 组里跨币种（微信代付 + Monzo 刷卡）。主数是换算到显示币种的数，跟组头
+    // 净额对得上；后面小字是账单上的原币金额，好跟微信里那条转账对回去。
+    draw(
+      listBody({
+        display_currency: "GBP",
         rows: [
           row({
             id: null,
@@ -489,6 +510,8 @@ describe("从列表进去再返回", () => {
         direction: "out",
         amount_cents: 3250,
         currency: "CNY",
+        display_cents: 3250,
+        display_currency: "CNY",
         counterparty: "美团平台商户",
         counterparty_account: "",
         description: "午饭",

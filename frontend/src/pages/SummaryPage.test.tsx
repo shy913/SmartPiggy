@@ -109,6 +109,8 @@ function dashboardBody(overrides: Partial<Dashboard> = {}): Dashboard {
     currencies: ["CNY"],
     multi_currency: false,
     display_currency: "CNY",
+    unconverted: [],
+    unconverted_count: 0,
     range: {
       ...rangeBody(),
       natural_end: "2026-10-31",
@@ -417,6 +419,42 @@ describe("汇总页", () => {
     const urls = calledUrls();
     expect(urls.some((url) => url.includes("/api/dashboard") && url.includes("range=all"))).toBe(true);
     expect(urls.some((url) => url.includes("/api/summary") && url.includes("range=all"))).toBe(true);
+  });
+
+  it("多币种时不再出现币种切换按钮，页头只标设置里的币种", async () => {
+    draw(
+      summaryBody(),
+      dashboardBody({
+        currency: "GBP",
+        currencies: ["GBP", "USD"],
+        multi_currency: true,
+        display_currency: "GBP",
+      }),
+    );
+    await waitFor(() => expect(screen.getByText("预计本月支出")).toBeInTheDocument());
+    // 「USD」不再是可点的切换按钮；页头那个徽标只有一个。
+    expect(screen.queryByRole("button", { name: "USD" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "GBP" })).toBeNull();
+    expect(screen.getAllByText("GBP").length).toBeGreaterThan(0);
+  });
+
+  it("没配汇率的币种在首页报出笔数并链到设置", async () => {
+    draw(
+      summaryBody(),
+      dashboardBody({
+        currency: "GBP",
+        display_currency: "GBP",
+        unconverted: [{ currency: "USD", count: 5 }],
+        unconverted_count: 5,
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/USD 5 笔还没配汇率/)).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("link", { name: /去设置/ })).toHaveAttribute(
+      "href",
+      "/settings",
+    );
   });
 });
 

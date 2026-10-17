@@ -272,16 +272,10 @@ def build(connection, conf, source) -> dict:
     span = params.summary_range(conf, source)
     mode = span["mode"]
 
+    # 首页只认设置里的显示币种。以前还允许地址栏的 `currency` 覆盖，结果
+    # 设置写着英镑、首页却在看人民币——「统一到设置里的币种」就名不副实了。
+    code = conf.display_currency
     codes = repo.currencies(connection)
-    requested = (source.get("currency") or "").strip().upper()
-    if requested in codes:
-        code = requested
-    elif conf.display_currency in codes:
-        code = conf.display_currency
-    elif codes:
-        code = codes[0]
-    else:
-        code = conf.display_currency
 
     cover = repo.coverage(connection)
     has_data = bool(cover["total"])
@@ -300,7 +294,16 @@ def build(connection, conf, source) -> dict:
     )
 
     bounds = {"start": span["start"] or None, "end": span["end"] or None}
-    totals = _total_of(repo.overall_totals(connection, **bounds), code)
+    overall_rows = repo.overall_totals(connection, **bounds)
+    totals = _total_of(overall_rows, code)
+    # 没配汇率的币种不会被折进显示币种，而是各占一行。把这几行如实报出来，
+    # 界面才好说「N 笔还没配汇率」——静默吞掉和按 1:1 混算一样不可接受。
+    # 笔数用同一份 overall_totals 的 total：口径、区间、合并净额都与合计一致。
+    unconverted = [
+        {"currency": row["display_currency"], "count": row["total"]}
+        for row in overall_rows
+        if row["display_currency"] != code and row["total"] > 0
+    ]
 
     # 日均：只除到「已经过去的天」为止。拿整月天数去除当前这个半截月，
     # 日均会偏低，而它下面那个预测正是拿它外推的。
@@ -369,6 +372,8 @@ def build(connection, conf, source) -> dict:
         "currencies": codes,
         "multi_currency": len(codes) > 1,
         "display_currency": conf.display_currency,
+        "unconverted": unconverted,
+        "unconverted_count": sum(item["count"] for item in unconverted),
         "range": {
             **span,
             "natural_end": natural_end.isoformat(),
