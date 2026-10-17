@@ -5,13 +5,18 @@ import {
   Cell,
   LabelList,
   Legend,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
 
-import type { CategoryRow, MonthRow } from "../api/types";
+import type { AccountOverview, CategoryRow, MonthRow } from "../api/types";
 import { THEMES, DEFAULT_THEME, type Theme } from "../theme/themes";
 import { formatAmount } from "../lib/format";
 
@@ -154,6 +159,85 @@ export function MonthlyChart({
 }
 
 /**
+ * 每月结余（收入 − 支出）的折线。
+ *
+ * 单序列，不需要图例——标题已经说了画的是什么。零线必须画：结余会正负来回，
+ * 没有零线时「这根线在中间」读不出是赚还是亏。
+ *
+ * 和上面的柱状图共用同一根纵轴口径（都是换算后的显示币种），但**分成两张图**：
+ * 柱状图回答「每个月收了多少、花了多少」，折线图回答「这些月份攒下来没有」；
+ * 把三条序列塞进一张图，收入/支出会把结余压成贴着零线的一根。
+ */
+export function MonthlyBalanceChart({
+  rows,
+  currency,
+  theme,
+}: {
+  rows: MonthRow[];
+  currency: string;
+  theme: string;
+}) {
+  const palette = paletteOf(theme);
+  const shown = rows.slice(-MONTHS_SHOWN);
+  if (!shown.length || !shown.some((row) => row.income > 0 || row.expense > 0)) {
+    return <p className="text-muted">这个币种还没有收支记录。</p>;
+  }
+
+  const data = shown.map((row) => ({
+    month: row.month,
+    结余: row.income - row.expense,
+  }));
+  const total = data.reduce((sum, row) => sum + row.结余, 0);
+  const surplus = data.filter((row) => row.结余 > 0).length;
+  const deficit = data.filter((row) => row.结余 < 0).length;
+
+  return (
+    <div>
+      <ResponsiveContainer width="100%" height={236}>
+        <LineChart data={data} margin={{ top: 16, right: 8, bottom: 0, left: 8 }}>
+          <CartesianGrid vertical={false} stroke={palette.grid} />
+          <XAxis
+            dataKey="month"
+            tickFormatter={(value: string) => value.slice(2)}
+            fontSize={AXIS_FONT}
+            stroke={palette.muted}
+            tickLine={false}
+          />
+          <YAxis
+            tickFormatter={compact}
+            fontSize={AXIS_FONT}
+            stroke={palette.muted}
+            tickLine={false}
+            width={52}
+          />
+          <Tooltip
+            formatter={(value: number) => [`${formatAmount(value)} ${currency}`, "结余"]}
+            contentStyle={tooltipBox(palette)}
+          />
+          <ReferenceLine y={0} stroke={palette.axis} strokeDasharray="3 3" />
+          <Line
+            type="monotone"
+            dataKey="结余"
+            stroke={palette.accent}
+            strokeWidth={2}
+            dot={{ r: 4, fill: palette.accent, strokeWidth: 0 }}
+            activeDot={{ r: 6 }}
+            animationDuration={SNAP}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+      <p className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted">
+        <span>{currency}</span>
+        <span>合计结余 {formatAmount(total)}</span>
+        <span>盈余 {surplus} 个月</span>
+        <span>赤字 {deficit} 个月</span>
+        {rows.length > MONTHS_SHOWN ? <span>图中最近 12 个月</span> : null}
+      </p>
+    </div>
+  );
+}
+
+/**
  * 支出构成。
  *
  * 单一序列，所以**只有一种颜色**、也不需要图例——标题已经说了画的是什么。
@@ -224,6 +308,106 @@ export function CategoryChart({ rows, theme }: { rows: CategoryRow[]; theme: str
           {everything.length > ranked.length ? `（图中前 ${ranked.length}）` : ""}
         </span>
         <span>最高一类 {formatAmount(ranked[0].expense)}</span>
+      </p>
+    </div>
+  );
+}
+
+/** 账户支出构成里最多画几个扇区，其余并进「其他」。 */
+const ACCOUNT_SLICES = 6;
+
+/**
+ * 账户支出构成（环形图）。
+ *
+ * 为什么这里可以用饼图而分类支出不用：账户通常只有两三个，正好是「部分与整体」
+ * 且类别少；分类往往十几个，长短条比扇形更容易比较。所以分类那边仍是横向条形。
+ *
+ * 颜色按**账户本身**分配（用它在完整账户列表里的位置），不按当前排名——
+ * 区间换个筛选、某个账户这月没花钱，别的账户颜色不会跟着重排。扇区之间留
+ * 2px 面板色缝隙，颜色之外还有第二层边界。
+ */
+export function AccountExpensePie({
+  accounts,
+  currency,
+  theme,
+}: {
+  accounts: AccountOverview[];
+  currency: string;
+  theme: string;
+}) {
+  const palette = paletteOf(theme);
+  const position = new Map(accounts.map((account, index) => [account.id, index]));
+
+  const spending = accounts.flatMap((account) => {
+    const row = account.totals.find((item) => item.display_currency === currency);
+    if (!row || row.expense <= 0) return [];
+    return [
+      {
+        id: account.id,
+        name: account.name,
+        value: row.expense,
+        // 固定色序取模：账户多于色板时才循环，且颜色仍跟着账户走。
+        fill: palette.series[(position.get(account.id) ?? 0) % palette.series.length],
+      },
+    ];
+  });
+
+  if (!spending.length) return <p className="text-muted">这个币种还没有支出记录。</p>;
+  if (spending.length === 1) {
+    // 一个扇区没有构成可言，和 CategoryChart 的处理同一个道理。
+    return <p className="text-muted">支出全部来自「{spending[0].name}」，没有可比较的构成。</p>;
+  }
+
+  const ranked = [...spending].sort((left, right) => right.value - left.value);
+  const shown = ranked.slice(0, ACCOUNT_SLICES);
+  const rest = ranked.slice(ACCOUNT_SLICES);
+  if (rest.length) {
+    shown.push({
+      id: -1,
+      name: `其他 ${rest.length} 个账户`,
+      value: rest.reduce((sum, item) => sum + item.value, 0),
+      fill: palette.neutral,
+    });
+  }
+
+  const total = shown.reduce((sum, item) => sum + item.value, 0);
+
+  return (
+    <div>
+      <ResponsiveContainer width="100%" height={248}>
+        <PieChart>
+          <Pie
+            data={shown}
+            dataKey="value"
+            nameKey="name"
+            innerRadius={56}
+            outerRadius={86}
+            paddingAngle={2}
+            // 细边用的是图表的底色：相邻扇区之间留一道缝，色觉障碍下也能分开。
+            stroke={palette.panel}
+            strokeWidth={2}
+            animationDuration={SNAP}
+          >
+            {shown.map((entry) => (
+              <Cell key={entry.id} fill={entry.fill} />
+            ))}
+          </Pie>
+          <Tooltip
+            formatter={(value: number, name: string) => [
+              `${formatAmount(value)} ${currency}`,
+              name,
+            ]}
+            contentStyle={tooltipBox(palette)}
+          />
+          {/* 图例必须有：只靠扇区颜色区分，色觉障碍的人读到的是同一块。 */}
+          <Legend wrapperStyle={{ fontSize: 12 }} />
+        </PieChart>
+      </ResponsiveContainer>
+      <p className="mt-1 flex flex-wrap gap-x-4 text-xs text-muted">
+        <span>{currency}</span>
+        <span>合计支出 {formatAmount(total)}</span>
+        <span>涉及 {spending.length} 个账户</span>
+        {rest.length ? <span>图中前 {ACCOUNT_SLICES} 个</span> : null}
       </p>
     </div>
   );

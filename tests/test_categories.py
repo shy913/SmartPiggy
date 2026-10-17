@@ -6,7 +6,34 @@
 
 from __future__ import annotations
 
-from bill.categories import UNKNOWN, emoji
+from bill.categories import CANONICAL, UNKNOWN, _ALIASES, canonical, emoji
+
+
+def test_monzo_categories_collapse_into_the_chinese_taxonomy():
+    """两套体系不能各算各的：英文类别归到支付宝那一套中文分类。"""
+    assert canonical("Groceries") == "日用百货"
+    assert canonical("  Eating Out ") == "餐饮美食"
+    assert canonical("eating_out") == "餐饮美食"
+    assert canonical("Finances") == "投资理财"
+    assert canonical("general") == "其他"
+
+
+def test_chinese_categories_are_left_alone():
+    assert canonical("投资理财") == "投资理财"
+    assert canonical("餐饮美食") == "餐饮美食"
+
+
+def test_an_unknown_category_is_kept_instead_of_guessed():
+    """归类必须精确：认不出就保留原文，别猜成某一类。"""
+    assert canonical("超市采购") == "超市采购"
+    assert canonical("") == ""
+    assert canonical(None) == ""
+
+
+def test_every_alias_points_at_a_canonical_category():
+    """映射目标写错一个字，汇总页就会多出一行，而且不报错。"""
+    assert set(_ALIASES.values()) <= set(CANONICAL)
+    assert len(CANONICAL) == len(set(CANONICAL))
 
 
 def test_known_categories_get_their_own_mark():

@@ -18,7 +18,8 @@
       "expense": "#e66767",
       "neutral": "#9aa3b8",
       "grid": "#262c37",
-      "axis": "#3a4250"
+      "axis": "#3a4250",
+      "series": ["#4a8ad9", "#1f9d74", "#d36a3a", "#8577e0", "#2a9fb5", "#d95b7d"]
     },
     "light": {
       "mode": "light",
@@ -37,7 +38,8 @@
       "expense": "#d1373c",
       "neutral": "#6b7280",
       "grid": "#e6e9ef",
-      "axis": "#c3c9d4"
+      "axis": "#c3c9d4",
+      "series": ["#256abf", "#0f7a55", "#c2410c", "#6d5bd0", "#0891b2", "#b83a6b"]
     },
     "dark-teal": {
       "mode": "dark",
@@ -56,7 +58,8 @@
       "expense": "#dd6128",
       "neutral": "#9aa3b8",
       "grid": "#262c37",
-      "axis": "#3a4250"
+      "axis": "#3a4250",
+      "series": ["#4a8ad9", "#1f9d74", "#d36a3a", "#8577e0", "#2a9fb5", "#d95b7d"]
     },
     "light-teal": {
       "mode": "light",
@@ -75,7 +78,8 @@
       "expense": "#c2410c",
       "neutral": "#6b7280",
       "grid": "#e6e9ef",
-      "axis": "#c3c9d4"
+      "axis": "#c3c9d4",
+      "series": ["#256abf", "#0f7a55", "#c2410c", "#6d5bd0", "#0891b2", "#b83a6b"]
     }
   }
 }

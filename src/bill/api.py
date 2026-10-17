@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date, datetime
 
 from flask import Blueprint, current_app, g, jsonify, request, session
 
@@ -260,6 +261,45 @@ def meta():
 # 汇总
 # --------------------------------------------------------------------------
 
+def _account_overview(connection, conf, *, start, end) -> list[dict]:
+    """首页账户区：账户 + 上次导入时间 + 区间内的收支。
+
+    「距今几天」在**服务端**按显示时区算。``imports.uploaded_at`` 本来就是按
+    那个时区写的墙上时钟，交给前端再算一遍等于多一套时区逻辑，两边会在跨天
+    时差出一天——而屏幕上什么都不说。
+
+    从没导入过的账户 ``last_import_at`` 为空，``never_imported`` 为真；它和
+    「导入过但太久没导」都算提醒对象，但界面上的话不一样。
+    """
+    totals: dict[int, list[dict]] = {}
+    for item in repo.account_totals(connection, start=start, end=end):
+        row = dict(item)
+        account_id = row.pop("account_id")
+        totals.setdefault(account_id, []).append(row)
+
+    today = datetime.now(conf.tz()).date()
+    overview = []
+    for record in repo.account_imports(connection):
+        last = record["last_import_at"]
+        days = (today - date.fromisoformat(last[:10])).days if last else None
+        never = last is None
+        # stale_days = 0 是「不提醒」的明确选择，不是「0 天没导入就提醒」。
+        stale = conf.stale_days > 0 and (never or days >= conf.stale_days)
+        overview.append(
+            {
+                "id": record["id"],
+                "name": record["name"],
+                "kind": record["kind"],
+                "last_import_at": last,
+                "days_since_import": days,
+                "never_imported": never,
+                "stale": stale,
+                "totals": totals.get(record["id"], []),
+            }
+        )
+    return overview
+
+
 @blueprint.get("/summary")
 def summary():
     """整页一个口径：选定的区间作用到上面每一个数、每一张表。
@@ -291,6 +331,10 @@ def summary():
         # 每币种前 20 条；counts 给的是**总数**，前端拿它说「另有多少笔」。
         ranking=ledger_rows(repo.expense_ranking(connection, **bounds)),
         ranking_counts=counted,
+        # 账户区：金额跟随当前区间，导入时间不跟——它是账户自己的属性。
+        accounts=_account_overview(
+            connection, conf, start=bounds["start"], end=bounds["end"]
+        ),
     )
 
 
