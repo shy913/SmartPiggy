@@ -474,7 +474,15 @@ function GroupRow({
       >
         <TD />
         <TD className="whitespace-nowrap">{minute(row.occurred_at)}</TD>
-        <NumTD className={row.display_cents === 0 ? "text-muted" : "text-out"}>
+        <NumTD
+          className={
+            row.display_cents === 0
+              ? "text-muted"
+              : row.direction === "in"
+                ? "text-in"
+                : "text-out"
+          }
+        >
           {formatSigned(signed(row))}
         </NumTD>
         <TD>

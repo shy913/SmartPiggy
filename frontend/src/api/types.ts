@@ -294,6 +294,8 @@ export type HideResult = {
 export type GroupRow = {
   id: number;
   origin: string;
+  /** net = AA / 收支平衡的净额组；rollup = 按月汇总的收益组。 */
+  kind: "net" | "rollup";
   title: string;
   category: string;
   note: string;
@@ -389,6 +391,8 @@ export type SettingsValues = {
   merge_window_hours: string;
   merge_tolerance: string;
   merge_keywords: string;
+  merge_rollup: boolean;
+  merge_rollup_keywords: string;
   stale_days: string;
 };
 

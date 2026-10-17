@@ -100,6 +100,33 @@ def test_saving_round_trips_through_the_file(client, isolated_data_dir):
     assert conf.merge_keywords == ("转账", "还款")
 
 
+def test_rollup_settings_default_when_the_form_omits_them(client):
+    """旧表单不带新字段时落到默认值，不能把月度汇总静默关掉。"""
+    assert save(client).status_code == 200
+    conf = settings.load()
+    assert conf.merge_rollup is True
+    assert conf.merge_rollup_keywords == settings.DEFAULT_ROLLUP_KEYWORDS
+
+
+def test_rollup_settings_round_trip_through_the_file(client, isolated_data_dir):
+    response = save(
+        client, merge_rollup=False, merge_rollup_keywords="利息、收益发放"
+    )
+    assert response.status_code == 200
+    written = (isolated_data_dir / "settings.toml").read_text(encoding="utf-8")
+    assert "rollup = false" in written
+    assert 'rollup_keywords = ["利息", "收益发放"]' in written
+
+    conf = settings.load()
+    assert conf.merge_rollup is False
+    assert conf.merge_rollup_keywords == ("利息", "收益发放")
+
+
+def test_an_explicitly_empty_rollup_keyword_list_turns_matching_off(client):
+    assert save(client, merge_rollup_keywords="").status_code == 200
+    assert settings.load().merge_rollup_keywords == ()
+
+
 def test_stale_days_round_trips_through_the_file(client, isolated_data_dir):
     """保存时会整份重写设置文件，模板里漏一个键就等于把这个设置静默删掉。"""
     assert save(client, stale_days="7").status_code == 200
