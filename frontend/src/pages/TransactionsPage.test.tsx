@@ -66,7 +66,10 @@ function row(overrides: Partial<TransactionRow> = {}): TransactionRow {
 
 let calls: string[] = [];
 
-function draw(body: TransactionList, url = "/transactions") {
+function draw(
+  body: TransactionList,
+  url: string | { pathname: string; state?: unknown } = "/transactions",
+) {
   calls = [];
   vi.stubGlobal(
     "fetch",
@@ -125,6 +128,15 @@ describe("交易记录页", () => {
     await waitFor(() =>
       expect(screen.getByText("共 12 条，其中 3 条已隐藏。")).toBeInTheDocument(),
     );
+  });
+
+  it("从汇总排行点进来时，顶上有条回程链接", async () => {
+    draw(listBody(), {
+      pathname: "/transactions",
+      state: { from: "/?range=month&month=2026-10", backLabel: "汇总" },
+    });
+    const back = await screen.findByRole("link", { name: /← 汇总/ });
+    expect(back).toHaveAttribute("href", "/?range=month&month=2026-10");
   });
 
   it("区间填反了要说出来，不能长得像「这个月真没记账」", async () => {

@@ -11,6 +11,7 @@ import {
   unhideTransaction,
 } from "../api/client";
 import type { MemberRow, TransactionRow } from "../api/types";
+import { BackLink } from "../components/BackLink";
 import { CategoryMark } from "../components/CategoryMark";
 import { MemberAmount } from "../components/MemberAmount";
 import { Button, buttonStyles } from "../components/ui/button";
@@ -56,6 +57,9 @@ function When({ value }: { value: string }) {
 export function TransactionsPage() {
   const [params, setParams] = useSearchParams();
   const location = useLocation();
+  // 从首页排行、KPI 或合并组点过来时带着回程地址。没有就照常从导航栏进出，
+  // 不凭空造一个「返回」——那会把人送到一个他没去过的地方。
+  const nav = location.state as { from?: string; backLabel?: string } | null;
   const client = useQueryClient();
   const navigate = useNavigate();
   const [selected, setSelected] = useState<number[]>([]);
@@ -151,6 +155,7 @@ export function TransactionsPage() {
 
   return (
     <div>
+      {nav?.from ? <BackLink to={nav.from} label={nav.backLabel ?? "汇总"} /> : null}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold">交易记录</h1>
         {/* 带上当前列表地址：取消回来时筛选条件还在原位。 */}
