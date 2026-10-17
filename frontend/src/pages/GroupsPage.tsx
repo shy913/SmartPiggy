@@ -22,9 +22,14 @@ import { cn } from "../lib/utils";
 
 export function GroupsPage() {
   const [params] = useSearchParams();
+  const location = useLocation();
+  const nav = location.state as { from?: string; backLabel?: string } | null;
   const created = params.get("created");
   // 交易记录页点「管理」带过来的组：落到那一张卡片上。
   const focusGroup = Number(params.get("group")) || null;
+  // 是从交易记录过来的就留一条回程链接。刷新之后 state 没了，但 group 参数
+  // 还在——它本身就说明这一页是从那一屏跳过来的。
+  const backTo = nav?.from ?? (focusGroup !== null ? "/transactions" : null);
   const client = useQueryClient();
   const [error, setError] = useState("");
   const [openGroups, setOpenGroups] = useState<Set<number>>(new Set());
@@ -87,6 +92,11 @@ export function GroupsPage() {
 
   return (
     <div>
+      {backTo ? (
+        <Link className="mb-3 inline-block text-accent underline" to={backTo}>
+          ← {nav?.backLabel ?? "交易记录"}
+        </Link>
+      ) : null}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold">合并组</h1>
         <Button

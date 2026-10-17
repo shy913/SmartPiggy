@@ -43,6 +43,7 @@ function signed(row: { direction: string; display_cents: number }) {
 
 export function TransactionsPage() {
   const [params, setParams] = useSearchParams();
+  const location = useLocation();
   const client = useQueryClient();
   const navigate = useNavigate();
   const [selected, setSelected] = useState<number[]>([]);
@@ -73,7 +74,13 @@ export function TransactionsPage() {
     onSuccess: (body) => {
       setSelected([]);
       // 新组按组内最早那一笔的日期排，可能落在很下面——直接带过去并亮一下。
-      navigate(`/groups?created=${body.group_id}&group=${body.group_id}`);
+      // 带上原列表地址，合并组页才有「← 交易记录」可回。
+      navigate(`/groups?created=${body.group_id}&group=${body.group_id}`, {
+        state: {
+          from: `${location.pathname}${location.search}`,
+          backLabel: "交易记录",
+        },
+      });
     },
     onError: (failure) => setError(failure instanceof ApiError ? failure.message : "没合上。"),
   });
@@ -489,6 +496,10 @@ function GroupRow({
           <Link
             className="text-accent underline"
             to={`/groups?group=${row.group_id}`}
+            state={{
+              from: `${location.pathname}${location.search}`,
+              backLabel: "交易记录",
+            }}
             onClick={remember}
           >
             管理

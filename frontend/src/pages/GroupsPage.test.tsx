@@ -52,7 +52,8 @@ function payload(overrides: Partial<GroupsPayload> = {}): GroupsPayload {
   };
 }
 
-function draw(body: GroupsPayload, url = "/groups") {
+function draw(body: GroupsPayload, url = "/groups", state?: unknown) {
+  const target = new URL(url, "http://local");
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => ({ ok: true, status: 200, text: async () => JSON.stringify(body) })),
@@ -60,7 +61,9 @@ function draw(body: GroupsPayload, url = "/groups") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[url]}>
+      <MemoryRouter
+        initialEntries={[{ pathname: target.pathname, search: target.search, state }]}
+      >
         <GroupsPage />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -108,5 +111,29 @@ describe("合并组页", () => {
     draw(payload());
     await waitFor(() => expect(screen.getByText("展开这 2 笔")).toBeInTheDocument());
     expect(document.querySelector('[data-flash="1"]')).toBeNull();
+  });
+
+  it("从交易记录点「管理」过来，留下一条回原来那一屏的链接", async () => {
+    draw(payload(), "/groups?group=7", {
+      from: "/transactions?start=2026-10-01&end=&limit=400",
+      backLabel: "交易记录",
+    });
+    await waitFor(() => expect(screen.getByText("← 交易记录")).toBeInTheDocument());
+    expect(screen.getByText("← 交易记录").closest("a")).toHaveAttribute(
+      "href",
+      "/transactions?start=2026-10-01&end=&limit=400",
+    );
+  });
+
+  it("刷新后 state 没了，但只要还带着 group 参数，回程链接仍在", async () => {
+    draw(payload(), "/groups?group=7");
+    await waitFor(() => expect(screen.getByText("← 交易记录")).toBeInTheDocument());
+    expect(screen.getByText("← 交易记录").closest("a")).toHaveAttribute("href", "/transactions");
+  });
+
+  it("直接从导航进合并组页，不凭空多一条返回链接", async () => {
+    draw(payload());
+    await waitFor(() => expect(screen.getByText("展开这 2 笔")).toBeInTheDocument());
+    expect(screen.queryByText(/← /)).toBeNull();
   });
 });
