@@ -435,6 +435,21 @@ def test_each_listed_row_carries_a_category_emoji(client, book):
     assert rows[200]["emoji"] == "", "没分类的不挂通用图标——每行顶同一个记号是白占地方"
 
 
+def test_each_ledger_row_also_carries_the_same_emoji(client, book):
+    """汇总页的排行 / 大额跟交易列表用同一套分类图标，别各挂各的。"""
+    book(
+        [
+            {"occurred_at": f"{today()} 12:00:00", "direction": "out", "amount_cents": 100,
+             "source_category": "餐饮美食"},
+            {"occurred_at": f"{today()} 12:00:00", "direction": "out", "amount_cents": 200,
+             "source_category": ""},
+        ]
+    )
+    rows = {row["display_cents"]: row for row in summary(client, range="all")["ranking"]}
+    assert rows[100]["emoji"] == "🍜"
+    assert rows[200]["emoji"] == "", "没分类的由前端补问号，接口不编图标"
+
+
 def test_a_transaction_comes_back_with_its_raw_row(client, book):
     ids = book(
         [

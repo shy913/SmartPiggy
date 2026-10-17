@@ -206,12 +206,23 @@ describe("交易记录页", () => {
     expect(screen.queryByRole("checkbox")).toBeNull();
   });
 
-  it("列的次序是 日期 / 金额 / 对方说明——先看什么时候、多少钱，再看花在哪儿", async () => {
+  it("列的次序是 日期 / 金额 / 对方 / 说明——先看什么时候、多少钱，再读是谁、买什么", async () => {
     draw(listBody({ total: 1, rows: [row()] }));
     await waitFor(() => expect(screen.getByText("美团平台商户")).toBeInTheDocument());
 
     const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
-    expect(headers).toEqual(["", "日期", "金额", "对方 / 说明", "操作"]);
+    expect(headers).toEqual(["", "日期", "金额", "对方", "说明", "操作"]);
+  });
+
+  it("对方和说明各占一列，谁都不吞掉谁", async () => {
+    draw(
+      listBody({
+        total: 1,
+        rows: [row({ counterparty: "苹果店", description: "iPad 保护壳" })],
+      }),
+    );
+    await waitFor(() => expect(screen.getByText("苹果店")).toBeInTheDocument());
+    expect(screen.getByText("iPad 保护壳")).toBeInTheDocument();
   });
 
   it("分类是个 emoji，名字挂在 tooltip 上", async () => {
@@ -221,12 +232,12 @@ describe("交易记录页", () => {
     expect(screen.getByTitle("餐饮美食")).toHaveTextContent("🍜");
   });
 
-  it("没分类的行不挂 emoji", async () => {
-    // 微信账单没有分类列，整本都是空的。给它们统一挂个通用图标，等于每行都
-    // 顶着同一个记号，白占地方。
+  it("没分类的行也给一个问号，位置不空着", async () => {
+    // 微信账单没有分类列，整本都是空的。空着会让两列的字忽左忽右，分不清是
+    // 「没分类」还是「没渲染出来」。
     draw(listBody({ total: 1, rows: [row({ effective_category: "", emoji: "" })] }));
     await waitFor(() => expect(screen.getByText("美团平台商户")).toBeInTheDocument());
-    expect(screen.queryByTitle("")).toBeNull();
+    expect(screen.getByTitle("未分类")).toHaveTextContent("❓");
   });
 
   it("返回时滚回原来的位置，并把刚点进去那一笔轻轻亮一下", async () => {

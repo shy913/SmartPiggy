@@ -4,6 +4,7 @@ import { Fragment, type ReactNode } from "react";
 
 import { getSummary } from "../api/client";
 import type { LedgerRow, Summary, TotalsRow } from "../api/types";
+import { CategoryMark } from "../components/CategoryMark";
 import { CategoryChart, MonthlyChart } from "../components/charts";
 import { RangePicker } from "../components/RangePicker";
 import { Card, Section } from "../components/ui/card";
@@ -381,7 +382,7 @@ function Large({ summary }: { summary: Summary }) {
   );
 }
 
-/** 合并后的账本里的一行：日期、金额、对方 / 说明。 */
+/** 合并后的账本里的一行：日期、金额、对方、说明。 */
 function LedgerTable({
   summary,
   currency,
@@ -399,12 +400,13 @@ function LedgerTable({
         <h4 className="mb-1 text-xs font-medium text-muted">{currency}</h4>
       ) : null}
       <TableScroll>
-        <Table>
+        <Table className="table-fixed">
           <THead>
             <TR>
-              <TH>日期</TH>
-              <NumTH>金额（{currency}）</NumTH>
-              <TH>对方 / 说明</TH>
+              <TH className="w-[5.5rem]">日期</TH>
+              <NumTH className="w-24 whitespace-normal">金额（{currency}）</NumTH>
+              <TH>对方</TH>
+              <TH>说明</TH>
             </TR>
           </THead>
           <TBody>
@@ -415,7 +417,10 @@ function LedgerTable({
                   {formatAmount(row.display_signed_cents)}
                 </NumTD>
                 <TD>
-                  <LedgerLabel row={row} />
+                  <LedgerParty row={row} />
+                </TD>
+                <TD>
+                  <LedgerDescription row={row} />
                 </TD>
               </TR>
             ))}
@@ -427,30 +432,45 @@ function LedgerTable({
 }
 
 /**
- * 一行叫什么。
+ * 对方那一格。
  *
  * 合并组只有 `group_id`、没有 `id`——那一行不是一条记录，是几笔折成的净额，
  * 所以它点不进详情页，只能去合并组页看。服务端特意没给负数哨兵 id，
  * 就是为了让这里的判断是个**字段在不在**的问题，而不是「id 是不是小于零」。
  */
-function LedgerLabel({ row }: { row: LedgerRow }) {
-  const text = row.counterparty || row.description;
+function LedgerParty({ row }: { row: LedgerRow }) {
   if (row.group_id) {
     return (
-      <span className="flex flex-wrap items-center gap-2">
-        <Tag>合</Tag>
+      <span
+        className="line-clamp-2 [overflow-wrap:anywhere]"
+        title={row.counterparty || row.description}
+      >
+        <CategoryMark category={row.effective_category} emoji={row.emoji} />{" "}
+        <Tag>合</Tag>{" "}
         <Link className="text-accent underline" to="/groups">
-          {text}
+          {row.counterparty || row.description}
         </Link>
       </span>
     );
   }
   return (
-    <span className="flex flex-wrap items-center gap-2">
-      <span>{text}</span>
-      {row.effective_category ? (
-        <span className="text-xs text-muted">{row.effective_category}</span>
-      ) : null}
+    <span
+      className="line-clamp-2 [overflow-wrap:anywhere]"
+      title={row.counterparty}
+    >
+      <CategoryMark category={row.effective_category} emoji={row.emoji} />{" "}
+      {row.counterparty}
+    </span>
+  );
+}
+
+/** 说明那一格。合并行若已经用说明做了组链接，就别把同一句话印两遍。 */
+function LedgerDescription({ row }: { row: LedgerRow }) {
+  const text = row.group_id ? (row.counterparty ? row.description : "") : row.description;
+  if (!text) return null;
+  return (
+    <span className="line-clamp-3 [overflow-wrap:anywhere]" title={text}>
+      {text}
     </span>
   );
 }

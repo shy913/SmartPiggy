@@ -124,6 +124,7 @@ describe("汇总页", () => {
             display_cents: 88800,
             display_signed_cents: -88800,
             display_currency: "CNY",
+            emoji: "📱",
           },
         ],
       }),
@@ -131,6 +132,7 @@ describe("汇总页", () => {
     await waitFor(() =>
       expect(screen.getByRole("heading", { name: /不计入合计的大额（1 笔）/ })).toBeInTheDocument(),
     );
+    expect(screen.getByTitle("数码电器")).toHaveTextContent("📱");
   });
 
   it("排行只列前 N 条时，要说清还有多少笔", async () => {
@@ -147,6 +149,7 @@ describe("汇总页", () => {
       display_cents: 1000 - index,
       display_signed_cents: -(1000 - index),
       display_currency: "CNY",
+      emoji: "",
     });
     draw(summaryBody({ ranking: [row(1), row(2)], ranking_counts: { CNY: 25 } }));
     await waitFor(() => expect(screen.getByText(/另有 23 笔未列出/)).toBeInTheDocument());
@@ -169,6 +172,7 @@ describe("汇总页", () => {
             display_cents: 4000,
             display_signed_cents: -4000,
             display_currency: "CNY",
+            emoji: "🍜",
           },
         ],
       }),

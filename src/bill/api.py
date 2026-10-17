@@ -213,6 +213,8 @@ def ledger_rows(result) -> list[dict]:
         row = {key: data.get(key) for key in LEDGER_FIELDS}
         if row["group_id"] is not None:
             row["id"] = None
+        # 跟交易列表同一个口径：分类退化成 emoji，名字留在 effective_category 里。
+        row["emoji"] = categories.emoji(row.get("effective_category"))
         out.append(row)
     return out
 

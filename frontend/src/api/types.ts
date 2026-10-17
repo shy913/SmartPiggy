@@ -64,6 +64,8 @@ export type LedgerRow = {
   display_cents: number;
   display_signed_cents: number;
   display_currency: string;
+  /** 分类退化成的一个 emoji；没分类时是空串，列表上补一个问号。 */
+  emoji: string;
 };
 
 export type Summary = {
@@ -127,8 +129,7 @@ export type TransactionRow = {
   display_cents: number;
   is_large: number;
   /** 分类退化成的一个 emoji（名字在 effective_category 里，挂在 tooltip 上）。
-   *  没分类时是空串——空分类是真实存在的一大类，给它挂个通用图标等于每行都
-   *  顶同一个记号，白占地方。 */
+   *  没分类时是空串；列表上会补一个问号占住那个位置。 */
   emoji: string;
 };
 
