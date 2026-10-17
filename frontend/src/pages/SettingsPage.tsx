@@ -197,7 +197,7 @@ export function SettingsPage() {
                   ) : (
                     <Input
                       className="w-24"
-                      placeholder="CNY"
+                      placeholder="如 USD"
                       value={row.code}
                       onChange={(event) => {
                         const rates = current.rates.map((item, at) =>
