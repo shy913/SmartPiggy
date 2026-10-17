@@ -61,6 +61,10 @@ export function TransactionDetailPage() {
 
   const tx = data.transaction;
   const hidden = tx.hidden === 1;
+  // 这一笔换算过没有，看服务端给的 display_currency；没配汇率时它等于原币种。
+  const converted = tx.display_currency !== tx.currency;
+  const original = tx.direction === "out" ? -tx.amount_cents : tx.amount_cents;
+  const shown = tx.direction === "out" ? -tx.display_cents : tx.display_cents;
 
   return (
     <div>
@@ -76,10 +80,13 @@ export function TransactionDetailPage() {
 
       <Card>
         <div className="flex flex-wrap items-baseline gap-3">
-          <span className="tabular text-2xl">
-            {formatAmount(tx.direction === "out" ? -tx.amount_cents : tx.amount_cents)}
-          </span>
-          <span className="text-muted">{tx.currency}</span>
+          <span className="tabular text-2xl">{formatAmount(shown)}</span>
+          <span className="text-muted">{tx.display_currency}</span>
+          {converted ? (
+            <span className="tabular text-xs text-muted/70">
+              {formatAmount(original)} {tx.currency}
+            </span>
+          ) : null}
           {tx.is_large ? <Tag>大额</Tag> : null}
           {hidden ? <Tag>已隐藏</Tag> : null}
           {tx.edited_at ? <Tag>手改过</Tag> : null}

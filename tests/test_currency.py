@@ -85,6 +85,40 @@ def test_both_currencies_land_in_one_pool_once_a_rate_exists(conn, isolated_data
     assert totals[0]["income"] == 15000
 
 
+def test_usd_is_folded_in_once_its_rate_exists(conn, isolated_data_dir):
+    """1 GBP = 1.32 USD 时，$1.32 -> £1.00；三种币种合成 GBP 一组。"""
+    write_settings(
+        isolated_data_dir,
+        '[currency]\ndisplay = "GBP"\nrates = { CNY = 8.9, USD = 1.32 }\n',
+    )
+    seed(conn, [
+        (132, "USD", Direction.IN),     # -> £1
+        (89000, "CNY", Direction.IN),   # -> £100
+        (10000, "GBP", Direction.IN),   # £100
+    ])
+
+    totals = repo.overall_totals(conn)
+    assert len(totals) == 1
+    assert totals[0]["display_currency"] == "GBP"
+    assert totals[0]["income"] == 20100
+
+
+def test_currency_counts_are_raw_ledger_counts(conn, isolated_data_dir):
+    write_settings(
+        isolated_data_dir,
+        '[currency]\ndisplay = "GBP"\nrates = { CNY = 8.9 }\n',
+    )
+    seed(conn, [
+        (100, "CNY", Direction.IN),
+        (200, "CNY", Direction.OUT),
+        (300, "USD", Direction.OUT),
+    ])
+    assert repo.currency_counts(conn) == [
+        {"currency": "CNY", "count": 2},
+        {"currency": "USD", "count": 1},
+    ]
+
+
 def test_a_currency_without_a_rate_is_never_folded_in(conn, isolated_data_dir):
     """没配汇率的币种必须单独成组。
 

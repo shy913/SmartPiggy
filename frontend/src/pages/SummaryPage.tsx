@@ -103,6 +103,23 @@ function StaleImports({ accounts }: { accounts: AccountOverview[] }) {
 }
 
 /**
+ * 没配汇率的币种提醒。它们各自成组、没有并进显示币种的数字里——这里把
+ * 笔数如实说出来，并给一个去设置页补汇率的地方，不静默吞掉。
+ */
+function Unconverted({ data }: { data: Dashboard }) {
+  if (!data.unconverted_count) return null;
+  const parts = data.unconverted.map((item) => `${item.currency} ${item.count} 笔`);
+  return (
+    <Hint className="mt-0 mb-4">
+      {parts.join("，")}还没配汇率，暂未并进上面的数字。
+      <Link className="ml-1 text-accent underline" to="/settings">
+        去设置 →
+      </Link>
+    </Hint>
+  );
+}
+
+/**
  * 首页dashboard。
  *
  * 区间切换是这一页的主要动作，所以它摆在最上面、左右各一个按钮；手机上还可以
@@ -181,8 +198,6 @@ function DashboardView({
     }
   };
 
-  const changeCurrency = (code: string) => apply({ currency: code });
-
   const onTouchStart = (event: TouchEvent) => {
     const first = event.touches[0];
     touch.current = { x: first.clientX, y: first.clientY };
@@ -214,26 +229,12 @@ function DashboardView({
     <div onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} style={{ touchAction: "pan-y" }}>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <h1 className="text-xl font-semibold">汇总</h1>
-        {data.multi_currency ? (
-          <div className="ml-auto flex flex-wrap items-center gap-1">
-            {data.currencies.map((code) => (
-              <Button
-                key={code}
-                type="button"
-                size="sm"
-                variant={code === data.currency ? "default" : "outline"}
-                onClick={() => changeCurrency(code)}
-              >
-                {code}
-              </Button>
-            ))}
-          </div>
-        ) : (
-          <span className="ml-auto rounded-full border border-border px-2 py-0.5 text-xs text-muted">
-            {data.currency}
-          </span>
-        )}
+        <span className="ml-auto rounded-full border border-border px-2 py-0.5 text-xs text-muted">
+          {data.display_currency}
+        </span>
       </div>
+
+      <Unconverted data={data} />
 
       <Card className="relative mb-4 overflow-hidden">
         {/* 日期栏自己的背景：这一段区间的支出走势。只铺在日期那一带、向下渐隐，

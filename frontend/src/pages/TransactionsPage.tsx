@@ -217,12 +217,14 @@ export function TransactionsPage() {
                     key={`g${row.group_id}`}
                     row={row}
                     members={data.members[String(row.group_id)] ?? []}
+                    displayCurrency={data.display_currency}
                     highlighted={flashed && flashTarget === `group-${row.group_id}`}
                   />
                 ) : (
                   <Row
                     key={row.id}
                     row={row}
+                    displayCurrency={data.display_currency}
                     selected={row.id !== null && selected.includes(row.id)}
                     highlighted={flashed && flashTarget === `txn-${row.id}`}
                     onToggle={() => row.id !== null && toggle(row.id)}
@@ -440,12 +442,14 @@ function FilterBar({
 
 function Row({
   row,
+  displayCurrency,
   selected,
   highlighted,
   onToggle,
   onHide,
 }: {
   row: TransactionRow;
+  displayCurrency: string;
   selected: boolean;
   highlighted: boolean;
   onToggle: () => void;
@@ -456,6 +460,14 @@ function Row({
   const back = `${location.pathname}${location.search}`;
   const remember = () =>
     saveAnchor(anchorKey(location.pathname, location.search), `txn-${row.id}`);
+  // 这一行换算过没有，看服务端给的 display_currency；没配汇率的币种它等于原币种。
+  const converted = row.display_currency !== row.currency;
+  const original =
+    row.direction === "neutral"
+      ? 0
+      : row.direction === "out"
+        ? -row.amount_cents
+        : row.amount_cents;
   return (
     <TR
       data-anchor-id={`txn-${row.id}`}
@@ -498,7 +510,17 @@ function Row({
               : "text-out")
         }
       >
-        {formatSigned(signed(row))}
+        <span className="tabular">
+          {formatSigned(signed(row))}
+          {converted || row.display_currency !== displayCurrency
+            ? ` ${row.display_currency}`
+            : ""}
+        </span>
+        {converted ? (
+          <span className="tabular mt-0.5 block text-xs text-muted/70">
+            {formatSigned(original)} {row.currency}
+          </span>
+        ) : null}
       </NumTD>
       <TD>
         {/* 日期和这里**两处都是链接**：手机上点哪一下都进得去，不用瞄准。
@@ -549,10 +571,12 @@ function Row({
 function GroupRow({
   row,
   members,
+  displayCurrency,
   highlighted,
 }: {
   row: TransactionRow;
   members: MemberRow[];
+  displayCurrency: string;
   highlighted: boolean;
 }) {
   const location = useLocation();
@@ -635,7 +659,7 @@ function GroupRow({
               {members.map((member) => (
                 <li key={member.id} className="flex flex-wrap items-center gap-3 py-0.5">
                   <span className="text-muted">{minute(member.occurred_at)}</span>
-                  <MemberAmount member={member} displayCurrency={row.currency} className="text-muted" />
+                  <MemberAmount member={member} displayCurrency={displayCurrency} className="text-muted" />
                   <span className="line-clamp-2 min-w-0 [overflow-wrap:anywhere]">
                     <CategoryMark category={member.effective_category} emoji={member.emoji} />{" "}
                     {member.counterparty || member.description}

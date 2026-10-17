@@ -66,6 +66,48 @@ def test_the_shell_carries_the_theme_so_the_first_frame_is_right(client, isolate
     assert 'data-theme="light"' in client.get("/").get_data(as_text=True)
 
 
+def test_the_settings_page_lists_the_currencies_in_the_ledger(client, book):
+    """账本里出现过的币种要自己列出来，不能等人猜还有没有别的没配汇率。"""
+    book(
+        [
+            {
+                "occurred_at": "2026-10-01 09:00:00",
+                "direction": "out",
+                "amount_cents": 1000,
+                "currency": "CNY",
+            },
+            {
+                "occurred_at": "2026-10-02 09:00:00",
+                "direction": "out",
+                "amount_cents": 2000,
+                "currency": "GBP",
+            },
+            {
+                "occurred_at": "2026-10-03 09:00:00",
+                "direction": "out",
+                "amount_cents": 3000,
+                "currency": "GBP",
+            },
+        ]
+    )
+    body = payload(client.get("/api/settings"))
+    assert body["currencies"] == [
+        {"currency": "CNY", "count": 1},
+        {"currency": "GBP", "count": 2},
+    ]
+
+
+def test_as_form_hides_the_display_currencys_own_rate(isolated_data_dir):
+    """显示币种自己那一行没有意义，表单里不该出现；否则保存时会被校验拦住。"""
+    (isolated_data_dir / "settings.toml").write_text(
+        'timezone = "Europe/London"\n\n[currency]\n'
+        'display = "GBP"\nrates = { GBP = 1, CNY = 8.9 }\n',
+        encoding="utf-8",
+    )
+    values = settings.as_form(settings.load())
+    assert [row["code"] for row in values["rates"] if row["code"]] == ["CNY"]
+
+
 # --------------------------------------------------------------------------
 # 写
 # --------------------------------------------------------------------------
@@ -98,6 +140,18 @@ def test_saving_round_trips_through_the_file(client, isolated_data_dir):
     assert conf.merge_window_hours == 12
     assert conf.merge_tolerance == 0.5
     assert conf.merge_keywords == ("转账", "还款")
+
+
+def test_saving_a_second_currency_makes_it_convertible(client):
+    response = save(
+        client,
+        rates=[
+            {"code": "CNY", "rate": "8.9"},
+            {"code": "USD", "rate": "1.32"},
+        ],
+    )
+    assert response.status_code == 200
+    assert settings.load().rates == {"CNY": 8.9, "USD": 1.32}
 
 
 def test_rollup_settings_default_when_the_form_omits_them(client):

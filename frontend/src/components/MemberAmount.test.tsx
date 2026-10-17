@@ -29,9 +29,9 @@ function text(row: MemberRow, displayCurrency = "GBP"): string {
 }
 
 describe("合并组里一笔的金额", () => {
-  it("主数是原币金额，换算过的那几笔后面再跟一份换算结果", () => {
+  it("主数是换算金额，原币金额用小字跟在后面", () => {
     // ¥690 那一笔。以前这里是「-77.53 CNY」——一个英镑的数顶着人民币的标签。
-    expect(text(member())).toBe("-690.00 CNY-77.53 GBP");
+    expect(text(member())).toBe("-77.53 GBP-690.00 CNY");
   });
 
   it("本来就是显示币种的那笔只有一份，也不标币种", () => {
@@ -57,7 +57,7 @@ describe("合并组里一笔的金额", () => {
 
   it("进账带 +，方向一眼看得出来", () => {
     expect(text(member({ direction: "in", amount_cents: 1357, display_cents: 152 }))).toBe(
-      "+13.57 CNY+1.52 GBP",
+      "+1.52 GBP+13.57 CNY",
     );
   });
 
@@ -76,6 +76,6 @@ describe("合并组里一笔的金额", () => {
       display_cents: 7049,
       display_currency: "CNY",
     });
-    expect(text(gbp, "CNY")).toBe("+7.92 GBP+70.49 CNY");
+    expect(text(gbp, "CNY")).toBe("+70.49 CNY+7.92 GBP");
   });
 });

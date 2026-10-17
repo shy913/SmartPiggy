@@ -256,7 +256,14 @@ def as_form(conf: Settings) -> dict[str, Any]:
     汇率那几行**多留两个空位**：这个应用不带 JS，没有「加一行」这种交互，
     想加一个币种就得有现成的空格可填。
     """
-    rates = [{"code": code, "rate": f"{rate:g}"} for code, rate in sorted(conf.rates.items())]
+    # 显示币种自己的汇率没有意义（`factors()` 本来就不把它算进去），表单里
+    # 也不该出现——服务端的 read_form 会把它当成错误。老配置里万一写了这一行，
+    # 打开设置页就直接不显示，保存时自然清掉。
+    rates = [
+        {"code": code, "rate": f"{rate:g}"}
+        for code, rate in sorted(conf.rates.items())
+        if code != conf.display_currency
+    ]
     rates += [{"code": "", "rate": ""} for _ in range(max(0, 3 - len(rates)))]
     return {
         "theme": conf.theme,
