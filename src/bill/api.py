@@ -451,6 +451,7 @@ def groups():
         groups=rows(found),
         members={str(key): rows(value) for key, value in members.items()},
         display_currency=settings.load().display_currency,
+        categories=repo.transaction_categories(connection),
     )
 
 

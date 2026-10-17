@@ -466,7 +466,12 @@ def test_a_missing_transaction_is_json_404(client):
 def test_groups_come_back_with_their_members(client, conn, book):
     ids = book(
         [
-            {"occurred_at": "2026-01-05 12:00:00", "direction": "out", "amount_cents": 12000},
+            {
+                "occurred_at": "2026-01-05 12:00:00",
+                "direction": "out",
+                "amount_cents": 12000,
+                "category": "餐饮美食",
+            },
             {"occurred_at": "2026-01-05 13:00:00", "direction": "in", "amount_cents": 4000},
         ]
     )
@@ -479,6 +484,8 @@ def test_groups_come_back_with_their_members(client, conn, book):
     assert group["net_cents"] == -8000
     assert group["member_count"] == 2
     assert len(body["members"][str(group["id"])]) == 2
+    # 这一组的分类是个下拉框，候选得跟账本里出现过的分类一致。
+    assert "餐饮美食" in body["categories"]
 
 
 def test_group_members_say_which_currency_their_amount_is_in(client, conn, book, tmp_path):

@@ -264,6 +264,45 @@ describe("交易记录页", () => {
     expect(JSON.parse(saved!)).toMatchObject({ y: 480, target: "txn-3" });
   });
 
+  it("合并之后回来，要落到的目标是新合并行而不是已经合走的那两笔", async () => {
+    // 合并前那两行已经不在列表里了，锚点还指向它们的话，回来什么都没有可定位。
+    vi.spyOn(window, "scrollY", "get").mockReturnValue(260);
+    vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    const user = userEvent.setup();
+    const body = listBody({
+      rows: [row({ id: 3 }), row({ id: 4, counterparty: "我先垫的" })],
+      total: 2,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: string, init?: RequestInit) => ({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify(init?.method === "POST" ? { group_id: 42 } : body),
+      })),
+    );
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={["/transactions"]}>
+          <TransactionsPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(screen.getByText("我先垫的")).toBeInTheDocument());
+
+    const boxes = screen.getAllByRole("checkbox");
+    await user.click(boxes[0]);
+    await user.click(boxes[1]);
+    await user.click(screen.getByRole("button", { name: "合并成一组" }));
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(sessionStorage.getItem(anchorKey("/transactions", ""))!),
+      ).toMatchObject({ y: 260, target: "group-42" }),
+    );
+  });
+
   it("亮一下就淡出，不一直挂着", async () => {
     vi.useFakeTimers();
     sessionStorage.setItem(

@@ -48,6 +48,7 @@ function payload(overrides: Partial<GroupsPayload> = {}): GroupsPayload {
     groups: [group()],
     members: { "7": [member(), member({ id: 22, counterparty: "我先垫的" })] },
     display_currency: "CNY",
+    categories: ["餐饮美食", "转账"],
     ...overrides,
   };
 }
@@ -135,5 +136,28 @@ describe("合并组页", () => {
     draw(payload());
     await waitFor(() => expect(screen.getByText("展开这 2 笔")).toBeInTheDocument());
     expect(screen.queryByText(/← /)).toBeNull();
+  });
+
+  it("这一组的分类是下拉框，候选就是账单里出现过的分类", async () => {
+    draw(payload());
+    await waitFor(() => expect(screen.getByText("展开这 2 笔")).toBeInTheDocument());
+
+    const select = screen.getByLabelText("分类") as HTMLSelectElement;
+    expect(select.tagName).toBe("SELECT");
+    expect([...select.options].map((option) => option.textContent)).toEqual([
+      "未分类",
+      "餐饮美食",
+      "转账",
+    ]);
+  });
+
+  it("组里的分类不在候选里时也留着，不能一渲染就变空", async () => {
+    // 早先手输过的分类可能已经从账本里消失，候选里就没有它。
+    draw(payload({ groups: [group({ category: "旧分类" })] }));
+    await waitFor(() => expect(screen.getByText("展开这 2 笔")).toBeInTheDocument());
+
+    const select = screen.getByLabelText("分类") as HTMLSelectElement;
+    expect(select.value).toBe("旧分类");
+    expect([...select.options].map((option) => option.textContent)).toContain("旧分类");
   });
 });

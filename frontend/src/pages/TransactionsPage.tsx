@@ -73,6 +73,14 @@ export function TransactionsPage() {
     mutationFn: () => createGroup(selected),
     onSuccess: (body) => {
       setSelected([]);
+      // 合并之后那两笔在列表里变成了一行：回来的目标要记成新的合并行，而不是
+      // 已经不存在的那一笔。不记的话，「← 交易记录」回去只会落在列表顶上。
+      saveAnchor(anchorKey(location.pathname, location.search), `group-${body.group_id}`);
+      // 两份缓存都作废：交易记录里那几笔已经合走，组页里也多了这一组。留在缓存里
+      // 的话，回去先画的是合并前那份旧数据——锚点对应的行还没出现，定位和闪一下
+      // 就都扑空了。
+      client.removeQueries({ queryKey: ["transactions"] });
+      client.removeQueries({ queryKey: ["groups"] });
       // 新组按组内最早那一笔的日期排，可能落在很下面——直接带过去并亮一下。
       // 带上原列表地址，合并组页才有「← 交易记录」可回。
       navigate(`/groups?created=${body.group_id}&group=${body.group_id}`, {
@@ -386,7 +394,9 @@ function Row({
       className={cn(
         "transition-colors duration-700",
         hidden && "text-muted",
-        highlighted && "bg-accent/10",
+        // 用暖色闪：合并行本来就带一层淡蓝底色，再用强调色的深浅变化就分不出
+        // 「这一行是合并的」和「刚回到这一行」。
+        highlighted && "bg-warn/20",
       )}
     >
       <TD>
@@ -438,7 +448,7 @@ function Row({
           {hidden ? <Tag>已隐藏</Tag> : null}
         </span>
       </TD>
-      <TD className={cn("text-right", STICKY, highlighted && "bg-accent/10")}>
+      <TD className={cn("text-right", STICKY, highlighted && "bg-warn/20")}>
         <Button variant="ghost" size="sm" onClick={onHide}>
           {hidden ? "还原" : "隐藏"}
         </Button>
@@ -468,8 +478,8 @@ function GroupRow({
         data-flash={highlighted ? "1" : undefined}
         className={cn(
           "transition-colors duration-700",
-          // 合并行本来就有底色，闪的时候只能加深，不然看不出变化。
-          highlighted ? "bg-accent/15" : "bg-accent/5",
+          // 合并行本来就有底色；闪的时候换成暖色，跟「这一行是合并的」区分开。
+          highlighted ? "bg-warn/20" : "bg-accent/5",
         )}
       >
         <TD />
@@ -488,7 +498,7 @@ function GroupRow({
           className={cn(
             "text-right",
             STICKY,
-            highlighted ? "bg-accent/15" : "bg-accent/5",
+            highlighted ? "bg-warn/20" : "bg-accent/5",
           )}
         >
           {/* 合并行不是一条记录，进不了详情页——它只能去合并组页取消合并。

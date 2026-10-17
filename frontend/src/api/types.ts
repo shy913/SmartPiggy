@@ -281,6 +281,8 @@ export type GroupsPayload = {
   groups: GroupRow[];
   members: Record<string, MemberRow[]>;
   display_currency: string;
+  /** 库里出现过的分类名，给这一组改分类时做下拉候选。 */
+  categories: string[];
 };
 
 // --------------------------------------------------------------------------

@@ -135,6 +135,7 @@ export function GroupsPage() {
                 <GroupCard
                   group={group}
                   members={data.members[String(group.id)] ?? []}
+                  categories={data.categories}
                   displayCurrency={data.display_currency}
                   open={openGroups.has(group.id)}
                   onToggle={(open) =>
@@ -162,6 +163,7 @@ export function GroupsPage() {
 function GroupCard({
   group,
   members,
+  categories,
   displayCurrency,
   open,
   onToggle,
@@ -172,6 +174,7 @@ function GroupCard({
 }: {
   group: GroupRow;
   members: MemberRow[];
+  categories: string[];
   displayCurrency: string;
   open: boolean;
   onToggle: (open: boolean) => void;
@@ -186,6 +189,11 @@ function GroupCard({
   const [note, setNote] = useState(group.note);
   const [error, setError] = useState("");
 
+  // 组里存着的分类可能来自早先的手输，候选里不一定有。补上这一项，否则下拉框
+  // 找不到对应的 option，会显示成空——看起来就像分类丢了。
+  const categoryOptions =
+    category && !categories.includes(category) ? [...categories, category] : categories;
+
   const save = useMutation({
     mutationFn: () => updateGroup(group.id, { title, category, note }),
     onSuccess: onSaved,
@@ -199,7 +207,7 @@ function GroupCard({
       data-flash={highlight ? "1" : undefined}
       className={cn(
         "transition-colors duration-700",
-        highlight && "border-accent/50 bg-accent/5",
+        highlight && "border-warn/60 bg-warn/10",
       )}
     >
       <div className="flex flex-wrap items-baseline gap-3">
@@ -235,7 +243,7 @@ function GroupCard({
               data-flash={highlightMemberId === member.id ? "1" : undefined}
               className={cn(
                 "flex flex-wrap items-center gap-3 py-1 transition-colors duration-700",
-                highlightMemberId === member.id && "bg-accent/10",
+                highlightMemberId === member.id && "bg-warn/20",
               )}
             >
               <span className="text-muted">{minute(member.occurred_at)}</span>
@@ -267,7 +275,18 @@ function GroupCard({
           <Input value={title} onChange={(event) => setTitle(event.target.value)} />
         </Field>
         <Field label="分类">
-          <Input value={category} onChange={(event) => setCategory(event.target.value)} />
+          <select
+            className="h-9 rounded-md border border-border bg-bg px-2 text-sm"
+            value={category}
+            onChange={(event) => setCategory(event.target.value)}
+          >
+            <option value="">未分类</option>
+            {categoryOptions.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
         </Field>
         <Field label="备注">
           <Input value={note} onChange={(event) => setNote(event.target.value)} />
