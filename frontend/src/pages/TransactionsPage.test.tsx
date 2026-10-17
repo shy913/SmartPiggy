@@ -111,6 +111,15 @@ afterEach(() => {
 });
 
 describe("交易记录页", () => {
+  it("页头有「记一笔」的入口", async () => {
+    draw(listBody());
+    await waitFor(() => expect(screen.getByText("共 0 条。")).toBeInTheDocument());
+    expect(screen.getByRole("link", { name: "记一笔" })).toHaveAttribute(
+      "href",
+      "/transactions/new",
+    );
+  });
+
   it("页头那行字直接用服务端给的，不自己拼", async () => {
     draw(listBody({ total: 12, hidden_total: 3, hint: "共 12 条，其中 3 条已隐藏。" }));
     await waitFor(() =>
@@ -222,12 +231,23 @@ describe("交易记录页", () => {
     expect(screen.queryByRole("checkbox")).toBeNull();
   });
 
-  it("列的次序是 日期 / 金额 / 对方说明——先看什么时候、多少钱，再看花在哪儿", async () => {
+  it("列的次序是 日期 / 金额 / 对方 / 说明——先看什么时候、多少钱，再读是谁、买什么", async () => {
     draw(listBody({ total: 1, rows: [row()] }));
     await waitFor(() => expect(screen.getByText("美团平台商户")).toBeInTheDocument());
 
     const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
-    expect(headers).toEqual(["", "日期", "金额", "对方 / 说明", "操作"]);
+    expect(headers).toEqual(["", "日期", "金额", "对方", "说明", "操作"]);
+  });
+
+  it("对方和说明各占一列，谁都不吞掉谁", async () => {
+    draw(
+      listBody({
+        total: 1,
+        rows: [row({ counterparty: "苹果店", description: "iPad 保护壳" })],
+      }),
+    );
+    await waitFor(() => expect(screen.getByText("苹果店")).toBeInTheDocument());
+    expect(screen.getByText("iPad 保护壳")).toBeInTheDocument();
   });
 
   it("分类是个 emoji，名字挂在 tooltip 上", async () => {
@@ -237,12 +257,12 @@ describe("交易记录页", () => {
     expect(screen.getByTitle("餐饮美食")).toHaveTextContent("🍜");
   });
 
-  it("没分类的行不挂 emoji", async () => {
-    // 微信账单没有分类列，整本都是空的。给它们统一挂个通用图标，等于每行都
-    // 顶着同一个记号，白占地方。
+  it("没分类的行也给一个问号，位置不空着", async () => {
+    // 微信账单没有分类列，整本都是空的。空着会让两列的字忽左忽右，分不清是
+    // 「没分类」还是「没渲染出来」。
     draw(listBody({ total: 1, rows: [row({ effective_category: "", emoji: "" })] }));
     await waitFor(() => expect(screen.getByText("美团平台商户")).toBeInTheDocument());
-    expect(screen.queryByTitle("")).toBeNull();
+    expect(screen.getByTitle("未分类")).toHaveTextContent("❓");
   });
 
   it("返回时滚回原来的位置，并把刚点进去那一笔轻轻亮一下", async () => {
@@ -278,6 +298,45 @@ describe("交易记录页", () => {
 
     const saved = sessionStorage.getItem(anchorKey("/transactions", ""));
     expect(JSON.parse(saved!)).toMatchObject({ y: 480, target: "txn-3" });
+  });
+
+  it("合并之后回来，要落到的目标是新合并行而不是已经合走的那两笔", async () => {
+    // 合并前那两行已经不在列表里了，锚点还指向它们的话，回来什么都没有可定位。
+    vi.spyOn(window, "scrollY", "get").mockReturnValue(260);
+    vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    const user = userEvent.setup();
+    const body = listBody({
+      rows: [row({ id: 3 }), row({ id: 4, counterparty: "我先垫的" })],
+      total: 2,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: string, init?: RequestInit) => ({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify(init?.method === "POST" ? { group_id: 42 } : body),
+      })),
+    );
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={["/transactions"]}>
+          <TransactionsPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(screen.getByText("我先垫的")).toBeInTheDocument());
+
+    const boxes = screen.getAllByRole("checkbox");
+    await user.click(boxes[0]);
+    await user.click(boxes[1]);
+    await user.click(screen.getByRole("button", { name: "合并成一组" }));
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(sessionStorage.getItem(anchorKey("/transactions", ""))!),
+      ).toMatchObject({ y: 260, target: "group-42" }),
+    );
   });
 
   it("亮一下就淡出，不一直挂着", async () => {
@@ -318,6 +377,31 @@ describe("交易记录页", () => {
     expect(
       JSON.parse(sessionStorage.getItem(anchorKey("/transactions", ""))!),
     ).toMatchObject({ target: "group-12" });
+  });
+
+  it("按月汇总的收入合并行用收入色，不是支出色", async () => {
+    draw(
+      listBody({
+        total: 1,
+        group_count: 1,
+        rows: [
+          row({
+            id: null,
+            group_id: 12,
+            member_count: 3,
+            direction: "in",
+            display_cents: 300,
+            amount_cents: 300,
+            counterparty: "中欧基金管理有限公司 · 2026-09",
+            description: "余额宝-2026.09.05-收益发放",
+            effective_category: "投资理财",
+          }),
+        ],
+        members: { "12": [member()] },
+      }),
+    );
+    await waitFor(() => expect(screen.getByText("+3.00")).toBeInTheDocument());
+    expect(screen.getByText("+3.00").className).toContain("text-in");
   });
 
   it("展开合并组：主数是原币金额，换算过的那笔后面再跟一份换算结果", async () => {

@@ -83,6 +83,30 @@ describe("配色", () => {
     }
   });
 
+  it("分类色板相邻两色分得开，而且在面板上看得见", () => {
+    // 饼图的扇区靠颜色区分，相邻两块必须一眼能分开。这里钉的是**正常视觉**
+    // 的下限（15）；色盲模拟那一关在选色时用 dataviz 的 validator 跑过，
+    // 结果写进了 theme.json 的注释性顺序里——改了颜色就重跑一遍。
+    for (const name of THEME_NAMES) {
+      const theme = THEMES[name];
+      expect(theme.series.length, `${name} 的分类色板太短`).toBeGreaterThanOrEqual(6);
+      for (let index = 0; index < theme.series.length; index += 1) {
+        const colour = theme.series[index];
+        expect(colour, `${name} 的第 ${index + 1} 个分类色不是 hex`).toMatch(/^#[0-9a-f]{6}$/i);
+        // 图形元素只需要 3:1；文字才要 4.5:1。
+        const ratio = contrast(colour, theme.panel);
+        expect(ratio, `${name} 的分类色 ${colour} 在面板上只有 ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
+        const next = theme.series[index + 1];
+        if (next) {
+          expect(
+            deltaE(colour, next),
+            `${name} 的分类色 ${colour} 与 ${next} 太接近`,
+          ).toBeGreaterThanOrEqual(15);
+        }
+      }
+    }
+  });
+
   it("四套主题都在，而且各自带一个模式", () => {
     expect(THEME_NAMES).toEqual(["dark", "light", "dark-teal", "light-teal"]);
     for (const name of THEME_NAMES) {
