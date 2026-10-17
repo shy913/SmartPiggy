@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { SummaryPage } from "./SummaryPage";
-import type { Summary } from "../api/types";
+import type { AccountOverview, Summary } from "../api/types";
 
 function summaryBody(overrides: Partial<Summary> = {}): Summary {
   return {
@@ -48,6 +48,33 @@ function summaryBody(overrides: Partial<Summary> = {}): Summary {
     large: [],
     ranking: [],
     ranking_counts: {},
+    accounts: [],
+    ...overrides,
+  };
+}
+
+function account(overrides: Partial<AccountOverview> = {}): AccountOverview {
+  return {
+    id: 1,
+    name: "支付宝",
+    kind: "alipay",
+    last_import_at: "2026-10-15T20:11:00",
+    days_since_import: 2,
+    never_imported: false,
+    stale: false,
+    totals: [
+      {
+        display_currency: "CNY",
+        income: 0,
+        expense: 3250,
+        neutral_amount: 0,
+        neutral_count: 0,
+        large_income: 0,
+        large_expense: 0,
+        large_count: 0,
+        total: 2,
+      },
+    ],
     ...overrides,
   };
 }
@@ -124,6 +151,7 @@ describe("汇总页", () => {
             display_cents: 88800,
             display_signed_cents: -88800,
             display_currency: "CNY",
+            emoji: "📱",
           },
         ],
       }),
@@ -131,6 +159,7 @@ describe("汇总页", () => {
     await waitFor(() =>
       expect(screen.getByRole("heading", { name: /不计入合计的大额（1 笔）/ })).toBeInTheDocument(),
     );
+    expect(screen.getByTitle("数码电器")).toHaveTextContent("📱");
   });
 
   it("排行只列前 N 条时，要说清还有多少笔", async () => {
@@ -147,6 +176,7 @@ describe("汇总页", () => {
       display_cents: 1000 - index,
       display_signed_cents: -(1000 - index),
       display_currency: "CNY",
+      emoji: "",
     });
     draw(summaryBody({ ranking: [row(1), row(2)], ranking_counts: { CNY: 25 } }));
     await waitFor(() => expect(screen.getByText(/另有 23 笔未列出/)).toBeInTheDocument());
@@ -169,6 +199,7 @@ describe("汇总页", () => {
             display_cents: 4000,
             display_signed_cents: -4000,
             display_currency: "CNY",
+            emoji: "🍜",
           },
         ],
       }),
@@ -182,5 +213,90 @@ describe("汇总页", () => {
     await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
     const called = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(called).toContain("range=all");
+  });
+
+  it("账户区显示每个账户上次导入的日期和距今几天", async () => {
+    draw(summaryBody({ accounts: [account()] }));
+    await waitFor(() => expect(screen.getByText("上次导入")).toBeInTheDocument());
+    expect(screen.getByText("2026-10-15")).toBeInTheDocument();
+    expect(screen.getByText("2 天前")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "支付宝" })).toHaveAttribute(
+      "href",
+      "/transactions?account=1",
+    );
+  });
+
+  it("超过阈值没导入时在首页提醒，并链到导入页", async () => {
+    draw(
+      summaryBody({
+        accounts: [account({ name: "中国银行", days_since_import: 45, stale: true })],
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/中国银行 已 45 天没导入/)).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("link", { name: "去导入 →" })).toHaveAttribute("href", "/import");
+  });
+
+  it("从没导入过的账户也提醒，不写成「已 null 天」", async () => {
+    draw(
+      summaryBody({
+        accounts: [
+          account({
+            name: "中国银行",
+            last_import_at: null,
+            days_since_import: null,
+            never_imported: true,
+            stale: true,
+          }),
+        ],
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/中国银行 从未导入/)).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/null 天/)).not.toBeInTheDocument();
+  });
+
+  it("没有超期账户时不出提醒", async () => {
+    draw(summaryBody({ accounts: [account()] }));
+    await waitFor(() => expect(screen.getByText("上次导入")).toBeInTheDocument());
+    expect(screen.queryAllByText(/没导入/)).toHaveLength(0);
+    expect(screen.queryAllByText(/从未导入/)).toHaveLength(0);
+  });
+
+  it("「全部记录」没有起止日期，不显示日均支出", async () => {
+    draw(
+      summaryBody({
+        range: { ...summaryBody().range, mode: "all", start: "", end: "", label: "全部记录" },
+      }),
+    );
+    await waitFor(() => expect(screen.getByText("总计")).toBeInTheDocument());
+    expect(screen.queryByText("日均支出")).not.toBeInTheDocument();
+    // 单笔最大不依赖区间长度，仍在。
+    expect(screen.getByText("单笔最大")).toBeInTheDocument();
+  });
+
+  it("有起止日期时显示日均支出和单笔最大", async () => {
+    const row = {
+      id: 1,
+      group_id: null,
+      member_count: 1,
+      occurred_at: "2026-10-03 12:00:00",
+      occurred_date: "2026-10-03",
+      counterparty: "某商户",
+      description: "",
+      memo: "",
+      effective_category: "餐饮美食",
+      display_cents: 4000,
+      display_signed_cents: -4000,
+      display_currency: "CNY",
+      emoji: "🍜",
+    };
+    draw(summaryBody({ ranking: [row] }));
+    await waitFor(() => expect(screen.getByText("日均支出")).toBeInTheDocument());
+    expect(screen.getByText("单笔最大")).toBeInTheDocument();
+    // 同一个数也会出现在下面的排行里，所以不要求唯一。
+    expect(screen.getAllByText("40.00").length).toBeGreaterThan(0);
   });
 });

@@ -11,6 +11,7 @@ function group(overrides: Partial<GroupRow> = {}): GroupRow {
   return {
     id: 7,
     origin: "auto",
+    kind: "net",
     title: "",
     category: "",
     note: "",
