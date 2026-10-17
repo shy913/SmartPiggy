@@ -33,6 +33,12 @@ def test_builtin_profiles_all_load_and_validate():
         assert profiles.validate(profile) == [], profile.name
 
 
+def test_alipay_marks_bu_ji_shou_zhi_as_hidden():
+    loaded = {profile.name: profile for profile in profiles.load_all()}
+    assert loaded["alipay"].hidden_values == ("不计收支",)
+    assert loaded["wechat"].hidden_values == ()
+
+
 def test_detect_picks_alipay_for_an_alipay_file():
     loaded = profiles.load_all()
     table = read_table("支付宝账单.csv", alipay_csv(), probes=probes_of(loaded))
