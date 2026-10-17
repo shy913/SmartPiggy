@@ -176,17 +176,25 @@ export function SpendTrendChart({
  * 指标卡背景里的迷你趋势。**不抢字**：线和填充都很淡，没有轴、没有标签，
  * 只提供「最近是往上还是往下」这一层信息；具体数仍然以正文为准。
  *
- * 那条虚线是区间日均。它可以和某一天/某个月的柱子形成对照：线在上面的那些
- * 天就是花超了。
+ * 那条虚线是这一段的日均。它可以和某一天/某个月的柱子形成对照：线在上面的
+ * 那些天就是花超了。日期栏里两条线并排时不画虚线，只留走势。
  */
 export function Sparkline({
   points,
+  series = "expense",
   average,
   theme,
+  area = true,
+  dashed = true,
 }: {
   points: TrendPoint[];
+  series?: "expense" | "income";
   average: number;
   theme: string;
+  /** 卡片背景里留一层很淡的填充；两条线叠在一起时关掉。 */
+  area?: boolean;
+  /** 画不画那条日均虚线。日期栏的背景只留走势，不需要第二条虚线。 */
+  dashed?: boolean;
 }) {
   const palette = paletteOf(theme);
   if (points.length < 2) return null;
@@ -194,12 +202,13 @@ export function Sparkline({
   const width = 100;
   const height = 40;
   const pad = 3;
-  const values = points.map((point) => point.expense);
-  const max = Math.max(...values, average, 1);
+  const values = points.map((point) => point[series]);
+  const max = Math.max(...values, dashed ? average : 0, 1);
   const x = (index: number) => (index / (values.length - 1)) * width;
   const y = (value: number) => height - (value / max) * (height - pad * 2) - pad;
   const path = values.map((value, index) => `${x(index)},${y(value)}`).join(" ");
-  const area = `0,${height} ${path} ${width},${height}`;
+  const polygon = `0,${height} ${path} ${width},${height}`;
+  const color = series === "expense" ? palette.expense : palette.income;
 
   return (
     <svg
@@ -208,23 +217,23 @@ export function Sparkline({
       className="pointer-events-none absolute inset-0 h-full w-full"
       aria-hidden
     >
-      <polygon points={area} fill={palette.expense} fillOpacity={0.06} />
+      {area ? <polygon points={polygon} fill={color} fillOpacity={0.05} /> : null}
       <polyline
         points={path}
         fill="none"
-        stroke={palette.expense}
-        strokeOpacity={0.22}
+        stroke={color}
+        strokeOpacity={0.16}
         strokeWidth={1.5}
         vectorEffect="non-scaling-stroke"
       />
-      {average > 0 ? (
+      {dashed && average > 0 ? (
         <line
           x1={0}
           x2={width}
           y1={y(average)}
           y2={y(average)}
           stroke={palette.muted}
-          strokeOpacity={0.35}
+          strokeOpacity={0.28}
           strokeDasharray="3 3"
           strokeWidth={1}
           vectorEffect="non-scaling-stroke"

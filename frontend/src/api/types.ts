@@ -135,7 +135,7 @@ export type DashboardCategory = {
   total: number;
 };
 
-export type TrendPoint = { key: string; expense: number };
+export type TrendPoint = { key: string; expense: number; income: number };
 
 /**
  * 首页概览。一次只含**一个币种**的数——预测、平均、趋势、排行都不跨币种。
@@ -169,8 +169,10 @@ export type Dashboard = {
     bucket: "day" | "month";
     points: TrendPoint[];
     total: number;
+    income_total: number;
     peak: TrendPoint | null;
     average: number;
+    income_average: number;
   };
   categories: DashboardCategory[];
   singles: LedgerRow[];

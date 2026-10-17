@@ -213,40 +213,51 @@ def _trend(connection, code: str, mode: str, start: date, end: date, today: date
     if visible_end < start:
         visible_end = start
 
-    rows = repo.expense_series(
+    rows = repo.trend_series(
         connection,
         bucket=bucket,
         start=start.isoformat(),
         end=visible_end.isoformat(),
     )
     found = {
-        row["bucket"]: row["expense"]
+        row["bucket"]: row
         for row in rows
         if row["display_currency"] == code
     }
+
+    def amount(key: str, name: str) -> int:
+        row = found.get(key)
+        return int(row[name]) if row is not None else 0
 
     points: list[dict] = []
     if bucket == "day":
         cursor = start
         while cursor <= visible_end:
             key = cursor.isoformat()
-            points.append({"key": key, "expense": found.get(key, 0)})
+            points.append(
+                {"key": key, "expense": amount(key, "expense"), "income": amount(key, "income")}
+            )
             cursor += timedelta(days=1)
     else:
         cursor = start.replace(day=1)
         while cursor <= visible_end:
             key = _month_text(cursor)
-            points.append({"key": key, "expense": found.get(key, 0)})
+            points.append(
+                {"key": key, "expense": amount(key, "expense"), "income": amount(key, "income")}
+            )
             cursor = _shift_month(cursor, 1)
 
     total = sum(point["expense"] for point in points)
+    income_total = sum(point["income"] for point in points)
     peak = max(points, key=lambda point: point["expense"]) if points else None
     return {
         "bucket": bucket,
         "points": points,
         "total": total,
+        "income_total": income_total,
         "peak": peak if peak and peak["expense"] > 0 else None,
         "average": _round_divide(total, len(points)),
+        "income_average": _round_divide(income_total, len(points)),
     }
 
 

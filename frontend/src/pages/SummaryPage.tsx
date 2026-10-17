@@ -235,8 +235,20 @@ function DashboardView({
         )}
       </div>
 
-      <Card className="mb-4">
-        <div className="flex items-center justify-between gap-2">
+      <Card className="relative mb-4 overflow-hidden">
+        {/* 日期栏自己的背景：这一段区间的支出走势。只铺在日期那一带、向下渐隐，
+            不填空也不画均值线——它是上下文，不是第二张要读的图。 */}
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-24 opacity-60 [mask-image:linear-gradient(to_bottom,black_45%,transparent)]">
+          <Sparkline
+            points={data.trend.points}
+            series="expense"
+            average={0}
+            theme={theme}
+            area={false}
+            dashed={false}
+          />
+        </div>
+        <div className="relative flex items-center justify-between gap-2">
           <Button
             type="button"
             variant="outline"
@@ -267,7 +279,7 @@ function DashboardView({
 
         {/* 「按月 / 按年」是区间粒度，「回到本月」是一次跳转。两件事不做成
             并排的三个按钮：那会让「本月」看起来也是一种粒度。 */}
-        <div className="mt-3 flex flex-wrap items-center justify-center gap-3">
+        <div className="relative mt-3 flex flex-wrap items-center justify-center gap-3">
           <div className="flex items-center rounded-md border border-border p-0.5 text-xs">
             {(
               [
@@ -409,6 +421,14 @@ function Kpis({
         tone="text-out"
         href={filtered("out")}
         back={back}
+        spark={
+          <Sparkline
+            points={data.trend.points}
+            series="expense"
+            average={data.trend.average}
+            theme={theme}
+          />
+        }
       >
         <Delta data={data} />
       </MetricCard>
@@ -418,6 +438,14 @@ function Kpis({
         tone="text-in"
         href={filtered("in")}
         back={back}
+        spark={
+          <Sparkline
+            points={data.trend.points}
+            series="income"
+            average={data.trend.income_average}
+            theme={theme}
+          />
+        }
       />
       <MetricCard
         label="结余"

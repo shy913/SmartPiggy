@@ -32,7 +32,6 @@ __all__ = [
     "dissolve_group",
     "ensure_account",
     "existing_dedup",
-    "expense_series",
     "finalize_import",
     "find_account",
     "fingerprints",
@@ -54,6 +53,7 @@ __all__ = [
     "reclassify",
     "save_issues",
     "transaction_categories",
+    "trend_series",
     "transaction_currencies",
     "transactions_for_import",
     "update_group",
@@ -869,17 +869,17 @@ def by_month(
     ).fetchall()
 
 
-def expense_series(
+def trend_series(
     connection: sqlite3.Connection,
     *,
     bucket: str = "day",
     start: str | None = None,
     end: str | None = None,
 ) -> list[sqlite3.Row]:
-    """区间内每个时间桶的支出，按显示币种分开。
+    """区间内每个时间桶的收入和支出，按显示币种分开。
 
-    ``bucket`` 只认 ``'day'`` / ``'month'``。口径跟合计完全一致：中性行不是支出，
-    大额被剔出合计，也就不进这条线——图上画一根它没算进去的柱子，等于让图去
+    ``bucket`` 只认 ``'day'`` / ``'month'``。口径跟合计完全一致：中性行不是收支，
+    大额被剔出合计，也就不进这两条线——图上画一根它没算进去的柱子，等于让图去
     推翻旁边那几个数。
 
     **不补零桶**。哪一天、哪个月一笔都没有，这里就没有那一行；补零是界面的事，
@@ -903,7 +903,11 @@ def expense_series(
                COALESCE(SUM(
                  CASE WHEN t.direction = 'out' AND NOT {_is_large(conf, "t.")}
                       THEN {amount} END
-               ), 0) AS expense
+               ), 0) AS expense,
+               COALESCE(SUM(
+                 CASE WHEN t.direction = 'in' AND NOT {_is_large(conf, "t.")}
+                      THEN {amount} END
+               ), 0) AS income
         FROM effective t
         WHERE {where}
         GROUP BY bucket, display_currency

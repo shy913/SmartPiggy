@@ -72,6 +72,12 @@ def test_the_dashboard_opens_on_this_month(client, book):
     assert body["trend"]["points"][0]["key"] == f"{now.isoformat()[:7]}-01"
     assert body["trend"]["points"][-1]["key"] == now.isoformat()
     assert sum(point["expense"] for point in body["trend"]["points"]) == 1000
+    # 收入也走同一条序列，给指标卡的背景折线用；大额和中性同样不进。
+    assert body["trend"]["income_total"] == 5000
+    assert sum(point["income"] for point in body["trend"]["points"]) == 5000
+    assert body["trend"]["income_average"] == (5000 + len(body["trend"]["points"]) // 2) // len(
+        body["trend"]["points"]
+    )
 
 
 def test_the_dashboard_can_be_pinned_to_a_past_month(client, book):
@@ -101,7 +107,8 @@ def test_the_dashboard_can_be_pinned_to_a_past_month(client, book):
     assert body["previous"]["start"] == "2025-12-01"
     assert body["previous"]["end"] == "2025-12-31"
     assert len(body["trend"]["points"]) == 31
-    assert body["trend"]["peak"] == {"key": "2026-01-05", "expense": 700}
+    assert body["trend"]["peak"]["key"] == "2026-01-05"
+    assert body["trend"]["peak"]["expense"] == 700
 
 
 def test_the_dashboard_can_compare_the_current_month_to_the_same_days(client, book):
