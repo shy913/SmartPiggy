@@ -2,6 +2,7 @@ import { Link, useLocation, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ApiError, deleteImport, getImport, listImports } from "../api/client";
+import { BackPill } from "../components/BackLink";
 import { Button } from "../components/ui/button";
 import { Card, Section } from "../components/ui/card";
 import { ErrorText, Hint } from "../components/ui/bits";
@@ -75,9 +76,7 @@ export function ImportDetailPage() {
 
   return (
     <div>
-      <Link className="text-accent underline" to={nav?.from ?? "/imports"}>
-        ← {nav?.backLabel ?? "导入记录"}
-      </Link>
+      <BackPill to={nav?.from ?? "/imports"} label={nav?.backLabel ?? "导入记录"} />
       <h1 className="mb-4 mt-3 text-xl font-semibold">{record.filename}</h1>
 
       <Card>

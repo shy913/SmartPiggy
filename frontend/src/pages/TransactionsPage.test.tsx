@@ -135,7 +135,7 @@ describe("交易记录页", () => {
       pathname: "/transactions",
       state: { from: "/?range=month&month=2026-10", backLabel: "汇总" },
     });
-    const back = await screen.findByRole("link", { name: /← 汇总/ });
+    const back = await screen.findByRole("link", { name: "汇总" });
     expect(back).toHaveAttribute("href", "/?range=month&month=2026-10");
   });
 
