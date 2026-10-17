@@ -202,6 +202,26 @@ MIGRATIONS: list[list[str]] = [
         FROM transactions t
         """,
     ],
+    [
+        # v5：按月汇总收益。它跟 AA / 收支平衡的「净额」不是一回事：中性行
+        # 带方向相加恒为 0，而这里要的是「一个月里所有收益加起来」。所以组多
+        # 一个 kind，账本按 kind 决定合成行的金额与方向。老组一律是 net。
+        "ALTER TABLE tx_groups ADD COLUMN kind TEXT NOT NULL DEFAULT 'net'"
+        " CHECK (kind IN ('net','rollup'))",
+        # rollup 组的身份是「账户 + 对方 + 月份 + 币种」。拿它做唯一约束，
+        # 重复扫描或并发建组都不会冒出两个同月份的收益组。
+        "ALTER TABLE tx_groups ADD COLUMN rollup_key TEXT",
+        "CREATE UNIQUE INDEX ux_tx_groups_rollup_key"
+        " ON tx_groups(rollup_key) WHERE rollup_key IS NOT NULL",
+        # 取消一个 rollup 组时按 key 记住，而不是按「锚点那一笔」：以后补导入
+        # 一笔更早的收益，锚点会变，旧的 veto 就失效了。
+        """
+        CREATE TABLE tx_rollup_vetoes (
+          rollup_key TEXT PRIMARY KEY,
+          created_at TEXT NOT NULL
+        )
+        """,
+    ],
 ]
 
 

@@ -46,6 +46,9 @@ DEFAULT_KEYWORDS = (
     "repay",
     "split",
 )
+# 「说明里出现这些词的 neutral 记录，按自然月合成一条收入」。默认只认明确的
+# 收益发放；「自动转入」另有硬排除（见 groups.ROLLUP_EXCLUDE_KEYWORDS）。
+DEFAULT_ROLLUP_KEYWORDS = ("收益发放",)
 _CODE = re.compile(r"^[A-Z0-9]{1,8}$")
 
 # 「大额」阈值的默认值，单位是**显示币种的主单位**（500 就是 £500）。
