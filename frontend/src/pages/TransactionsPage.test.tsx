@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { TransactionsPage } from "./TransactionsPage";
-import type { TransactionList, TransactionRow } from "../api/types";
+import type { MemberRow, TransactionList, TransactionRow } from "../api/types";
+import { anchorKey } from "../lib/anchor";
 
 function listBody(overrides: Partial<TransactionList> = {}): TransactionList {
   return {
@@ -83,7 +84,29 @@ function draw(body: TransactionList, url = "/transactions") {
   );
 }
 
-afterEach(() => vi.unstubAllGlobals());
+function member(overrides: Partial<MemberRow> = {}): MemberRow {
+  return {
+    id: 21,
+    group_id: 12,
+    occurred_at: "2026-10-05 12:30:45",
+    direction: "out",
+    amount_cents: 12000,
+    currency: "CNY",
+    counterparty: "朋友还钱",
+    description: "",
+    effective_category: "转账",
+    display_cents: 12000,
+    emoji: "💸",
+    ...overrides,
+  };
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  sessionStorage.clear();
+});
 
 describe("交易记录页", () => {
   it("页头那行字直接用服务端给的，不自己拼", async () => {
@@ -203,5 +226,80 @@ describe("交易记录页", () => {
     draw(listBody({ total: 1, rows: [row({ effective_category: "", emoji: "" })] }));
     await waitFor(() => expect(screen.getByText("美团平台商户")).toBeInTheDocument());
     expect(screen.queryByTitle("")).toBeNull();
+  });
+
+  it("返回时滚回原来的位置，并把刚点进去那一笔轻轻亮一下", async () => {
+    const key = anchorKey("/transactions", "");
+    sessionStorage.setItem(
+      key,
+      JSON.stringify({ y: 480, target: "txn-3", at: Date.now() }),
+    );
+    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+
+    draw(listBody({ total: 1, rows: [row({ id: 3 })] }));
+    await waitFor(() => expect(screen.getByText("美团平台商户")).toBeInTheDocument());
+
+    expect(scrollTo).toHaveBeenCalledWith(0, 480);
+    expect(screen.getByText("美团平台商户").closest("tr")).toHaveAttribute("data-flash", "1");
+    // 取一次就删：下次再进这个地址不会又跳一遍。
+    expect(sessionStorage.getItem(key)).toBeNull();
+  });
+
+  it("没有锚点时不高亮——新打开列表不该有东西在闪", async () => {
+    draw(listBody({ total: 1, rows: [row({ id: 3 })] }));
+    await waitFor(() => expect(screen.getByText("美团平台商户")).toBeInTheDocument());
+    expect(screen.getByText("美团平台商户").closest("tr")).not.toHaveAttribute("data-flash");
+  });
+
+  it("点进详情之前，先把「现在的位置 + 这一笔」记下来", async () => {
+    vi.spyOn(window, "scrollY", "get").mockReturnValue(480);
+    const user = userEvent.setup();
+    draw(listBody({ total: 1, rows: [row({ id: 3 })] }));
+    await waitFor(() => expect(screen.getByText("美团平台商户")).toBeInTheDocument());
+
+    await user.click(screen.getByText("美团平台商户"));
+
+    const saved = sessionStorage.getItem(anchorKey("/transactions", ""));
+    expect(JSON.parse(saved!)).toMatchObject({ y: 480, target: "txn-3" });
+  });
+
+  it("亮一下就淡出，不一直挂着", async () => {
+    vi.useFakeTimers();
+    sessionStorage.setItem(
+      anchorKey("/transactions", ""),
+      JSON.stringify({ y: 0, target: "txn-3", at: Date.now() }),
+    );
+    draw(listBody({ total: 1, rows: [row({ id: 3 })] }));
+
+    // fake timers 下 waitFor 容易挂：把 React Query 排的零延时任务和 fetch
+    // 的微任务一起冲掉。
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const tr = () => screen.getByText("美团平台商户").closest("tr")!;
+    expect(tr()).toHaveAttribute("data-flash", "1");
+
+    act(() => vi.advanceTimersByTime(2500));
+    expect(tr()).not.toHaveAttribute("data-flash");
+  });
+
+  it("合并行点「管理」带上组号，并把这一行记成返回目标", async () => {
+    const user = userEvent.setup();
+    draw(
+      listBody({
+        total: 1,
+        group_count: 1,
+        rows: [row({ id: null, group_id: 12, member_count: 2, display_cents: 8000 })],
+        members: { "12": [member()] },
+      }),
+    );
+    await waitFor(() => expect(screen.getByText("管理")).toBeInTheDocument());
+
+    expect(screen.getByText("管理").closest("a")).toHaveAttribute("href", "/groups?group=12");
+    await user.click(screen.getByText("管理"));
+
+    expect(
+      JSON.parse(sessionStorage.getItem(anchorKey("/transactions", ""))!),
+    ).toMatchObject({ target: "group-12" });
   });
 });

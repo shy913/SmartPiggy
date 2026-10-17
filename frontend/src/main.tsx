@@ -18,6 +18,10 @@ const client = new QueryClient({
   },
 });
 
+// 浏览器自己的滚动恢复会在列表还没渲染出来的时候做，滚到一个半截高度上；
+// 我们自己按列表地址恢复（见 lib/useReturnAnchor.ts）。两者同时开就是打架。
+history.scrollRestoration = "manual";
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={client}>

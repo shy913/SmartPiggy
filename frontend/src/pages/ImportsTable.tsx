@@ -1,9 +1,19 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 import type { ImportRow } from "../api/types";
 import { NumTD, NumTH, Table, TableScroll, TBody, TD, TH, THead, TR } from "../components/ui/table";
+import { anchorKey, saveAnchor } from "../lib/anchor";
+import { cn } from "../lib/utils";
 
-export function ImportsTable({ imports }: { imports: ImportRow[] }) {
+export function ImportsTable({
+  imports,
+  highlightedId = null,
+}: {
+  imports: ImportRow[];
+  highlightedId?: number | null;
+}) {
+  const location = useLocation();
+  const back = `${location.pathname}${location.search}`;
   return (
     <TableScroll>
       <Table>
@@ -19,9 +29,24 @@ export function ImportsTable({ imports }: { imports: ImportRow[] }) {
         </THead>
         <TBody>
           {imports.map((row) => (
-            <TR key={row.id}>
+            <TR
+              key={row.id}
+              data-anchor-id={`import-${row.id}`}
+              data-flash={row.id === highlightedId ? "1" : undefined}
+              className={cn(
+                "transition-colors duration-700",
+                row.id === highlightedId && "bg-accent/10",
+              )}
+            >
               <TD>
-                <Link className="text-accent underline" to={`/imports/${row.id}`}>
+                <Link
+                  className="text-accent underline"
+                  to={`/imports/${row.id}`}
+                  state={{ from: back, backLabel: "导入记录" }}
+                  onClick={() =>
+                    saveAnchor(anchorKey(location.pathname, location.search), `import-${row.id}`)
+                  }
+                >
                   {row.filename}
                 </Link>
               </TD>

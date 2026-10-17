@@ -13,3 +13,10 @@ class ResizeObserverStub implements ResizeObserver {
 }
 
 globalThis.ResizeObserver = ResizeObserverStub;
+
+// jsdom 没有真正的滚动。列表恢复位置和高亮定位都要调这两个——缺桩会报
+// 「Not implemented」或者直接 undefined。
+window.scrollTo = () => {};
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {};
+}

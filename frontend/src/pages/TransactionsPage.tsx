@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -14,7 +14,10 @@ import type { MemberRow, TransactionRow } from "../api/types";
 import { Button } from "../components/ui/button";
 import { ErrorText, Field, Hint, Input, Tag } from "../components/ui/bits";
 import { NumTD, NumTH, Table, TableScroll, TBody, TD, TH, THead, TR } from "../components/ui/table";
+import { anchorKey, saveAnchor } from "../lib/anchor";
 import { formatAmount, minute } from "../lib/format";
+import { useFlash } from "../lib/useFlash";
+import { useReturnAnchor } from "../lib/useReturnAnchor";
 import { cn } from "../lib/utils";
 
 /** 一次多要多少条。跟服务端 `params.LIST_STEP` 是同一个节奏。 */
@@ -51,6 +54,10 @@ export function TransactionsPage() {
     queryFn: () => listTransactions(query),
   });
 
+  // 等行渲染出来再恢复滚动位置：页面还矮的时候 scrollTo 会被夹到 0。
+  const flashTarget = useReturnAnchor(!isPending && !!data);
+  const flashed = useFlash(flashTarget);
+
   const refresh = () => client.invalidateQueries({ queryKey: ["transactions"] });
 
   const hide = useMutation({
@@ -64,7 +71,8 @@ export function TransactionsPage() {
     mutationFn: () => createGroup(selected),
     onSuccess: (body) => {
       setSelected([]);
-      navigate(`/groups?created=${body.group_id}`);
+      // 新组按组内最早那一笔的日期排，可能落在很下面——直接带过去并亮一下。
+      navigate(`/groups?created=${body.group_id}&group=${body.group_id}`);
     },
     onError: (failure) => setError(failure instanceof ApiError ? failure.message : "没合上。"),
   });
@@ -163,12 +171,14 @@ export function TransactionsPage() {
                     key={`g${row.group_id}`}
                     row={row}
                     members={data.members[String(row.group_id)] ?? []}
+                    highlighted={flashed && flashTarget === `group-${row.group_id}`}
                   />
                 ) : (
                   <Row
                     key={row.id}
                     row={row}
                     selected={row.id !== null && selected.includes(row.id)}
+                    highlighted={flashed && flashTarget === `txn-${row.id}`}
                     onToggle={() => row.id !== null && toggle(row.id)}
                     onHide={() => row.id !== null && hide.mutate({ id: row.id, hidden: row.hidden === 1 })}
                   />
@@ -346,17 +356,31 @@ function FilterBar({
 function Row({
   row,
   selected,
+  highlighted,
   onToggle,
   onHide,
 }: {
   row: TransactionRow;
   selected: boolean;
+  highlighted: boolean;
   onToggle: () => void;
   onHide: () => void;
 }) {
   const hidden = row.hidden === 1;
+  const location = useLocation();
+  const back = `${location.pathname}${location.search}`;
+  const remember = () =>
+    saveAnchor(anchorKey(location.pathname, location.search), `txn-${row.id}`);
   return (
-    <TR className={cn(hidden && "text-muted")}>
+    <TR
+      data-anchor-id={`txn-${row.id}`}
+      data-flash={highlighted ? "1" : undefined}
+      className={cn(
+        "transition-colors duration-700",
+        hidden && "text-muted",
+        highlighted && "bg-accent/10",
+      )}
+    >
       <TD>
         {/* 隐藏的行不给勾选框：它既然被隐了，就不该还被批量操作捎上。 */}
         {hidden ? null : (
@@ -367,7 +391,12 @@ function Row({
         {row.id === null ? (
           minute(row.occurred_at)
         ) : (
-          <Link className="text-accent underline" to={`/transactions/${row.id}`}>
+          <Link
+            className="text-accent underline"
+            to={`/transactions/${row.id}`}
+            state={{ from: back, backLabel: "交易记录" }}
+            onClick={remember}
+          >
             {minute(row.occurred_at)}
           </Link>
         )}
@@ -389,14 +418,19 @@ function Row({
               一列会让别的列跟着挤。没分类的不挂，不然每行都顶同一个记号。 */}
           {row.emoji ? <span title={row.effective_category}>{row.emoji}</span> : null}
           {/* 日期和这里**两处都是链接**：手机上点哪一下都进得去，不用瞄准。 */}
-          <Link className="text-accent underline" to={`/transactions/${row.id}`}>
+          <Link
+            className="text-accent underline"
+            to={`/transactions/${row.id}`}
+            state={{ from: back, backLabel: "交易记录" }}
+            onClick={remember}
+          >
             {row.counterparty || row.description}
           </Link>
           {row.is_large ? <Tag>大额</Tag> : null}
           {hidden ? <Tag>已隐藏</Tag> : null}
         </span>
       </TD>
-      <TD className={cn("text-right", STICKY)}>
+      <TD className={cn("text-right", STICKY, highlighted && "bg-accent/10")}>
         <Button variant="ghost" size="sm" onClick={onHide}>
           {hidden ? "还原" : "隐藏"}
         </Button>
@@ -406,10 +440,30 @@ function Row({
 }
 
 /** 合并行：一行净额，下面挂一个可展开的原始成员列表。 */
-function GroupRow({ row, members }: { row: TransactionRow; members: MemberRow[] }) {
+function GroupRow({
+  row,
+  members,
+  highlighted,
+}: {
+  row: TransactionRow;
+  members: MemberRow[];
+  highlighted: boolean;
+}) {
+  const location = useLocation();
+  const target = `group-${row.group_id}`;
+  const remember = () =>
+    saveAnchor(anchorKey(location.pathname, location.search), target);
   return (
     <>
-      <TR className="bg-accent/5">
+      <TR
+        data-anchor-id={target}
+        data-flash={highlighted ? "1" : undefined}
+        className={cn(
+          "transition-colors duration-700",
+          // 合并行本来就有底色，闪的时候只能加深，不然看不出变化。
+          highlighted ? "bg-accent/15" : "bg-accent/5",
+        )}
+      >
         <TD />
         <TD className="whitespace-nowrap">{minute(row.occurred_at)}</TD>
         <NumTD className={row.display_cents === 0 ? "text-muted" : "text-out"}>
@@ -422,9 +476,20 @@ function GroupRow({ row, members }: { row: TransactionRow; members: MemberRow[] 
             <span className="text-xs text-muted">{row.member_count} 笔合计</span>
           </span>
         </TD>
-        <TD className={cn("text-right", STICKY, "bg-accent/5")}>
-          {/* 合并行不是一条记录，进不了详情页——它只能去合并组页取消合并。 */}
-          <Link className="text-accent underline" to="/groups">
+        <TD
+          className={cn(
+            "text-right",
+            STICKY,
+            highlighted ? "bg-accent/15" : "bg-accent/5",
+          )}
+        >
+          {/* 合并行不是一条记录，进不了详情页——它只能去合并组页取消合并。
+              带上 group 参数，组页才落得到这一组。 */}
+          <Link
+            className="text-accent underline"
+            to={`/groups?group=${row.group_id}`}
+            onClick={remember}
+          >
             管理
           </Link>
         </TD>

@@ -1,4 +1,4 @@
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ApiError, deleteImport, getImport, listImports } from "../api/client";
@@ -6,7 +6,11 @@ import { Button } from "../components/ui/button";
 import { Card, Section } from "../components/ui/card";
 import { ErrorText, Hint } from "../components/ui/bits";
 import { NumTD, NumTH, Table, TableScroll, TBody, TD, TH, THead, TR } from "../components/ui/table";
+import { anchorKey, saveAnchor } from "../lib/anchor";
 import { formatAmount } from "../lib/format";
+import { useFlash } from "../lib/useFlash";
+import { useReturnAnchor } from "../lib/useReturnAnchor";
+import { cn } from "../lib/utils";
 import { ImportsTable } from "./ImportsTable";
 
 export function ImportsPage() {
@@ -14,6 +18,13 @@ export function ImportsPage() {
     queryKey: ["imports", 100],
     queryFn: () => listImports(100),
   });
+
+  const flashTarget = useReturnAnchor(!isPending && !!data);
+  const flashed = useFlash(flashTarget);
+  const highlightedId =
+    flashed && flashTarget?.startsWith("import-")
+      ? Number(flashTarget.slice("import-".length))
+      : null;
 
   if (isPending) return <p className="text-muted">正在读取…</p>;
   if (error) return <ErrorText>{error.message}</ErrorText>;
@@ -28,7 +39,7 @@ export function ImportsPage() {
         </Link>
       </div>
       {data.imports.length ? (
-        <ImportsTable imports={data.imports} />
+        <ImportsTable imports={data.imports} highlightedId={highlightedId} />
       ) : (
         <p className="text-muted">还没有导入过。</p>
       )}
@@ -39,12 +50,17 @@ export function ImportsPage() {
 export function ImportDetailPage() {
   const { id } = useParams();
   const importId = Number(id);
+  const location = useLocation();
+  const nav = location.state as { from?: string; backLabel?: string } | null;
   const client = useQueryClient();
 
   const { data, isPending, error } = useQuery({
     queryKey: ["import", importId],
     queryFn: () => getImport(importId),
   });
+
+  const flashTarget = useReturnAnchor(!isPending && !!data);
+  const flashed = useFlash(flashTarget);
 
   const remove = useMutation({
     mutationFn: () => deleteImport(importId),
@@ -59,8 +75,8 @@ export function ImportDetailPage() {
 
   return (
     <div>
-      <Link className="text-accent underline" to="/imports">
-        ← 导入记录
+      <Link className="text-accent underline" to={nav?.from ?? "/imports"}>
+        ← {nav?.backLabel ?? "导入记录"}
       </Link>
       <h1 className="mb-4 mt-3 text-xl font-semibold">{record.filename}</h1>
 
@@ -127,11 +143,33 @@ export function ImportDetailPage() {
               {data.sample.map((row) => {
                 const value = row as Record<string, unknown>;
                 const cents = Number(value.display_cents ?? 0);
+                const highlighted = flashed && flashTarget === `txn-${value.id}`;
                 return (
-                  <TR key={String(value.id)}>
+                  <TR
+                    key={String(value.id)}
+                    data-anchor-id={`txn-${value.id}`}
+                    data-flash={highlighted ? "1" : undefined}
+                    className={cn(
+                      "transition-colors duration-700",
+                      highlighted && "bg-accent/10",
+                    )}
+                  >
                     <TD className="whitespace-nowrap">{String(value.occurred_at).slice(0, 16)}</TD>
                     <TD>
-                      <Link className="text-accent underline" to={`/transactions/${value.id}`}>
+                      <Link
+                        className="text-accent underline"
+                        to={`/transactions/${value.id}`}
+                        state={{
+                          from: `${location.pathname}${location.search}`,
+                          backLabel: "这次导入",
+                        }}
+                        onClick={() =>
+                          saveAnchor(
+                            anchorKey(location.pathname, location.search),
+                            `txn-${value.id}`,
+                          )
+                        }
+                      >
                         {String(value.counterparty || value.description || "")}
                       </Link>
                     </TD>

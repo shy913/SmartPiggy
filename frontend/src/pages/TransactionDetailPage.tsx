@@ -1,4 +1,4 @@
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ApiError, deleteTransaction, getTransaction, hideTransaction, unhideTransaction } from "../api/client";
@@ -14,10 +14,15 @@ function show(value: unknown): string {
   return text === "" ? "—" : text;
 }
 
+/** 列表点过来时把原地址和「从哪儿来」一并带上，返回才能回到原来那一屏。 */
+type BackState = { from?: string; backLabel?: string } | null;
+
 export function TransactionDetailPage() {
   const { id } = useParams();
   const txnId = Number(id);
   const navigate = useNavigate();
+  const location = useLocation();
+  const nav = location.state as BackState;
   const client = useQueryClient();
 
   const { data, isPending, error } = useQuery({
@@ -33,7 +38,8 @@ export function TransactionDetailPage() {
     },
     onSuccess: (_result, action) => {
       client.invalidateQueries();
-      if (action === "delete") navigate("/transactions");
+      // 删完仍回到原来那个列表，筛选不丢；行没了，位置恢复会自然落空。
+      if (action === "delete") navigate(nav?.from ?? "/transactions");
     },
   });
 
@@ -42,8 +48,11 @@ export function TransactionDetailPage() {
     return (
       <div>
         <ErrorText>{error instanceof ApiError ? error.message : "读不出来。"}</ErrorText>
-        <Link className="mt-3 inline-block text-accent underline" to="/transactions">
-          ← 交易记录
+        <Link
+          className="mt-3 inline-block text-accent underline"
+          to={nav?.from ?? "/transactions"}
+        >
+          ← {nav?.backLabel ?? "交易记录"}
         </Link>
       </div>
     );
@@ -55,9 +64,14 @@ export function TransactionDetailPage() {
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        {/* 回列表落在这一笔**现在待的那个月**：它可能已经被并进别个月的组了。 */}
-        <Link className="text-accent underline" to={`/transactions?start=${data.back_month}-01&end=`}>
-          ← 交易记录
+        {/* 从列表点进来时回到逐字相同的地址（筛选、limit 都在），位置和行由
+            sessionStorage 里的锚点接上。直接打开这一页才落到这一笔**现在待的
+            那个月**——它可能已经被并进别个月的组了。 */}
+        <Link
+          className="text-accent underline"
+          to={nav?.from ?? `/transactions?start=${data.back_month}-01&end=`}
+        >
+          ← {nav?.backLabel ?? "交易记录"}
         </Link>
       </div>
 
