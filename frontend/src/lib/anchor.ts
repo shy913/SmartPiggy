@@ -29,16 +29,51 @@ export function anchorKey(pathname: string, search: string) {
   return `${PREFIX}${pathname}${search}`;
 }
 
-/** 写在**点走的那一刻**：这时 `window.scrollY` 才是用户正在看的位置。 */
-export function saveAnchor(key: string, target: string | null) {
+/** 写一份指定位置和目标的锚点。`moveAnchor` 要搬原来的位置，所以单独拆出来。 */
+function writeAnchor(key: string, y: number, target: string | null) {
   try {
-    sessionStorage.setItem(
-      key,
-      JSON.stringify({ y: window.scrollY, target, at: Date.now() }),
-    );
+    sessionStorage.setItem(key, JSON.stringify({ y, target, at: Date.now() }));
   } catch {
     // 隐私模式不可写。恢复不了就算了，不能因此让链接点不动。
   }
+}
+
+/** 写在**点走的那一刻**：这时 `window.scrollY` 才是用户正在看的位置。 */
+export function saveAnchor(key: string, target: string | null) {
+  writeAnchor(key, window.scrollY, target);
+}
+
+/** `?` 前后拆开。不用 `new URL`：这里拿到的可能只是一个相对路径，也没有
+ *  协议和主机，拆成 pathname + search 就够了。 */
+function splitUrl(url: string): [string, string] {
+  const index = url.indexOf("?");
+  return index === -1 ? [url, ""] : [url.slice(0, index), url.slice(index)];
+}
+
+/** 把锚点从一屏搬到另一屏。
+ *
+ *  改一笔之后要回去的地址是重新拼出来的（这一笔现在待的那个月），跟离开列表
+ *  时那一屏的地址往往对不上——多几个参数或少几个参数，键就换了，锚点接不上，
+ *  回去既不定位也不高亮。搬过去之后，目标换成刚改的那一笔。
+ *
+ *  位置照搬原来的：月份变了的话像素位置不一定还对得上，但恢复之后目标行要是
+ *  不在视野里，`useReturnAnchor` 会把它居中，兜得住。从合并组、导入详情进来
+ *  时 `from` 不是列表，不能把那一页的锚点顺走。 */
+export function moveAnchor(
+  fromUrl: string | null | undefined,
+  toUrl: string,
+  target: string,
+) {
+  const [toPath, toSearch] = splitUrl(toUrl);
+  let y = window.scrollY;
+  if (fromUrl) {
+    const [fromPath, fromSearch] = splitUrl(fromUrl);
+    if (fromPath === toPath) {
+      const previous = takeAnchor(anchorKey(fromPath, fromSearch));
+      if (previous) y = previous.y;
+    }
+  }
+  writeAnchor(anchorKey(toPath, toSearch), y, target);
 }
 
 /** 取一次就删。StrictMode 下 effect 会跑两遍，第二遍自然拿到 null，天然幂等。 */

@@ -88,6 +88,13 @@ class Profile:
     scan_first_rows: int = DEFAULT_SCAN
     start_after: str | None = None
     columns: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    # [values.currency]：账单用「英镑 / 人民币」写币种时，映射成 ISO 代码。
+    # 键统一 casefold，查的时候不区分大小写。
+    currency_values: dict[str, str] = field(default_factory=dict)
+    # 对方里出现这些名字（子串）、或交易名称等于这些值时，记中性。
+    # 内部转账、购汇、退款不该被算成收入和支出。
+    neutral_counterparties: tuple[str, ...] = ()
+    neutral_descriptions: tuple[str, ...] = ()
     date_formats: tuple[str, ...] = DEFAULT_FORMATS
     default_time: str = DEFAULT_TIME
     sign_convention: str = "direction_column"
@@ -95,6 +102,9 @@ class Profile:
     in_values: tuple[str, ...] = ("收入",)
     out_values: tuple[str, ...] = ("支出",)
     neutral_values: tuple[str, ...] = ("不计收支", "/", "")
+    # 「收/支」列等于这些值的行，导入时就带上隐藏标记。方向仍按 neutral
+    # 那套判（金额留着、去重照常），只是默认不出现在合计和汇总里。
+    hidden_values: tuple[str, ...] = ()
     id_null_values: frozenset[str] = field(default_factory=frozenset)
     footer_patterns: tuple[str, ...] = ()
     min_columns: int = DEFAULT_MIN_COLUMNS
@@ -121,6 +131,13 @@ class Profile:
     def header_probes(self) -> tuple[str, ...]:
         """定位表头行时要全部命中的列名。"""
         return self.header_any or self.required_headers
+
+    def currency_code(self, raw: str) -> str:
+        """账单里的币种写法 → ISO 代码。没映射上就按原值大写。"""
+        value = (raw or "").strip()
+        if not value:
+            return self.default_currency
+        return self.currency_values.get(value.casefold(), value.upper())
 
     def id_column(self) -> tuple[str, ...]:
         return self.columns.get("source_txn_id", ())
@@ -202,6 +219,18 @@ def load_profile(path: Path, origin: str = "builtin") -> Profile:
             f"只能是：{'、'.join(SIGN_CONVENTIONS)}"
         )
 
+    # [values.currency] 是嵌套表：键是账单里的写法，值是 ISO 代码。
+    currency_values: dict[str, str] = {}
+    raw_currencies = values.get("currency") or {}
+    if not isinstance(raw_currencies, dict):
+        raise ProfileError(f"{path.name} 的 [values.currency] 必须是一张表。")
+    for label, code in raw_currencies.items():
+        key = str(label).strip().casefold()
+        value = str(code).strip().upper()
+        if not key or not value:
+            raise ProfileError(f"{path.name} 的 [values.currency] 里有空的名字或代码。")
+        currency_values[key] = value
+
     return Profile(
         name=name,
         title=str(meta.get("title") or name),
@@ -218,6 +247,9 @@ def load_profile(path: Path, origin: str = "builtin") -> Profile:
         scan_first_rows=int(headers.get("scan_first_rows") or DEFAULT_SCAN),
         start_after=headers.get("start_after") or None,
         columns=columns,
+        currency_values=currency_values,
+        neutral_counterparties=_as_tuple(parse.get("neutral_counterparties")),
+        neutral_descriptions=_as_tuple(parse.get("neutral_descriptions")),
         date_formats=_as_tuple(parse.get("date_formats")) or DEFAULT_FORMATS,
         default_time=str(parse.get("default_time") or DEFAULT_TIME),
         sign_convention=sign,
@@ -226,6 +258,7 @@ def load_profile(path: Path, origin: str = "builtin") -> Profile:
         out_values=_as_tuple(values.get("out")) or ("支出",),
         neutral_values=_as_tuple(values.get("neutral"))
         or ("不计收支", "/", ""),
+        hidden_values=_as_tuple(values.get("hidden")),
         id_null_values=frozenset(_as_tuple(dedup.get("id_null_values")) or ("", "/", "--", "0")),
         footer_patterns=_as_tuple(cleanup.get("footer_patterns")),
         min_columns=int(cleanup.get("min_columns") or DEFAULT_MIN_COLUMNS),
@@ -297,8 +330,10 @@ def validate(profile: Profile) -> list[str]:
                 "negative_is_out / negative_is_in，无法判断收还是支"
             )
 
-    if profile.format not in ("auto", "csv", "xlsx", "zip"):
-        problems.append(f"format「{profile.format}」不认识，只能是 auto/csv/xlsx/zip")
+    if profile.format not in ("auto", "csv", "xlsx", "zip", "pdf"):
+        problems.append(
+            f"format「{profile.format}」不认识，只能是 auto/csv/xlsx/zip/pdf"
+        )
 
     if profile.timezone:
         try:

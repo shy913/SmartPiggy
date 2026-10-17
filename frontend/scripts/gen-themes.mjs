@@ -40,8 +40,16 @@ const header = `/* 这个文件是生成的，别手改——改 src/theme/theme
 
 `;
 
+// 分类色板是数组，不能走上面那张「键 → 变量」表。饼图这类有多个并列序列的图
+// 按固定顺序取色，颜色跟着**实体**走、不跟着排名走（见 charts.tsx）。
+const seriesLines = (theme) =>
+  (theme.series ?? []).map((colour, index) => `  --series-${index + 1}: ${colour};`);
+
 const blocks = Object.entries(data.themes).map(([name, theme]) => {
-  const lines = VARIABLES.map(([key, variable]) => `  ${variable}: ${theme[key]};`);
+  const lines = [
+    ...VARIABLES.map(([key, variable]) => `  ${variable}: ${theme[key]};`),
+    ...seriesLines(theme),
+  ];
   // :root 那一份同时是 dark：没有 data-theme 时的样子。SPA 由服务端在外壳里
   // 注入 data-theme，所以这条主要是给「注入之前的第一帧」和测试兜底的。
   const selector =
@@ -61,6 +69,8 @@ export const DEFAULT_THEME: ThemeName = ${JSON.stringify(data.default)};
 // /api/meta 取——两边各写一遍「深色」这种话没有意义。
 export type Theme = {
 ${VARIABLES.map(([key]) => `  ${key}: string;`).join("\n")}
+  // 分类图（饼图等）的固定色序。按实体分配，不按排名循环。
+  series: string[];
   mode: string;
 };
 

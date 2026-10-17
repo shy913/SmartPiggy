@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -10,6 +10,39 @@ import { Button } from "../components/ui/button";
 import { Section } from "../components/ui/card";
 import { ErrorText, Field, Hint, Input } from "../components/ui/bits";
 import { cn } from "../lib/utils";
+
+type RateRow = SettingsValues["rates"][number];
+
+/** 账本里有、但汇率表里还没有的非显示币种，补成空行让人填。 */
+function withDetected(
+  rates: RateRow[],
+  display: string,
+  ledger: { currency: string; count: number }[],
+): RateRow[] {
+  const shown = display.trim().toUpperCase();
+  const rows = rates.map((row) => ({ ...row }));
+  const seen = new Set(
+    rows.map((row) => row.code.trim().toUpperCase()).filter(Boolean),
+  );
+  for (const item of ledger) {
+    const code = item.currency.trim().toUpperCase();
+    if (!code || code === shown || seen.has(code)) continue;
+    seen.add(code);
+    rows.push({ code, rate: "", detected: true, count: item.count });
+  }
+  return rows;
+}
+
+/** 空汇率行不提交（服务端会当成「有币种、没汇率」报错）；显示币种自己不配汇率。 */
+function submittable(rates: RateRow[], display: string): RateRow[] {
+  const shown = display.trim().toUpperCase();
+  return rates
+    .map((row) => ({
+      code: row.code.trim().toUpperCase(),
+      rate: row.rate.trim(),
+    }))
+    .filter((row) => row.code && row.rate && row.code !== shown);
+}
 
 export function SettingsPage() {
   const client = useQueryClient();
@@ -23,12 +56,30 @@ export function SettingsPage() {
     queryFn: getSettings,
   });
 
+  const ledger = data?.currencies ?? [];
+  const counts = new Map(
+    ledger.map((item) => [item.currency.toUpperCase(), item.count]),
+  );
+
+  // 首次拿到设置时，把账本里检测到的币种补进汇率表。只做一次：之后用户
+  // 正在填的内容不能被一次重新取数盖掉。
+  useEffect(() => {
+    if (!data || values) return;
+    setValues({
+      ...data.values,
+      rates: withDetected(data.values.rates, data.values.display, data.currencies),
+    });
+  }, [data, values]);
+
   const current = values ?? data?.values ?? null;
   const set = (patch: Partial<SettingsValues>) =>
     setValues({ ...(current as SettingsValues), ...patch });
 
   const save = useMutation({
-    mutationFn: () => saveSettings(current as SettingsValues),
+    mutationFn: () => {
+      const next = current as SettingsValues;
+      return saveSettings({ ...next, rates: submittable(next.rates, next.display) });
+    },
     onSuccess: () => {
       setErrors([]);
       setSaved(true);
@@ -40,7 +91,13 @@ export function SettingsPage() {
       if (failure instanceof ApiError) {
         setErrors([failure.message]);
         const echoed = (failure.body as { values?: SettingsValues } | null)?.values;
-        if (echoed) setValues(echoed);
+        // 服务端回显的是去掉检测标记的表单值；补回来，别让用户刚填的行消失。
+        if (echoed) {
+          setValues({
+            ...echoed,
+            rates: withDetected(echoed.rates, echoed.display, ledger),
+          });
+        }
       } else {
         setErrors(["没存上。"]);
       }
@@ -93,47 +150,83 @@ export function SettingsPage() {
         <Section title="币种与汇率">
           <div className="flex flex-wrap gap-4">
             <Field label="显示币种">
-              <Input value={current.display} onChange={(event) => set({ display: event.target.value })} />
+              <Input
+                value={current.display}
+                onChange={(event) => set({ display: event.target.value })}
+                onBlur={() => {
+                  // 规范化代码，并把新显示币种那一行去掉、把还没配汇率的
+                  // 币种补出来。放在失焦时做，免得边输入边重组列表。
+                  const display = current.display.trim().toUpperCase();
+                  if (!display) return;
+                  set({
+                    display,
+                    rates: withDetected(
+                      current.rates.filter(
+                        (row) => row.code.trim().toUpperCase() !== display,
+                      ),
+                      display,
+                      ledger,
+                    ),
+                  });
+                }}
+              />
             </Field>
             <Field label="时区（IANA 名字）">
               <Input value={current.timezone} onChange={(event) => set({ timezone: event.target.value })} />
             </Field>
           </div>
           <Hint>
-            账单里那些别的币种，在这里配一个兑显示币种的汇率。**没配汇率的币种会单独成组
-            列出来**，不会被按 1:1 混进合计。
+            账本里出现过的币种会自动列出来。没填汇率的币种仍按原币种单独显示，
+            不会按 1:1 混进合计。
           </Hint>
           <div className="mt-3 flex flex-col gap-2">
             <div className="flex gap-2 text-xs text-muted">
               <span className="w-24">币种</span>
-              <span>1 单位 = 多少显示币种</span>
+              <span>
+                1 {current.display.trim().toUpperCase() || "显示币种"} = 多少该币种
+              </span>
             </div>
-            {current.rates.map((row, index) => (
-              <div key={index} className="flex gap-2">
-                <Input
-                  className="w-24"
-                  placeholder="CNY"
-                  value={row.code}
-                  onChange={(event) => {
-                    const rates = current.rates.map((item, at) =>
-                      at === index ? { ...item, code: event.target.value } : item,
-                    );
-                    set({ rates });
-                  }}
-                />
-                <Input
-                  className="w-40"
-                  placeholder="8.9"
-                  value={row.rate}
-                  onChange={(event) => {
-                    const rates = current.rates.map((item, at) =>
-                      at === index ? { ...item, rate: event.target.value } : item,
-                    );
-                    set({ rates });
-                  }}
-                />
-              </div>
-            ))}
+            {current.rates.map((row, index) => {
+              const code = row.code.trim().toUpperCase();
+              const count = row.count ?? counts.get(code);
+              const missing = row.detected && !row.rate.trim();
+              return (
+                <div key={`${row.detected ? "d" : "r"}-${code}-${index}`} className="flex flex-wrap items-center gap-2">
+                  {row.detected ? (
+                    <span className="tabular w-24 text-sm">{row.code}</span>
+                  ) : (
+                    <Input
+                      className="w-24"
+                      placeholder="如 USD"
+                      value={row.code}
+                      onChange={(event) => {
+                        const rates = current.rates.map((item, at) =>
+                          at === index ? { ...item, code: event.target.value } : item,
+                        );
+                        set({ rates });
+                      }}
+                    />
+                  )}
+                  <Input
+                    className="w-40"
+                    placeholder="汇率"
+                    value={row.rate}
+                    onChange={(event) => {
+                      const rates = current.rates.map((item, at) =>
+                        at === index ? { ...item, rate: event.target.value } : item,
+                      );
+                      set({ rates });
+                    }}
+                  />
+                  {count !== undefined ? (
+                    <span className="text-xs text-muted">{count} 笔</span>
+                  ) : null}
+                  {missing ? (
+                    <span className="text-xs text-muted">未配汇率</span>
+                  ) : null}
+                </div>
+              );
+            })}
             <div>
               <Button
                 type="button"
@@ -206,6 +299,37 @@ export function SettingsPage() {
               onChange={(event) => set({ merge_keywords: event.target.value })}
             />
           </Field>
+        </Section>
+
+        <Section title="利息按月汇总">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={current.merge_rollup}
+              onChange={(event) => set({ merge_rollup: event.target.checked })}
+            />
+            把按日发放的利息按月合并成一条收入
+          </label>
+          <Field label="说明里包含哪些词算利息" className="mt-3">
+            <Input
+              value={current.merge_rollup_keywords}
+              onChange={(event) =>
+                set({ merge_rollup_keywords: event.target.value })
+              }
+            />
+          </Field>
+          <Hint>用顿号或逗号隔开；自动转入不算利息。</Hint>
+        </Section>
+
+        <Section title="导入提醒">
+          <Field label="超过多少天没导入账单就提醒" className="max-w-xs">
+            <Input
+              className="w-32"
+              value={current.stale_days}
+              onChange={(event) => set({ stale_days: event.target.value })}
+            />
+          </Field>
+          <Hint>填 0 表示不提醒；账户区仍会显示上次导入的时间。</Hint>
         </Section>
 
         {errors.length ? (

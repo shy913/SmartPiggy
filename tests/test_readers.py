@@ -118,7 +118,7 @@ def test_tsv_delimiter_is_detected():
     "filename, payload, fragment",
     [
         ("账单.xls", b"whatever", ".xls"),
-        ("账单.pdf", b"%PDF-1.4", "不认识"),
+        ("账单.docx", b"whatever", "不认识"),
     ],
 )
 def test_unsupported_types_are_rejected_with_a_readable_message(filename, payload, fragment):

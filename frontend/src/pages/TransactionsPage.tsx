@@ -11,14 +11,17 @@ import {
   unhideTransaction,
 } from "../api/client";
 import type { MemberRow, TransactionRow } from "../api/types";
+import { BackLink } from "../components/BackLink";
+import { CategoryMark } from "../components/CategoryMark";
 import { MemberAmount } from "../components/MemberAmount";
-import { Button } from "../components/ui/button";
+import { Button, buttonStyles } from "../components/ui/button";
 import { ErrorText, Field, Hint, Input, Tag } from "../components/ui/bits";
 import { NumTD, NumTH, Table, TableScroll, TBody, TD, TH, THead, TR } from "../components/ui/table";
 import { anchorKey, saveAnchor } from "../lib/anchor";
 import { formatSigned, minute } from "../lib/format";
 import { useFlash } from "../lib/useFlash";
 import { useReturnAnchor } from "../lib/useReturnAnchor";
+import type { BackState } from "../lib/useBack";
 import { cn } from "../lib/utils";
 
 /** 一次多要多少条。跟服务端 `params.LIST_STEP` 是同一个节奏。 */
@@ -35,29 +38,60 @@ const STEP = 200;
  */
 const STICKY = "sticky right-0 bg-bg";
 
+/**
+ * 合并记录的底色。
+ *
+ * 用实色而不是 `bg-accent/5`：那层半透明要是一格叠在行的同一层半透明底上，
+ * 就会比别处深一块（右侧钉住的那一格正是如此）；而且半透明底也盖不住横向
+ * 滚过去的内容。`color-mix` 把不透明度预先合进颜色里，两个问题一起没了。
+ */
+const GROUP_TINT = "bg-[color-mix(in_oklab,var(--accent)_5%,var(--bg))]";
+const GROUP_TINT_WARN = "bg-[color-mix(in_oklab,var(--warn)_20%,var(--bg))]";
+
 /** 方向 -> 金额前面那个符号。列表上没有单独的「收支」列：`. 符号 + 颜色`就说清了。 */
 function signed(row: { direction: string; display_cents: number }) {
   const value = row.direction === "neutral" ? 0 : row.display_cents;
   return row.direction === "out" ? -value : value;
 }
 
+/** 日期分两行：日子在上、钟点在下。并排的话这一列要宽出一截，挤的正是正文。 */
+function When({ value }: { value: string }) {
+  const text = minute(value);
+  return (
+    <span className="block text-xs leading-tight">
+      <span className="block">{text.slice(0, 10)}</span>
+      <span className="block text-muted">{text.slice(11)}</span>
+    </span>
+  );
+}
+
 export function TransactionsPage() {
   const [params, setParams] = useSearchParams();
   const location = useLocation();
+  // 从首页排行、KPI 或合并组点过来时带着回程地址。没有就照常从导航栏进出，
+  // 不凭空造一个「返回」——那会把人送到一个他没去过的地方。
+  const nav = location.state as BackState;
   const client = useQueryClient();
   const navigate = useNavigate();
   const [selected, setSelected] = useState<number[]>([]);
   const [category, setCategory] = useState("");
   const [error, setError] = useState("");
 
+  // 换筛选是 push 一条新列表：前一条历史是旧筛选，不是 `from`，回程按钮
+  // 不能再退历史，否则「← 汇总」会退回上一个筛选。
+  const pushParams = (next: URLSearchParams) =>
+    setParams(next, { state: nav ? { ...nav, noHistoryBack: true } : undefined });
+
   const query = useMemo(() => Object.fromEntries(params.entries()), [params]);
-  const { data, isPending, error: loadError } = useQuery({
+  const { data, isPending, isFetching, error: loadError } = useQuery({
     queryKey: ["transactions", query],
     queryFn: () => listTransactions(query),
   });
 
-  // 等行渲染出来再恢复滚动位置：页面还矮的时候 scrollTo 会被夹到 0。
-  const flashTarget = useReturnAnchor(!isPending && !!data);
+  // 等**这一屏的数据**到齐再恢复：页面还矮的时候 scrollTo 会被夹到 0；而且刚
+  // 改过一笔时缓存里还是改之前那份，先拿它取锚点，目标行可能还没出现，锚点
+  // 就被白白取走了。`isFetching` 为真期间先不动。
+  const flashTarget = useReturnAnchor(!isPending && !isFetching && !!data);
   const flashed = useFlash(flashTarget);
 
   const refresh = () => client.invalidateQueries({ queryKey: ["transactions"] });
@@ -73,6 +107,14 @@ export function TransactionsPage() {
     mutationFn: () => createGroup(selected),
     onSuccess: (body) => {
       setSelected([]);
+      // 合并之后那两笔在列表里变成了一行：回来的目标要记成新的合并行，而不是
+      // 已经不存在的那一笔。不记的话，「← 交易记录」回去只会落在列表顶上。
+      saveAnchor(anchorKey(location.pathname, location.search), `group-${body.group_id}`);
+      // 两份缓存都作废：交易记录里那几笔已经合走，组页里也多了这一组。留在缓存里
+      // 的话，回去先画的是合并前那份旧数据——锚点对应的行还没出现，定位和闪一下
+      // 就都扑空了。
+      client.removeQueries({ queryKey: ["transactions"] });
+      client.removeQueries({ queryKey: ["groups"] });
       // 新组按组内最早那一笔的日期排，可能落在很下面——直接带过去并亮一下。
       // 带上原列表地址，合并组页才有「← 交易记录」可回。
       navigate(`/groups?created=${body.group_id}&group=${body.group_id}`, {
@@ -110,7 +152,8 @@ export function TransactionsPage() {
         if (!entries.some((entry) => entry.isIntersecting)) return;
         const next = new URLSearchParams(params);
         next.set("limit", String(limit + STEP));
-        setParams(next, { replace: true });
+        // 加载更多是 replace 同一个历史条目，前一条仍是真正的来源。
+        setParams(next, { replace: true, state: nav });
       },
       { rootMargin: "200px" },
     );
@@ -129,7 +172,28 @@ export function TransactionsPage() {
 
   return (
     <div>
-      <h1 className="mb-4 text-xl font-semibold">交易记录</h1>
+      {nav?.from ? (
+        <BackLink
+          to={nav.from}
+          label={nav.backLabel ?? "汇总"}
+          back={!nav.noHistoryBack}
+        />
+      ) : null}
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <h1 className="text-xl font-semibold">交易记录</h1>
+        {/* 带上当前列表地址：取消回来时筛选条件还在原位。 */}
+        <Link
+          className={cn(buttonStyles(), "ml-auto")}
+          to="/transactions/new"
+          state={{
+            from: `${location.pathname}${location.search}`,
+            backLabel: "交易记录",
+            up: nav,
+          }}
+        >
+          记一笔
+        </Link>
+      </div>
       <FilterBar
         filters={data.filters}
         accounts={data.accounts}
@@ -137,7 +201,7 @@ export function TransactionsPage() {
         active={data.active_filters}
         onChange={(next) => {
           setSelected([]);
-          setParams(next);
+          pushParams(next);
         }}
       />
 
@@ -159,17 +223,18 @@ export function TransactionsPage() {
         </p>
       ) : (
         <TableScroll className="mt-4">
-          <Table>
+          <Table className="table-fixed">
             <THead>
               <TR>
                 {/* 勾选框在最左，操作在最右：手指从左往右扫，选完正好停在动作上。
                     金额紧跟日期——先看见「什么时候、多少钱」，再读是花在哪儿的，
                     跟对账单上的顺序一致。 */}
-                <TH className="w-8" />
-                <TH>日期</TH>
-                <NumTH>金额</NumTH>
-                <TH>对方 / 说明</TH>
-                <TH className={cn("text-right", STICKY)}>操作</TH>
+                <TH className="w-7" />
+                <TH className="w-20">日期</TH>
+                <NumTH className="w-20">金额</NumTH>
+                <TH>对方</TH>
+                <TH>说明</TH>
+                <TH className={cn("w-[3.75rem] text-right", STICKY)}>操作</TH>
               </TR>
             </THead>
             <TBody>
@@ -179,12 +244,14 @@ export function TransactionsPage() {
                     key={`g${row.group_id}`}
                     row={row}
                     members={data.members[String(row.group_id)] ?? []}
+                    displayCurrency={data.display_currency}
                     highlighted={flashed && flashTarget === `group-${row.group_id}`}
                   />
                 ) : (
                   <Row
                     key={row.id}
                     row={row}
+                    displayCurrency={data.display_currency}
                     selected={row.id !== null && selected.includes(row.id)}
                     highlighted={flashed && flashTarget === `txn-${row.id}`}
                     onToggle={() => row.id !== null && toggle(row.id)}
@@ -206,7 +273,7 @@ export function TransactionsPage() {
             onClick={() => {
               const next = new URLSearchParams(params);
               next.set("limit", String(limit + STEP));
-              setParams(next);
+              pushParams(next);
             }}
           >
             继续往下加载（还有 {remaining} 条）
@@ -242,7 +309,15 @@ function FilterBar({
   active,
   onChange,
 }: {
-  filters: { start: string; end: string; direction: string; account: number | null; q: string; hidden: string };
+  filters: {
+    start: string;
+    end: string;
+    direction: string;
+    account: number | null;
+    q: string;
+    category: string;
+    hidden: string;
+  };
   accounts: { id: number; name: string }[];
   categories: string[];
   active: string[];
@@ -254,6 +329,7 @@ function FilterBar({
     direction: filters.direction,
     account: filters.account ? String(filters.account) : "",
     q: filters.q,
+    category: filters.category,
     hidden: filters.hidden,
   });
 
@@ -299,6 +375,28 @@ function FilterBar({
             <option value="in">收入</option>
             <option value="out">支出</option>
             <option value="neutral">中性</option>
+          </select>
+        </Field>
+        <Field label="分类">
+          <select
+            className="h-9 rounded-md border border-border bg-bg px-2 text-sm"
+            value={draft.category}
+            onChange={(event) => setDraft({ ...draft, category: event.target.value })}
+          >
+            <option value="">全部</option>
+            {Array.from(
+              new Set([
+                ...categories,
+                // 空分类在汇总页上叫「未分类」，这里得能筛到它。它不在
+                // transaction_categories 里（那一列只收非空的原文）。
+                "未分类",
+                ...(draft.category ? [draft.category] : []),
+              ]),
+            ).map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
           </select>
         </Field>
         <Field label="账户">
@@ -347,7 +445,15 @@ function FilterBar({
           type="button"
           variant="ghost"
           onClick={() => {
-            setDraft({ start: "", end: "", direction: "", account: "", q: "", hidden: "" });
+            setDraft({
+              start: "",
+              end: "",
+              direction: "",
+              account: "",
+              q: "",
+              category: "",
+              hidden: "",
+            });
             const next = new URLSearchParams();
             next.set("start", "");
             next.set("end", "");
@@ -363,12 +469,14 @@ function FilterBar({
 
 function Row({
   row,
+  displayCurrency,
   selected,
   highlighted,
   onToggle,
   onHide,
 }: {
   row: TransactionRow;
+  displayCurrency: string;
   selected: boolean;
   highlighted: boolean;
   onToggle: () => void;
@@ -376,9 +484,18 @@ function Row({
 }) {
   const hidden = row.hidden === 1;
   const location = useLocation();
+  const nav = location.state as BackState;
   const back = `${location.pathname}${location.search}`;
   const remember = () =>
     saveAnchor(anchorKey(location.pathname, location.search), `txn-${row.id}`);
+  // 这一行换算过没有，看服务端给的 display_currency；没配汇率的币种它等于原币种。
+  const converted = row.display_currency !== row.currency;
+  const original =
+    row.direction === "neutral"
+      ? 0
+      : row.direction === "out"
+        ? -row.amount_cents
+        : row.amount_cents;
   return (
     <TR
       data-anchor-id={`txn-${row.id}`}
@@ -386,7 +503,9 @@ function Row({
       className={cn(
         "transition-colors duration-700",
         hidden && "text-muted",
-        highlighted && "bg-accent/10",
+        // 闪一下用暖色：合并行本来就带一层淡蓝底色，再用强调色的深浅变化，
+        // 就分不出「这一行是合并的」和「刚回到这一行」。
+        highlighted && "bg-warn/20",
       )}
     >
       <TD>
@@ -397,48 +516,77 @@ function Row({
       </TD>
       <TD className="whitespace-nowrap">
         {row.id === null ? (
-          minute(row.occurred_at)
+          <When value={row.occurred_at} />
         ) : (
           <Link
             className="text-accent underline"
             to={`/transactions/${row.id}`}
-            state={{ from: back, backLabel: "交易记录" }}
+            state={{ from: back, backLabel: "交易记录", up: nav }}
             onClick={remember}
           >
-            {minute(row.occurred_at)}
+            <When value={row.occurred_at} />
           </Link>
         )}
       </TD>
       <NumTD
         className={
-          row.direction === "in"
+          "text-xs sm:text-sm " +
+          (row.direction === "in"
             ? "text-in"
             : row.direction === "neutral"
               ? "text-muted"
-              : "text-out"
+              : "text-out")
         }
       >
-        {formatSigned(signed(row))}
+        <span className="tabular">
+          {formatSigned(signed(row))}
+          {converted || row.display_currency !== displayCurrency
+            ? ` ${row.display_currency}`
+            : ""}
+        </span>
+        {converted ? (
+          <span className="tabular mt-0.5 block text-xs text-muted/70">
+            {formatSigned(original)} {row.currency}
+          </span>
+        ) : null}
       </NumTD>
       <TD>
-        <span className="flex flex-wrap items-center gap-2">
-          {/* 分类退化成一个 emoji，名字挂在 tooltip 上——这一列窄，分类名单占
-              一列会让别的列跟着挤。没分类的不挂，不然每行都顶同一个记号。 */}
-          {row.emoji ? <span title={row.effective_category}>{row.emoji}</span> : null}
-          {/* 日期和这里**两处都是链接**：手机上点哪一下都进得去，不用瞄准。 */}
+        {/* 日期和这里**两处都是链接**：手机上点哪一下都进得去，不用瞄准。
+            emoji 跟正文排在同一行里：单独占一格的话，窄屏上正文就只剩一两个字
+            的宽度了。 */}
+        {row.counterparty ? (
           <Link
-            className="text-accent underline"
+            className="line-clamp-2 min-w-0 text-accent underline [overflow-wrap:anywhere]"
+            title={row.counterparty}
             to={`/transactions/${row.id}`}
-            state={{ from: back, backLabel: "交易记录" }}
+            state={{ from: back, backLabel: "交易记录", up: nav }}
             onClick={remember}
           >
-            {row.counterparty || row.description}
+            <CategoryMark category={row.effective_category} emoji={row.emoji} />{" "}
+            {row.counterparty}
           </Link>
+        ) : (
+          <CategoryMark category={row.effective_category} emoji={row.emoji} />
+        )}
+      </TD>
+      <TD>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          {row.description ? (
+            <Link
+              className="line-clamp-3 min-w-0 text-accent underline [overflow-wrap:anywhere]"
+              title={row.description}
+              to={`/transactions/${row.id}`}
+              state={{ from: back, backLabel: "交易记录", up: nav }}
+              onClick={remember}
+            >
+              {row.description}
+            </Link>
+          ) : null}
           {row.is_large ? <Tag>大额</Tag> : null}
           {hidden ? <Tag>已隐藏</Tag> : null}
-        </span>
+        </div>
       </TD>
-      <TD className={cn("text-right", STICKY, highlighted && "bg-accent/10")}>
+      <TD className={cn("text-right", STICKY, highlighted && "bg-warn/20")}>
         <Button variant="ghost" size="sm" onClick={onHide}>
           {hidden ? "还原" : "隐藏"}
         </Button>
@@ -447,17 +595,26 @@ function Row({
   );
 }
 
-/** 合并行：一行净额，下面挂一个可展开的原始成员列表。 */
+/**
+ * 合并行：一行净额，下面挂着可展开的原始成员列表。
+ *
+ * 「展开这 N 笔」属于上面这条合并记录，不是另起一行——所以它和成员列表
+ * 都铺同一层蓝色底，跟上面那行连成一块。收起时底部那条边线留给外层：
+ * 行与行之间的分隔线不能从记录中间穿过去。
+ */
 function GroupRow({
   row,
   members,
+  displayCurrency,
   highlighted,
 }: {
   row: TransactionRow;
   members: MemberRow[];
+  displayCurrency: string;
   highlighted: boolean;
 }) {
   const location = useLocation();
+  const nav = location.state as BackState;
   const target = `group-${row.group_id}`;
   const remember = () =>
     saveAnchor(anchorKey(location.pathname, location.search), target);
@@ -467,28 +624,50 @@ function GroupRow({
         data-anchor-id={target}
         data-flash={highlighted ? "1" : undefined}
         className={cn(
-          "transition-colors duration-700",
-          // 合并行本来就有底色，闪的时候只能加深，不然看不出变化。
-          highlighted ? "bg-accent/15" : "bg-accent/5",
+          // 底线留给下面那块展开区，记录中间不能有一条横线。
+          "border-b-0 transition-colors duration-700",
+          // 合并行本来就有底色；闪的时候换成暖色，跟「这一行是合并的」区分开。
+          highlighted ? GROUP_TINT_WARN : GROUP_TINT,
         )}
       >
         <TD />
-        <TD className="whitespace-nowrap">{minute(row.occurred_at)}</TD>
-        <NumTD className={row.display_cents === 0 ? "text-muted" : "text-out"}>
+        <TD className="whitespace-nowrap">
+          <When value={row.occurred_at} />
+        </TD>
+        <NumTD
+          className={
+            "text-xs sm:text-sm " +
+            (row.display_cents === 0
+              ? "text-muted"
+              : row.direction === "in"
+                ? "text-in"
+                : "text-out")
+          }
+        >
           {formatSigned(signed(row))}
         </NumTD>
         <TD>
-          <span className="flex flex-wrap items-center gap-2">
-            <Tag tone="accent">合</Tag>
-            <span>{row.counterparty || row.description}</span>
-            <span className="text-xs text-muted">{row.member_count} 笔合计</span>
+          <span className="line-clamp-2 min-w-0 [overflow-wrap:anywhere]">
+            <CategoryMark category={row.effective_category} emoji={row.emoji} />
+            {row.counterparty ? ` ${row.counterparty}` : null}
           </span>
+        </TD>
+        <TD>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <Tag tone="accent">合</Tag>
+            {row.description ? (
+              <span className="line-clamp-3 min-w-0 [overflow-wrap:anywhere]">
+                {row.description}
+              </span>
+            ) : null}
+            <span className="text-xs text-muted">{row.member_count} 笔合计</span>
+          </div>
         </TD>
         <TD
           className={cn(
             "text-right",
             STICKY,
-            highlighted ? "bg-accent/15" : "bg-accent/5",
+            highlighted ? GROUP_TINT_WARN : GROUP_TINT,
           )}
         >
           {/* 合并行不是一条记录，进不了详情页——它只能去合并组页取消合并。
@@ -499,6 +678,7 @@ function GroupRow({
             state={{
               from: `${location.pathname}${location.search}`,
               backLabel: "交易记录",
+              up: nav,
             }}
             onClick={remember}
           >
@@ -506,21 +686,25 @@ function GroupRow({
           </Link>
         </TD>
       </TR>
-      <tr className="border-b border-border">
-        <td colSpan={5} className="px-0 py-0">
+      <tr className="border-b border-border last:border-0">
+        <td
+          colSpan={6}
+          className={cn(
+            "px-0 py-0 transition-colors duration-700",
+            highlighted ? GROUP_TINT_WARN : GROUP_TINT,
+          )}
+        >
           <details>
-            <summary className="cursor-pointer px-2 py-1 text-xs text-muted">
+            <summary className="cursor-pointer px-2 py-1 text-xs text-muted hover:text-text">
               展开这 {row.member_count} 笔
             </summary>
-            <ul className="m-0 list-none px-4 py-2 text-xs">
+            <ul className="m-0 list-none border-t border-border px-4 py-2 text-xs">
               {members.map((member) => (
                 <li key={member.id} className="flex flex-wrap items-center gap-3 py-0.5">
                   <span className="text-muted">{minute(member.occurred_at)}</span>
-                  <MemberAmount member={member} displayCurrency={row.currency} className="text-muted" />
-                  <span>
-                    {member.emoji ? (
-                      <span title={member.effective_category}>{member.emoji} </span>
-                    ) : null}
+                  <MemberAmount member={member} displayCurrency={displayCurrency} className="text-muted" />
+                  <span className="line-clamp-2 min-w-0 [overflow-wrap:anywhere]">
+                    <CategoryMark category={member.effective_category} emoji={member.emoji} />{" "}
                     {member.counterparty || member.description}
                   </span>
                 </li>

@@ -47,6 +47,9 @@ class Transaction:
     source_category: str = ""
     profile_name: str = ""
     account_id: int | None = None
+    # 配置文件可以把某些「收/支」值直接标成隐藏（支付宝的「不计收支」就是）。
+    # 隐藏的行照常入库、去重，只是默认不进任何合计。
+    hidden: bool = False
     raw: dict[str, str] = field(default_factory=dict)
 
     @property
@@ -97,6 +100,8 @@ class ParsedRow:
             return "dup"
         if self.possible_duplicate:
             return "possible"
+        if self.transaction.hidden:
+            return "hidden"
         if self.transaction.direction is Direction.NEUTRAL:
             return "neutral"
         return "ok"
@@ -134,19 +139,37 @@ class ImportPlan:
             if not row.duplicate and row.transaction.direction is Direction.NEUTRAL
         )
 
-    def totals(self) -> tuple[int, int]:
-        """(收入分, 支出分)，只统计将要新入库的行。"""
-        income = sum(
-            row.transaction.amount_cents
-            for row in self.new_rows
-            if row.transaction.direction is Direction.IN
+    @property
+    def hidden_count(self) -> int:
+        """新入库的行里，配置文件直接标了隐藏的有几条。"""
+        return sum(
+            1
+            for row in self.rows
+            if not row.duplicate and row.transaction.hidden
         )
-        expense = sum(
-            row.transaction.amount_cents
-            for row in self.new_rows
-            if row.transaction.direction is Direction.OUT
-        )
-        return income, expense
+
+    def totals_by_currency(self) -> dict[str, tuple[int, int]]:
+        """币种 -> (收入分, 支出分)，只统计将要新入库的行。
+
+        不跨币种相加：人民币的「分」和英镑的便士不是同一种东西。一份账单里
+        同时出现几种币种时，预览页要把它们分开列出来。
+        """
+        income: dict[str, int] = {}
+        expense: dict[str, int] = {}
+        for row in self.new_rows:
+            transaction = row.transaction
+            if transaction.direction is Direction.IN:
+                income[transaction.currency] = (
+                    income.get(transaction.currency, 0) + transaction.amount_cents
+                )
+            elif transaction.direction is Direction.OUT:
+                expense[transaction.currency] = (
+                    expense.get(transaction.currency, 0) + transaction.amount_cents
+                )
+        return {
+            currency: (income.get(currency, 0), expense.get(currency, 0))
+            for currency in sorted(set(income) | set(expense))
+        }
 
     def issues_by_code(self) -> dict[str, list[Issue]]:
         grouped: dict[str, list[Issue]] = {}
@@ -160,5 +183,6 @@ class ImportPlan:
             "duplicate": self.duplicate_count,
             "possible": self.possible_count,
             "neutral": self.neutral_count,
+            "hidden": self.hidden_count,
             "problem": sum(1 for issue in self.issues if issue.level == "error"),
         }

@@ -31,6 +31,7 @@ def form(**overrides) -> dict:
         "merge_window_hours": "12",
         "merge_tolerance": "0.5",
         "merge_keywords": "转账、还款",
+        "stale_days": "30",
     }
     values.update(overrides)
     return values
@@ -65,6 +66,48 @@ def test_the_shell_carries_the_theme_so_the_first_frame_is_right(client, isolate
     assert 'data-theme="light"' in client.get("/").get_data(as_text=True)
 
 
+def test_the_settings_page_lists_the_currencies_in_the_ledger(client, book):
+    """账本里出现过的币种要自己列出来，不能等人猜还有没有别的没配汇率。"""
+    book(
+        [
+            {
+                "occurred_at": "2026-10-01 09:00:00",
+                "direction": "out",
+                "amount_cents": 1000,
+                "currency": "CNY",
+            },
+            {
+                "occurred_at": "2026-10-02 09:00:00",
+                "direction": "out",
+                "amount_cents": 2000,
+                "currency": "GBP",
+            },
+            {
+                "occurred_at": "2026-10-03 09:00:00",
+                "direction": "out",
+                "amount_cents": 3000,
+                "currency": "GBP",
+            },
+        ]
+    )
+    body = payload(client.get("/api/settings"))
+    assert body["currencies"] == [
+        {"currency": "CNY", "count": 1},
+        {"currency": "GBP", "count": 2},
+    ]
+
+
+def test_as_form_hides_the_display_currencys_own_rate(isolated_data_dir):
+    """显示币种自己那一行没有意义，表单里不该出现；否则保存时会被校验拦住。"""
+    (isolated_data_dir / "settings.toml").write_text(
+        'timezone = "Europe/London"\n\n[currency]\n'
+        'display = "GBP"\nrates = { GBP = 1, CNY = 8.9 }\n',
+        encoding="utf-8",
+    )
+    values = settings.as_form(settings.load())
+    assert [row["code"] for row in values["rates"] if row["code"]] == ["CNY"]
+
+
 # --------------------------------------------------------------------------
 # 写
 # --------------------------------------------------------------------------
@@ -97,6 +140,60 @@ def test_saving_round_trips_through_the_file(client, isolated_data_dir):
     assert conf.merge_window_hours == 12
     assert conf.merge_tolerance == 0.5
     assert conf.merge_keywords == ("转账", "还款")
+
+
+def test_saving_a_second_currency_makes_it_convertible(client):
+    response = save(
+        client,
+        rates=[
+            {"code": "CNY", "rate": "8.9"},
+            {"code": "USD", "rate": "1.32"},
+        ],
+    )
+    assert response.status_code == 200
+    assert settings.load().rates == {"CNY": 8.9, "USD": 1.32}
+
+
+def test_rollup_settings_default_when_the_form_omits_them(client):
+    """旧表单不带新字段时落到默认值，不能把月度汇总静默关掉。"""
+    assert save(client).status_code == 200
+    conf = settings.load()
+    assert conf.merge_rollup is True
+    assert conf.merge_rollup_keywords == settings.DEFAULT_ROLLUP_KEYWORDS
+
+
+def test_rollup_settings_round_trip_through_the_file(client, isolated_data_dir):
+    response = save(
+        client, merge_rollup=False, merge_rollup_keywords="利息、收益发放"
+    )
+    assert response.status_code == 200
+    written = (isolated_data_dir / "settings.toml").read_text(encoding="utf-8")
+    assert "rollup = false" in written
+    assert 'rollup_keywords = ["利息", "收益发放"]' in written
+
+    conf = settings.load()
+    assert conf.merge_rollup is False
+    assert conf.merge_rollup_keywords == ("利息", "收益发放")
+
+
+def test_an_explicitly_empty_rollup_keyword_list_turns_matching_off(client):
+    assert save(client, merge_rollup_keywords="").status_code == 200
+    assert settings.load().merge_rollup_keywords == ()
+
+
+def test_stale_days_round_trips_through_the_file(client, isolated_data_dir):
+    """保存时会整份重写设置文件，模板里漏一个键就等于把这个设置静默删掉。"""
+    assert save(client, stale_days="7").status_code == 200
+    written = (isolated_data_dir / "settings.toml").read_text(encoding="utf-8")
+    assert "[imports]" in written
+    assert "stale_days = 7" in written
+    assert settings.load().stale_days == 7
+
+
+def test_a_negative_stale_days_is_rejected_with_a_readable_message(client):
+    response = save(client, stale_days="-1")
+    assert response.status_code == 400
+    assert "不小于 0" in response.get_json()["errors"][0]
 
 
 def test_the_original_file_is_kept_as_a_backup_once(client, isolated_data_dir):

@@ -35,6 +35,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -42,11 +43,16 @@ from datetime import datetime, timedelta
 __all__ = [
     "MAX_DEVIATION_RATIO",
     "MAX_SPLIT",
+    "ROLLUP_EXCLUDE_KEYWORDS",
     "Candidate",
+    "Rollup",
+    "RollupRow",
     "Row",
     "balanced",
     "candidates",
     "detect",
+    "rollup_key",
+    "rollups",
 ]
 
 # 最多算到几个人分。再多人一起摊的账，等额关系本来也难凑巧成立。
@@ -105,6 +111,101 @@ class Candidate:
         但那是跟 AA 的两人形同、数字相同的巧合，不是「两个人分」的意思。
         """
         return len(self.member_ids) + 1
+
+
+# 无论用户把关键词放宽成什么，说明里出现这几个词的记录都不参与月度汇总。
+# 「余额宝-自动转入」跟「收益发放」在同一个交易对方名下，只按对方名或只按
+# 宽泛的关键词去合，会把几千块的转入当成利息收入——屏幕上完全看不出来。
+ROLLUP_EXCLUDE_KEYWORDS = ("自动转入",)
+
+
+@dataclass(frozen=True)
+class RollupRow:
+    """月度汇总的候选行。只带分组需要的字段。"""
+
+    id: int
+    occurred_date: str  # 'YYYY-MM-DD'，已经是显示时区的日期
+    account_id: int
+    currency: str
+    counterparty: str
+    description: str
+    grouped: bool = False
+
+
+@dataclass(frozen=True)
+class Rollup:
+    """一个「同账户 + 同对方 + 同月 + 同币种」的收益桶。"""
+
+    key: str
+    title: str
+    month: str
+    anchor_id: int
+    member_ids: tuple[int, ...]
+
+    @property
+    def ids(self) -> tuple[int, ...]:
+        return (self.anchor_id, *self.member_ids)
+
+
+def rollup_key(account_id: int, counterparty: str, month: str, currency: str) -> str:
+    """收益组的稳定身份。落库、查重和 veto 都用它。"""
+    return json.dumps(
+        [
+            int(account_id),
+            (counterparty or "").strip().casefold(),
+            month,
+            (currency or "").upper(),
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def rollups(rows: Iterable[RollupRow], *, keywords: Sequence[str] = ()) -> list[Rollup]:
+    """把说明命中关键词的中性收益按自然月分桶。
+
+    **不设「至少两笔」的门槛**：调用方需要看到只有一笔的桶，才能把它们追加到
+    已经存在的同月组里。要不要建新组由调用方决定。
+
+    ``keywords`` 为空时一条都不匹配——月度汇总不是猜出来的，必须由设置里那几个
+    词明确点名。分组按账户、对方、月份、币种四项，跨账户/跨币种不混。
+    """
+    wanted = tuple(str(word).strip().lower() for word in keywords if str(word).strip())
+    if not wanted:
+        return []
+
+    buckets: dict[str, list[RollupRow]] = {}
+    for row in rows:
+        if row.grouped:
+            continue
+        month = (row.occurred_date or "")[:7]
+        name = (row.counterparty or "").strip()
+        if len(month) != 7 or not name:
+            continue
+        text = (row.description or "").lower()
+        if not any(word in text for word in wanted):
+            continue
+        if any(word in text for word in ROLLUP_EXCLUDE_KEYWORDS):
+            continue
+        key = rollup_key(row.account_id, name, month, row.currency)
+        buckets.setdefault(key, []).append(row)
+
+    found: list[Rollup] = []
+    for key, members in buckets.items():
+        members.sort(key=lambda row: (row.occurred_date, row.id))
+        first = members[0]
+        month = first.occurred_date[:7]
+        found.append(
+            Rollup(
+                key=key,
+                title=f"{first.counterparty.strip()} · {month}",
+                month=month,
+                anchor_id=first.id,
+                member_ids=tuple(row.id for row in members[1:]),
+            )
+        )
+    found.sort(key=lambda item: (item.month, item.anchor_id))
+    return found
 
 
 def candidates(

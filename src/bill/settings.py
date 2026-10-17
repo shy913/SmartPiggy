@@ -46,12 +46,20 @@ DEFAULT_KEYWORDS = (
     "repay",
     "split",
 )
+# 「说明里出现这些词的 neutral 记录，按自然月合成一条收入」。默认只认明确的
+# 收益发放；「自动转入」另有硬排除（见 groups.ROLLUP_EXCLUDE_KEYWORDS）。
+DEFAULT_ROLLUP_KEYWORDS = ("收益发放",)
 _CODE = re.compile(r"^[A-Z0-9]{1,8}$")
+# 表单里「没带这个字段」和「显式清空/未勾选」必须分开：旧前端或旧测试不带新字段，
+# 不能因此把月度收益汇总静默关掉。
+_MISSING = object()
 
 # 「大额」阈值的默认值，单位是**显示币种的主单位**（500 就是 £500）。
 # 注意它跟着 display 走：display 改成 CNY 之后，同样的数就变成 ¥500 / ¥2,000。
 DEFAULT_LARGE_OUT = 500
 DEFAULT_LARGE_IN = 2000
+# 多久没导入账单就在首页提醒。0 = 不提醒（但账户区仍显示上次导入时间）。
+DEFAULT_STALE_DAYS = 30
 
 
 def _threshold(value: object, label: str) -> int:
@@ -91,6 +99,11 @@ class Settings:
     merge_tolerance: float = DEFAULT_TOLERANCE
     # 转入要像「别人还你钱」才参与自动合并；空元组 = 不做这层过滤。
     merge_keywords: tuple[str, ...] = DEFAULT_KEYWORDS
+    # 说明命中这些词的中性收益按自然月合成一条收入。
+    merge_rollup: bool = True
+    merge_rollup_keywords: tuple[str, ...] = DEFAULT_ROLLUP_KEYWORDS
+    # 一个账户超过这么多天没导入账单，首页就提醒。0 = 不提醒。
+    stale_days: int = DEFAULT_STALE_DAYS
 
     def tz(self):
         return dates.zone(self.timezone)
@@ -191,6 +204,27 @@ def load() -> Settings:
                 str(word).strip() for word in raw_keywords if str(word).strip()
             )
 
+        # 同上：缺省落到默认词表，显式 `rollup_keywords = []` 才是「不匹配任何记录」。
+        raw_rollup_keywords = merge.get("rollup_keywords")
+        if raw_rollup_keywords is None:
+            rollup_keywords = DEFAULT_ROLLUP_KEYWORDS
+        else:
+            rollup_keywords = tuple(
+                str(word).strip()
+                for word in raw_rollup_keywords
+                if str(word).strip()
+            )
+
+        imports = parsed.get("imports") or {}
+        try:
+            stale_days = int(imports.get("stale_days", DEFAULT_STALE_DAYS))
+        except (TypeError, ValueError):
+            raise BillError(
+                f"imports 的 stale_days 得是个整数，现在是 {imports.get('stale_days')!r}。"
+            ) from None
+        if stale_days < 0:
+            raise BillError(f"imports 的 stale_days 不能是负数，现在是 {stale_days}。")
+
         return Settings(
             theme=theme,
             display_currency=display,
@@ -203,6 +237,9 @@ def load() -> Settings:
             merge_window_hours=window,
             merge_tolerance=tolerance,
             merge_keywords=keywords,
+            merge_rollup=bool(merge.get("rollup", True)),
+            merge_rollup_keywords=rollup_keywords,
+            stale_days=stale_days,
         )
 
     return Settings()
@@ -219,7 +256,14 @@ def as_form(conf: Settings) -> dict[str, Any]:
     汇率那几行**多留两个空位**：这个应用不带 JS，没有「加一行」这种交互，
     想加一个币种就得有现成的空格可填。
     """
-    rates = [{"code": code, "rate": f"{rate:g}"} for code, rate in sorted(conf.rates.items())]
+    # 显示币种自己的汇率没有意义（`factors()` 本来就不把它算进去），表单里
+    # 也不该出现——服务端的 read_form 会把它当成错误。老配置里万一写了这一行，
+    # 打开设置页就直接不显示，保存时自然清掉。
+    rates = [
+        {"code": code, "rate": f"{rate:g}"}
+        for code, rate in sorted(conf.rates.items())
+        if code != conf.display_currency
+    ]
     rates += [{"code": "", "rate": ""} for _ in range(max(0, 3 - len(rates)))]
     return {
         "theme": conf.theme,
@@ -233,6 +277,9 @@ def as_form(conf: Settings) -> dict[str, Any]:
         "merge_window_hours": f"{conf.merge_window_hours:g}",
         "merge_tolerance": f"{conf.merge_tolerance:g}",
         "merge_keywords": "、".join(conf.merge_keywords),
+        "merge_rollup": conf.merge_rollup,
+        "merge_rollup_keywords": "、".join(conf.merge_rollup_keywords),
+        "stale_days": str(conf.stale_days),
     }
 
 
@@ -316,6 +363,28 @@ def read_form(data) -> tuple[Settings | None, dict[str, Any], list[str]]:
         if word.strip()
     )
 
+    raw_rollup = data.get("merge_rollup", _MISSING)
+    rollup = True if raw_rollup is _MISSING else bool(raw_rollup)
+    raw_rollup_keywords = data.get("merge_rollup_keywords", _MISSING)
+    if raw_rollup_keywords is _MISSING:
+        rollup_keywords = DEFAULT_ROLLUP_KEYWORDS
+    else:
+        rollup_keywords = tuple(
+            word.strip()
+            for word in re.split(r"[、,，]", str(raw_rollup_keywords))
+            if word.strip()
+        )
+
+    # 空 = 用默认值，不是「关闭」：关闭要明确写 0。表单里清空一格不该把提醒
+    # 悄悄变成另一种口径——那种差别在页面上看不出来。
+    try:
+        stale_days = int(values["stale_days"] or DEFAULT_STALE_DAYS)
+        if stale_days < 0:
+            raise ValueError
+    except ValueError:
+        errors.append("「多久没导入算提醒」得是个不小于 0 的整数，0 表示不提醒。")
+        stale_days = DEFAULT_STALE_DAYS
+
     if errors:
         return None, values, errors
 
@@ -332,6 +401,9 @@ def read_form(data) -> tuple[Settings | None, dict[str, Any], list[str]]:
             merge_window_hours=window,
             merge_tolerance=tolerance,
             merge_keywords=keywords,
+            merge_rollup=rollup,
+            merge_rollup_keywords=rollup_keywords,
+            stale_days=stale_days,
         ),
         values,
         [],
@@ -360,6 +432,17 @@ def _echo(data) -> dict[str, Any]:
         "merge_window_hours": (data.get("merge_window_hours") or "").strip(),
         "merge_tolerance": (data.get("merge_tolerance") or "").strip(),
         "merge_keywords": (data.get("merge_keywords") or "").strip(),
+        "merge_rollup": (
+            True
+            if data.get("merge_rollup", _MISSING) is _MISSING
+            else bool(data.get("merge_rollup"))
+        ),
+        "merge_rollup_keywords": (
+            "、".join(DEFAULT_ROLLUP_KEYWORDS)
+            if data.get("merge_rollup_keywords", _MISSING) is _MISSING
+            else (data.get("merge_rollup_keywords") or "").strip()
+        ),
+        "stale_days": (data.get("stale_days") or "").strip(),
     }
 
 
@@ -419,6 +502,15 @@ window_hours = {merge_window}
 tolerance = {merge_tolerance}
 # 转入要像「别人还你钱」才参与自动合并。留空 = 关掉这道过滤。
 keywords = [{merge_keywords}]
+# 说明里命中下面这些词的中性收益，按自然月合成一条收入。
+# 「自动转入」另有硬排除，不会进来。留空 = 不匹配任何记录。
+rollup = {merge_rollup}
+rollup_keywords = [{merge_rollup_keywords}]
+
+[imports]
+# 一个账户超过这么多天没导入账单，首页就提醒。0 = 不提醒
+# （账户区仍会显示每个账户上次导入的时间）。
+stale_days = {stale_days}
 
 [ui]
 # 界面配色：{theme_names}
@@ -430,6 +522,7 @@ def render_toml(conf: Settings) -> str:
     """把一份设置渲染成配置文件。"""
     rates = ", ".join(f"{code} = {rate:g}" for code, rate in sorted(conf.rates.items()))
     keywords = ", ".join(f'"{word}"' for word in conf.merge_keywords)
+    rollup_keywords = ", ".join(f'"{word}"' for word in conf.merge_rollup_keywords)
     return _TOML.format(
         timezone=conf.timezone,
         display=conf.display_currency,
@@ -442,6 +535,9 @@ def render_toml(conf: Settings) -> str:
         merge_window=f"{conf.merge_window_hours:g}",
         merge_tolerance=f"{conf.merge_tolerance:g}",
         merge_keywords=keywords,
+        merge_rollup="true" if conf.merge_rollup else "false",
+        merge_rollup_keywords=rollup_keywords,
+        stale_days=conf.stale_days,
         theme=conf.theme,
         theme_names="、".join(themes.names()),
     )

@@ -19,10 +19,24 @@
 from __future__ import annotations
 
 import json
+from datetime import date, datetime
 
 from flask import Blueprint, current_app, g, jsonify, request, session
 
-from . import auth, categories, config, dates, db, entry, ingest, params, repo, settings, themes
+from . import (
+    auth,
+    categories,
+    config,
+    dashboard as overview,
+    dates,
+    db,
+    entry,
+    ingest,
+    params,
+    repo,
+    settings,
+    themes,
+)
 from .errors import BillError, ProfileError, UploadError
 from .profiles import load_all, validate
 
@@ -144,6 +158,10 @@ LIST_FIELDS = (
     "hidden",
     "edited_at",
     "display_cents",
+    # display_cents 是哪个币种的数。没配汇率的币种这里就是原币种，
+    # 界面据此决定要不要另附一份「原币金额」——只比 currency 不看这一列，
+    # 没汇率的那几笔就会把同一个数印两遍。
+    "display_currency",
     "is_large",
 )
 
@@ -213,6 +231,8 @@ def ledger_rows(result) -> list[dict]:
         row = {key: data.get(key) for key in LEDGER_FIELDS}
         if row["group_id"] is not None:
             row["id"] = None
+        # 跟交易列表同一个口径：分类退化成 emoji，名字留在 effective_category 里。
+        row["emoji"] = categories.emoji(row.get("effective_category"))
         out.append(row)
     return out
 
@@ -260,6 +280,45 @@ def meta():
 # 汇总
 # --------------------------------------------------------------------------
 
+def _account_overview(connection, conf, *, start, end) -> list[dict]:
+    """首页账户区：账户 + 上次导入时间 + 区间内的收支。
+
+    「距今几天」在**服务端**按显示时区算。``imports.uploaded_at`` 本来就是按
+    那个时区写的墙上时钟，交给前端再算一遍等于多一套时区逻辑，两边会在跨天
+    时差出一天——而屏幕上什么都不说。
+
+    从没导入过的账户 ``last_import_at`` 为空，``never_imported`` 为真；它和
+    「导入过但太久没导」都算提醒对象，但界面上的话不一样。
+    """
+    totals: dict[int, list[dict]] = {}
+    for item in repo.account_totals(connection, start=start, end=end):
+        row = dict(item)
+        account_id = row.pop("account_id")
+        totals.setdefault(account_id, []).append(row)
+
+    today = datetime.now(conf.tz()).date()
+    overview = []
+    for record in repo.account_imports(connection):
+        last = record["last_import_at"]
+        days = (today - date.fromisoformat(last[:10])).days if last else None
+        never = last is None
+        # stale_days = 0 是「不提醒」的明确选择，不是「0 天没导入就提醒」。
+        stale = conf.stale_days > 0 and (never or days >= conf.stale_days)
+        overview.append(
+            {
+                "id": record["id"],
+                "name": record["name"],
+                "kind": record["kind"],
+                "last_import_at": last,
+                "days_since_import": days,
+                "never_imported": never,
+                "stale": stale,
+                "totals": totals.get(record["id"], []),
+            }
+        )
+    return overview
+
+
 @blueprint.get("/summary")
 def summary():
     """整页一个口径：选定的区间作用到上面每一个数、每一张表。
@@ -291,7 +350,28 @@ def summary():
         # 每币种前 20 条；counts 给的是**总数**，前端拿它说「另有多少笔」。
         ranking=ledger_rows(repo.expense_ranking(connection, **bounds)),
         ranking_counts=counted,
+        # 账户区：金额跟随当前区间，导入时间不跟——它是账户自己的属性。
+        accounts=_account_overview(
+            connection, conf, start=bounds["start"], end=bounds["end"]
+        ),
     )
+
+
+@blueprint.get("/dashboard")
+def dashboard():
+    """首页概览：区间数字、预测、平均、趋势、两个排行。
+
+    跟 ``/summary`` 共用同一套区间参数（``params.summary_range``），所以两个
+    接口对「本月」的边界不可能各说各话。币种固定用设置里的显示币种；没配
+    汇率的币种不会混进来，只在 ``unconverted`` 里报出笔数。
+    """
+    conf = settings.load()
+    connection = get_conn()
+    body = overview.build(connection, conf, request.args)
+    # 排行里的每一行还是库里的行，这里投影成界面的形状——顺便把合并行的
+    # 哨兵 id 归一成 null，前端据此决定点不点得进详情页。
+    body["singles"] = ledger_rows(body["singles"])
+    return jsonify(body)
 
 
 # --------------------------------------------------------------------------
@@ -310,6 +390,7 @@ def list_counts(connection, query) -> tuple[int, int]:
         "account_id": query["account_id"],
         "direction": query["direction"] or None,
         "search": query["search"] or None,
+        "category": query["category"] or None,
     }
     total = repo.count_transactions(connection, **common, hidden=query["hidden"] or None)
     if query["hidden"] == "1":
@@ -334,6 +415,7 @@ def transaction_list():
         account_id=query["account_id"],
         direction=query["direction"] or None,
         search=query["search"] or None,
+        category=query["category"] or None,
         hidden=query["hidden"] or None,
         limit=query["limit"],
         offset=offset,
@@ -368,6 +450,7 @@ def transaction_list():
             direction=query["direction"],
             account_id=query["account_id"],
             search=query["search"],
+            category=query["category"],
             hidden=query["hidden"],
         ),
         filters={
@@ -376,6 +459,7 @@ def transaction_list():
             "direction": query["direction"],
             "account": query["account_id"],
             "q": query["search"],
+            "category": query["category"],
             "hidden": query["hidden"],
         },
         accounts=_account_rows(connection),
@@ -451,6 +535,7 @@ def groups():
         groups=rows(found),
         members={str(key): rows(value) for key, value in members.items()},
         display_currency=settings.load().display_currency,
+        categories=repo.transaction_categories(connection),
     )
 
 
@@ -498,8 +583,12 @@ def settings_page():
     「JSON 里没有浮点」——数字是字符串。
     """
     conf = settings.load()
+    connection = get_conn()
     return jsonify(
         values=settings.as_form(conf),
+        # 账本里实际出现过的币种及笔数：设置页拿它把没配汇率的币种也列出来，
+        # 不用人自己猜「我是不是还有美元没管」。
+        currencies=rows(repo.currency_counts(connection)),
         errors=[],
         saved=False,
         path=str(config.user_settings_path()),
@@ -692,7 +781,10 @@ def transaction_update(txn_id: int):
     with connection:
         repo.update_transaction(connection, txn_id, draft.fields())
         month = repo.effective_month(connection, txn_id) or draft.month
-    return jsonify(id=txn_id, month=month)
+    after = repo.get_transaction(connection, txn_id)
+    # 改完这一笔在列表上落在哪一行：还在组里的话，列表画的是一行合并记录，
+    # 前端拿 `group_id` 才知道回去该亮哪一行；组散了才是这一笔自己。
+    return jsonify(id=txn_id, month=month, group_id=after["group_id"] if after else None)
 
 
 @blueprint.delete("/transactions/<int:txn_id>")
@@ -742,13 +834,14 @@ def _autodetect_around(connection, conf, moment: str) -> int:
 
     范围只在那一笔前后各一个窗口，不扫全库——手动记一笔不该顺带把整个账本重算一遍。
     """
-    if not conf.merge_enabled or not moment:
+    if not (conf.merge_enabled or conf.merge_rollup) or not moment:
         return 0
     reach = conf.merge_window_hours
     return repo.autodetect(
         connection,
         since=dates.shift(moment, hours=-reach),
         until=dates.shift(moment, hours=reach),
+        aa=conf.merge_enabled,
     )
 
 
@@ -872,7 +965,7 @@ def _preview_payload(preview) -> dict:
     """
     detected = preview.detected
     rows = preview.rows(config.PREVIEW_ROWS)
-    income, expense = preview.totals()
+    totals = preview.totals_by_currency()
     issues = preview.plan.issues if preview.plan else []
     seen: dict[str, int] = {}
     grouped: list[dict] = []
@@ -914,7 +1007,10 @@ def _preview_payload(preview) -> dict:
             for number, cells in preview.raw_preview(15)
         ],
         "counts": preview.counts(),
-        "totals": {"income": income, "expense": expense},
+        "totals": [
+            {"currency": currency, "income": income, "expense": expense}
+            for currency, (income, expense) in totals.items()
+        ],
         "issues": grouped,
         "issues_total": len(issues),
         "rows": [

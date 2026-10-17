@@ -10,13 +10,19 @@ from __future__ import annotations
 import io
 import zipfile
 
+import pytest
+
 __all__ = [
     "ALIPAY_HEADER",
+    "BOC_HEADER",
+    "BOC_ROWS",
     "MONZO_HEADER",
     "WECHAT_HEADER",
     "alipay_csv",
     "alipay_zip",
     "bank_csv",
+    "boc_pdf",
+    "boc_text_pdf",
     "monzo_csv",
     "wechat_xlsx",
 ]
@@ -175,3 +181,123 @@ def bank_csv(
         "合计,,,-1712.00,",
     ]
     return ("\n".join(lines) + "\n").encode(encoding)
+
+
+# --------------------------------------------------------------------------
+# 中国银行 PDF
+#
+# 用 reportlab 现造，不把真实账单塞进仓库。中文必须用 TrueType 字体：
+# reportlab 自带的 CID 字体（STSong-Light）在 pdfminer 里会抽成 ``(cid:…)``，
+# 拿来做断言毫无意义。这台机器上有文泉驿，没有就跳过这些用例。
+# --------------------------------------------------------------------------
+
+BOC_HEADER = [
+    "记账日期", "记账时间", "币别", "金额", "余额", "交易名称",
+    "渠道", "网点名称", "附言", "对方账户名", "对方卡号/账号", "对方开户行",
+]
+
+BOC_ROWS = [
+    # 对方是英文名：国际汇款到自己的 Monzo，应该中性。
+    ["2026-10-14", "19:00:46", "英镑", "-3,012.00", "659.74", "国际汇款",
+     "手机银行", "---", "TRANSFER 3K", "HONGYANG SHEN",
+     "GB84MONZ0400\n58", "MONZO BANK LIMITED"],
+    # 外部消费：携程。
+    ["2026-10-09", "03:15:33", "人民币", "-2,539.96", "110,235.31", "网上快捷支付",
+     "银企对接", "---", "携程", "程支付-携程旅行网", "Z2000731000015N", "---"],
+    # 结息：外部收入。
+    ["2026-09-21", "01:58:58", "人民币", "2.00", "118,275.27", "结息",
+     "其他", "---", "---", "---", "---", "---"],
+    # 对方是本人中文名：转给自己另一张卡，应该中性。
+    ["2026-06-18", "13:59:22", "英镑", "-500.00", "700.00", "转账",
+     "手机银行", "---", "---", "沈宏阳", "4002210800385820", "中行祁连山路支行"],
+    # 退款：不是收入，应该中性。
+    ["2026-05-14", "02:46:54", "人民币", "4,029.00", "5,000.00", "网上快捷退款",
+     "银企对接", "---", "携程", "程支付-携程旅行网", "80001030000701", "---"],
+    # 工资：外部收入。
+    ["2026-03-06", "16:22:51", "人民币", "1,800.00", "9,000.00", "小额定期",
+     "支付清算部", "---", "工资", "上海中智外包", "121914180210505", "招行徐汇支行"],
+    # 美元结息：第三种币别。
+    ["2026-09-21", "01:59:26", "美元", "0.01", "530.01", "结息",
+     "其他", "---", "---", "---", "---", "---"],
+    # 对方是「支付宝-沈宏阳」：名字里带着平台前缀，按子串也应该判中性。
+    ["2026-01-03", "22:34:26", "人民币", "-20,000.00", "100,000.00", "网上快捷支付",
+     "银企对接", "---", "支付宝", "支付宝-沈宏阳", "Z2007933000010N", "---"],
+]
+
+_BOC_FONT_NAME = "WQY-ZenHei"
+_BOC_FONT_PATH = "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"
+
+
+def _boc_font() -> str:
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    if _BOC_FONT_NAME not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(
+            TTFont(_BOC_FONT_NAME, _BOC_FONT_PATH, subfontIndex=0)
+        )
+    return _BOC_FONT_NAME
+
+
+def boc_pdf(
+    rows: list[list[str]] | None = None,
+    *,
+    password: str = "332150",
+    repeat: int = 1,
+) -> bytes:
+    """一份中国银行形态的加密 PDF，表头每页重复。
+
+    ``repeat`` 用来把行数放大到跨页，验证「每页重复表头只留一次」。
+    """
+    import pathlib
+
+    if not pathlib.Path(_BOC_FONT_PATH).exists():
+        pytest.skip("没有可用的中文字体，跳过 PDF 用例")
+
+    from reportlab.lib import colors, pdfencrypt
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
+
+    rows = BOC_ROWS if rows is None else rows
+    table = Table(
+        [BOC_HEADER, *[row for row in rows for _ in range(repeat)]],
+        repeatRows=1,
+    )
+    table.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.black),
+                ("FONTNAME", (0, 0), (-1, -1), _boc_font()),
+                ("FONTSIZE", (0, 0), (-1, -1), 6),
+                ("LEADING", (0, 0), (-1, -1), 7),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+            ]
+        )
+    )
+
+    buffer = io.BytesIO()
+    document = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(A4),
+        leftMargin=18,
+        rightMargin=18,
+        topMargin=18,
+        bottomMargin=18,
+        encrypt=pdfencrypt.StandardEncryption(password, canPrint=0),
+    )
+    document.build([table])
+    return buffer.getvalue()
+
+
+def boc_text_pdf() -> bytes:
+    """没有表格的文字版 PDF：用来验证「扫描件 / 没有表格」的可读报错。"""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas
+
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    pdf.drawString(72, 750, "No table here.")
+    pdf.save()
+    return buffer.getvalue()

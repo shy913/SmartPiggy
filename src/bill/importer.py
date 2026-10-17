@@ -118,6 +118,10 @@ def parse(
             if error.code != "rounded_amount":
                 continue
 
+        # 内部转账、购汇、退款在算指纹之前就改判中性——方向参与内容指纹，
+        # 事后再改会让同一份文件下次导入时匹配不上。
+        direction = _neutralized(direction, row, indexes, profile)
+
         source_txn_id = _raw(row, indexes, "source_txn_id")
 
         transaction = Transaction(
@@ -134,9 +138,11 @@ def parse(
             merchant_txn_id=_raw(row, indexes, "merchant_txn_id"),
             source_category=_raw(row, indexes, "category"),
             # 账单自带币种列就用它的，没有就用配置里的默认值。
-            currency=(_raw(row, indexes, "currency") or profile.default_currency).upper(),
+            # 「英镑 / 人民币」这类写法由 profile 的 [values.currency] 映射成 ISO 代码。
+            currency=profile.currency_code(_raw(row, indexes, "currency")),
             profile_name=profile.name,
             account_id=account_id,
+            hidden=_hidden_by_config(row, indexes, profile),
             raw={name: value for name, value in zip(grid.header, row)},
         )
 
@@ -209,6 +215,59 @@ def _is_footer(row: list[str], profile: Profile) -> bool:
 def _normalize_value(text: str) -> str:
     # 全角斜杠和全角空格在导出里很常见，先规整再比。
     return text.strip().replace("／", "/").replace("　", " ").strip()
+
+
+def _squash(text: str) -> str:
+    """去掉所有空白并 casefold，只用于「是不是本人」这类包含判断。"""
+    return "".join(text.split()).casefold()
+
+
+def _neutralized(
+    direction: Direction, row: list[str], indexes: dict[str, int], profile: Profile
+) -> Direction:
+    """按配置把内部转账、退款改判成中性。
+
+    对方名称去空白后做子串匹配（``支付宝-沈宏阳`` 也算本人）；交易名称用
+    已有的全角/空格规整后精确匹配。金额不动——中性行照常入库、列表里看得见，
+    只是不计入收支合计。
+    """
+    if direction is Direction.NEUTRAL:
+        return direction
+
+    counterparty = _squash(_raw(row, indexes, "counterparty"))
+    if counterparty and any(
+        _squash(name) in counterparty
+        for name in profile.neutral_counterparties
+        if name.strip()
+    ):
+        return Direction.NEUTRAL
+
+    description = _normalize_value(_raw(row, indexes, "description"))
+    if description and any(
+        description == _normalize_value(name)
+        for name in profile.neutral_descriptions
+        if name.strip()
+    ):
+        return Direction.NEUTRAL
+
+    return direction
+
+
+def _hidden_by_config(
+    row: list[str], indexes: dict[str, int], profile: Profile
+) -> bool:
+    """「收/支」列原文命中配置里的 hidden 值，就按隐藏处理。
+
+    只认方向列的原文，不看改判之后的方向：隐藏说的是「账单上这一类」，
+    比如支付宝的「不计收支」。它跟中性不是一回事——中性说的是算不算钱，
+    隐藏说的是要不要在默认视图里露脸。
+    """
+    values = {
+        _normalize_value(item) for item in profile.hidden_values if item.strip()
+    }
+    if not values:
+        return False
+    return _normalize_value(_raw(row, indexes, "direction")) in values
 
 
 def _direction_from_text(text: str, profile: Profile) -> Direction | None:

@@ -64,6 +64,124 @@ export type LedgerRow = {
   display_cents: number;
   display_signed_cents: number;
   display_currency: string;
+  /** 分类退化成的一个 emoji；没分类时是空串，列表上补一个问号。 */
+  emoji: string;
+};
+
+/** 一个账户在某个显示币种下的收支。形状跟总计一致，口径也一样。 */
+export type AccountTotalsRow = {
+  display_currency: string;
+  income: number;
+  expense: number;
+  neutral_amount: number;
+  neutral_count: number;
+  large_income: number;
+  large_expense: number;
+  large_count: number;
+  total: number;
+};
+
+/** 首页账户区的一行：账户本身 + 上次导入 + 区间内收支。 */
+export type AccountOverview = {
+  id: number;
+  name: string;
+  kind: string;
+  /** 从没导入过是 null。 */
+  last_import_at: string | null;
+  /** 距今几天，服务端按显示时区算好了。从没导入过是 null。 */
+  days_since_import: number | null;
+  never_imported: boolean;
+  /** 超过设置里的 stale_days 没导入（或从未导入）。 */
+  stale: boolean;
+  totals: AccountTotalsRow[];
+};
+
+/** 首页概览当前生效的区间。比 `SummaryRange` 多几个「能不能往前后走」的标记。 */
+export type DashboardRange = SummaryRange & {
+  /** 这个区间本来的结束日（整月最后一天 / 整年最后一天）。 */
+  natural_end: string;
+  /** 还没过完：结束日之后还有日子。 */
+  partial: boolean;
+  /** 今天就在这段区间里。 */
+  current: boolean;
+  can_prev: boolean;
+  can_next: boolean;
+};
+
+export type ForecastWindow = {
+  spent: number;
+  projected: number;
+  elapsed_days: number;
+  total_days: number;
+};
+
+export type DashboardStats = {
+  expense: number;
+  income: number;
+  net: number;
+  total: number;
+  neutral_count: number;
+  large_income: number;
+  large_expense: number;
+  large_count: number;
+  elapsed_days: number;
+  daily_average: number;
+};
+
+export type DashboardCategory = {
+  name: string;
+  emoji: string;
+  expense: number;
+  total: number;
+};
+
+export type TrendPoint = { key: string; expense: number; income: number };
+
+/**
+ * 首页概览。一次只含**一个币种**的数——预测、平均、趋势、排行都不跨币种。
+ * 接口里绝不会出现浮点，比例由两个整数在前端算。
+ */
+export type Dashboard = {
+  today: string;
+  has_data: boolean;
+  /** 恒等于 display_currency；保留字段是为了旧地址栏参数兼容。 */
+  currency: string;
+  currencies: string[];
+  multi_currency: boolean;
+  display_currency: string;
+  /** 这一区间里没配汇率、因而不在以上数字里的币种及笔数。 */
+  unconverted: { currency: string; count: number }[];
+  unconverted_count: number;
+  range: DashboardRange;
+  stats: DashboardStats;
+  previous: {
+    start: string;
+    end: string;
+    label: string;
+    expense: number;
+  } | null;
+  forecast: { month: ForecastWindow; year: ForecastWindow };
+  averages: {
+    monthly: number;
+    yearly: number;
+    months: number;
+    from: string;
+    to: string;
+    total: number;
+  } | null;
+  trend: {
+    bucket: "day" | "month";
+    points: TrendPoint[];
+    total: number;
+    income_total: number;
+    peak: TrendPoint | null;
+    average: number;
+    income_average: number;
+  };
+  categories: DashboardCategory[];
+  singles: LedgerRow[];
+  single_count: number;
+  category_count: number;
 };
 
 export type Summary = {
@@ -80,6 +198,8 @@ export type Summary = {
   ranking: LedgerRow[];
   /** 每个币种在区间里一共有多少笔计入合计的支出——用来讲「另有多少笔」。 */
   ranking_counts: Record<string, number>;
+  /** 每个账户的上次导入时间和区间内收支。 */
+  accounts: AccountOverview[];
 };
 
 export type Account = { id: number; name: string };
@@ -125,10 +245,11 @@ export type TransactionRow = {
   hidden: number;
   edited_at: string | null;
   display_cents: number;
+  /** `display_cents` 是哪个币种的数；跟 `currency` 不同就说明这一行换算过。 */
+  display_currency: string;
   is_large: number;
   /** 分类退化成的一个 emoji（名字在 effective_category 里，挂在 tooltip 上）。
-   *  没分类时是空串——空分类是真实存在的一大类，给它挂个通用图标等于每行都
-   *  顶同一个记号，白占地方。 */
+   *  没分类时是空串；列表上会补一个问号占住那个位置。 */
   emoji: string;
 };
 
@@ -157,6 +278,7 @@ export type ListFilters = {
   direction: string;
   account: number | null;
   q: string;
+  category: string;
   hidden: string;
 };
 
@@ -214,6 +336,9 @@ export type TransactionFields = {
   direction: Direction;
   amount_cents: number;
   currency: string;
+  display_cents: number;
+  /** `display_cents` 是哪个币种的数；跟 `currency` 不同就说明这一笔换算过。 */
+  display_currency: string;
   counterparty: string;
   counterparty_account: string;
   description: string;
@@ -264,6 +389,8 @@ export type HideResult = {
 export type GroupRow = {
   id: number;
   origin: string;
+  /** net = AA / 收支平衡的净额组；rollup = 按月汇总的收益组。 */
+  kind: "net" | "rollup";
   title: string;
   category: string;
   note: string;
@@ -281,6 +408,8 @@ export type GroupsPayload = {
   groups: GroupRow[];
   members: Record<string, MemberRow[]>;
   display_currency: string;
+  /** 库里出现过的分类名，给这一组改分类时做下拉候选。 */
+  categories: string[];
 };
 
 // --------------------------------------------------------------------------
@@ -333,9 +462,11 @@ export type Preview = {
     duplicate: number;
     possible: number;
     neutral: number;
+    /** 其中导入后直接处于隐藏状态的有几条。 */
+    hidden: number;
     problem: number;
   };
-  totals: { income: number; expense: number };
+  totals: { currency: string; income: number; expense: number }[];
   issues: { code: string; level: string; message: string; row_number: number | null }[];
   issues_total: number;
   rows: PreviewRow[];
@@ -351,7 +482,13 @@ export type SettingsValues = {
   theme: string;
   display: string;
   timezone: string;
-  rates: { code: string; rate: string }[];
+  /** `detected` / `count` 只给设置页用：账本里有、但还没配汇率的币种。 */
+  rates: {
+    code: string;
+    rate: string;
+    detected?: boolean;
+    count?: number;
+  }[];
   large_out: string;
   large_in: string;
   merge_enabled: boolean;
@@ -359,10 +496,15 @@ export type SettingsValues = {
   merge_window_hours: string;
   merge_tolerance: string;
   merge_keywords: string;
+  merge_rollup: boolean;
+  merge_rollup_keywords: string;
+  stale_days: string;
 };
 
 export type SettingsPayload = {
   values: SettingsValues;
+  /** 账本里出现过的原币种及笔数，设置页用它补出还没配汇率的行。 */
+  currencies: { currency: string; count: number }[];
   errors: string[];
   saved: boolean;
   path: string;

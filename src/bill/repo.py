@@ -10,14 +10,16 @@ import secrets
 import sqlite3
 from collections.abc import Iterable, Sequence
 
-from . import db, dedup, groups, settings
+from . import categories, db, dedup, groups, settings
 from .errors import BillError
 from .models import Issue, ParsedRow, Transaction
 
 __all__ = [
     "EDITABLE",
     "accounts",
+    "append_rollup_members",
     "autodetect",
+    "autodetect_rollups",
     "by_month",
     "by_source_category",
     "count_groups",
@@ -51,6 +53,7 @@ __all__ = [
     "reclassify",
     "save_issues",
     "transaction_categories",
+    "trend_series",
     "transaction_currencies",
     "transactions_for_import",
     "update_group",
@@ -62,12 +65,12 @@ INSERT INTO transactions (
   account_id, import_id, occurred_at, occurred_date, direction, amount_cents,
   currency, counterparty, counterparty_account, description, memo, payment_method,
   status, source_txn_id, merchant_txn_id, source_category, category, profile_name,
-  dedup_key, content_hash, raw_json, created_at
+  dedup_key, content_hash, raw_json, created_at, hidden, auto_hidden
 ) VALUES (
   :account_id, :import_id, :occurred_at, :occurred_date, :direction, :amount_cents,
   :currency, :counterparty, :counterparty_account, :description, :memo, :payment_method,
   :status, :source_txn_id, :merchant_txn_id, :source_category, :category, :profile_name,
-  :dedup_key, :content_hash, :raw_json, :created_at
+  :dedup_key, :content_hash, :raw_json, :created_at, :hidden, :auto_hidden
 )
 """
 
@@ -111,6 +114,12 @@ def _tx_params(
         "content_hash": content_hash,
         "raw_json": raw_json,
         "created_at": created_at,
+        # 配置把某类「收/支」直接标成隐藏时（支付宝的「不计收支」），
+        # 写入就带上标记；手动记账没有这个概念，默认 0。
+        "hidden": int(transaction.hidden),
+        # 导入时这次的隐藏是配置自动给的，收益汇总据此决定要不要照常取数。
+        # 手动记账永远不是自动的。
+        "auto_hidden": int(transaction.hidden),
     }
 
 
@@ -148,6 +157,24 @@ def accounts(connection: sqlite3.Connection) -> list[sqlite3.Row]:
         SELECT a.*, COUNT(t.id) AS txn_count
         FROM accounts a LEFT JOIN transactions t ON t.account_id = a.id
         GROUP BY a.id ORDER BY a.name
+        """
+    ).fetchall()
+
+
+def account_imports(connection: sqlite3.Connection) -> list[sqlite3.Row]:
+    """每个账户最后一次导入账单的时间。
+
+    从没导入过的账户**也要出现**，它的 ``last_import_at`` 是 NULL——首页靠这个
+    把「从未导入」和「导入过但很久没导」分开说。用 LEFT JOIN + MAX，不要写成
+    「先查 imports 再按账户匹配」：后者会让没导过的账户整条消失。
+    """
+    return connection.execute(
+        """
+        SELECT a.id, a.name, a.kind, MAX(i.uploaded_at) AS last_import_at
+        FROM accounts a
+        LEFT JOIN imports i ON i.account_id = a.id
+        GROUP BY a.id, a.name, a.kind
+        ORDER BY a.name
         """
     ).fetchall()
 
@@ -437,6 +464,29 @@ def _amount_in_display(conf, prefix: str = "", column: str = "amount_cents") -> 
     return f"CASE {prefix}currency {cases} ELSE {prefix}{column} END"
 
 
+def _amount_factor(conf, prefix: str = "") -> str:
+    """币种 -> 乘数。**不带取整**，给「先求和再换算」的月度汇总用。"""
+    factors = conf.factors()
+    if not factors:
+        return "1"
+    cases = " ".join(
+        f"WHEN '{code}' THEN {factor!r}" for code, factor in sorted(factors.items())
+    )
+    return f"CASE {prefix}currency {cases} ELSE 1 END"
+
+
+def _rollup_amount_sql(conf, prefix: str = "s.") -> str:
+    """月度汇总金额：先按原币求和，再一次性换算取整。
+
+    不能拿逐行换算后的金额相加：¥0.01 十二笔，按 8.9 的汇率逐笔都会舍成 0，
+    整月就凭空没了。汇总组的 key 保证同组同币种，所以「先求和再换」是准的。
+    """
+    return (
+        f"CAST(ROUND(SUM({prefix}amount_cents * ({_amount_factor(conf, prefix)})))"
+        " AS INTEGER)"
+    )
+
+
 def _comparable(conf, prefix: str = "") -> str:
     """这一行的金额能不能跟阈值比大小。
 
@@ -472,6 +522,19 @@ def _is_large(conf, prefix: str = "") -> str:
     )
 
 
+def _is_large_effective(conf, prefix: str = "") -> str:
+    """账本口径里的大额判断。**只能用在 effective 上**。
+
+    月度收益汇总是很多笔小钱加起来的一个月合计，不是「一笔大额收入」。拿单笔
+    阈值去量它，某个月收益一高就会被整块剔出收入，屏幕上只说「大额」——数字
+    少了却不报错。真实单笔详情仍用 `_is_large`（原始表没有 group_kind）。
+    """
+    return (
+        f"(CASE WHEN {prefix}group_kind = 'rollup' THEN 0 "
+        f"ELSE {_is_large(conf, prefix)} END)"
+    )
+
+
 def _large_flag(conf, prefix: str = "t.") -> str:
     """单笔页面上那个「大额」标记（列表页和详情页共用）。
 
@@ -484,7 +547,7 @@ def _large_flag(conf, prefix: str = "t.") -> str:
 
 def _totals(conf, prefix: str = "") -> str:
     amount = _amount_in_display(conf, prefix)
-    large = _is_large(conf, prefix)
+    large = _is_large_effective(conf, prefix)
     # 大额行仍然算进 total / 中性笔数（它们确实在账本里），但不进金额——
     # 中性行早就是这个待遇了，条数描述的是账本，金额描述的是「日常水平」。
     return f"""
@@ -557,8 +620,22 @@ _EFFECTIVE_COLUMNS = """
     memo, payment_method, status, source_txn_id, merchant_txn_id,
     source_category, category, effective_category, profile_name, dedup_key,
     content_hash, raw_json, created_at, edited_at, hidden, signed_cents,
-    group_id, member_count
+    group_id, member_count, group_kind
 """
+
+
+def _effective_category(prefix: str = "t.") -> str:
+    """页面上显示的分类：手改的优先，两列都归一到统一体系。
+
+    手改的那一列仍然优先（用户自己的归类盖过账单原文），但**显示时也走同一张
+    映射表**：否则手改里留一个英文 ``Groceries``，汇总页和筛选下拉里就又会
+    冒出一行英文，等于没统一。原始值仍原样躺在 ``category`` 里，随时能对回去。
+
+    归一在查询时算，规则改了刷新就重算，库里的原文一个字都不动。
+    """
+    own = categories.canonical_sql(f"{prefix}category")
+    source = categories.canonical_sql(f"{prefix}source_category")
+    return f"COALESCE(NULLIF({own}, ''), {source})"
 
 
 def _effective_cte(conf, *, include_hidden: bool = False) -> str:
@@ -598,9 +675,14 @@ def _effective_cte(conf, *, include_hidden: bool = False) -> str:
     grp_total AS (
       SELECT m.group_id,
              COUNT(*) AS member_count,
-             SUM({signed} * ({conv})) AS net,
+             MAX(g.kind) AS kind,
+             CASE WHEN MAX(g.kind) = 'rollup'
+                  THEN {_rollup_amount_sql(conf)}
+                  ELSE SUM({signed} * ({conv})) END AS net,
              MIN(s.occurred_at) AS first_at
-      FROM grp_member m JOIN tx_signed s ON s.id = m.transaction_id
+      FROM grp_member m
+      JOIN tx_groups g ON g.id = m.group_id
+      JOIN tx_signed s ON s.id = m.transaction_id
       GROUP BY m.group_id
     ),
     effective AS (
@@ -611,10 +693,10 @@ def _effective_cte(conf, *, include_hidden: bool = False) -> str:
                t.counterparty_account, t.description, t.memo, t.payment_method,
                t.status, t.source_txn_id, t.merchant_txn_id, t.source_category,
                t.category,
-               COALESCE(NULLIF(t.category, ''), t.source_category) AS effective_category,
+               {_effective_category("t.")} AS effective_category,
                t.profile_name, t.dedup_key, t.content_hash, t.raw_json,
                t.created_at, t.edited_at, t.hidden, t.signed_cents,
-               NULL AS group_id, 1 AS member_count
+               NULL AS group_id, 1 AS member_count, 'net' AS group_kind
         FROM tx_signed t
         WHERE NOT EXISTS (
           SELECT 1 FROM grp_member m WHERE m.transaction_id = t.id
@@ -629,7 +711,8 @@ def _effective_cte(conf, *, include_hidden: bool = False) -> str:
         -- 一次列表查询要 1.6 秒（量的就是它）。子查询按 group_id 走索引，
         -- 一次性降到毫秒级。
         SELECT -g.id, a.account_id, NULL, z.first_at, substr(z.first_at, 1, 10),
-               CASE WHEN z.net > 0 THEN 'in'
+               CASE WHEN g.kind = 'rollup' THEN 'in'
+                    WHEN z.net > 0 THEN 'in'
                     WHEN z.net < 0 THEN 'out'
                     ELSE 'neutral' END,
                ABS(z.net), '{currency}', COALESCE(NULLIF(g.title, ''), a.counterparty),
@@ -637,10 +720,12 @@ def _effective_cte(conf, *, include_hidden: bool = False) -> str:
                COALESCE(NULLIF(g.note, ''), a.memo),
                a.payment_method, a.status, a.source_txn_id, a.merchant_txn_id,
                a.source_category, g.category,
-               COALESCE(NULLIF(g.category, ''), NULLIF(a.category, ''), a.source_category),
+               COALESCE(NULLIF({categories.canonical_sql("g.category")}, ''),
+                        NULLIF({categories.canonical_sql("a.category")}, ''),
+                        {categories.canonical_sql("a.source_category")}),
                a.profile_name, '', '', '{{}}', g.created_at, NULL, 0,
                z.net,
-               g.id, z.member_count
+               g.id, z.member_count, g.kind
         FROM tx_groups g
         JOIN grp_total z ON z.group_id = g.id
         JOIN tx_signed a ON a.id = (
@@ -709,6 +794,36 @@ def overall_totals(
     ).fetchall()
 
 
+def account_totals(
+    connection: sqlite3.Connection, *, start: str | None = None, end: str | None = None
+) -> list[sqlite3.Row]:
+    """每个账户在各显示币种下的收支，跟随区间。
+
+    **走 effective，不数 transactions 表**：合并组已经折成净额，直接数原表
+    会把同一笔算两遍。金额口径复用 ``_totals``，所以账户卡和顶上的总计、
+    大额剔除规则永远一致。
+
+    按 ``account_id + display_currency`` 分组：一个账户可能同时有人民币和英镑
+    （中行双币卡就是），跨币种相加会得到一个不报错的错数。
+    """
+    conf = settings.load()
+    where, params = _range_where(start, end)
+    display = _group_by_display(conf, "t.")
+    return connection.execute(
+        f"""
+        {_effective_cte(conf)}
+        SELECT t.account_id,
+               {display} AS display_currency,
+               {_totals(conf, "t.")}
+        FROM effective t
+        WHERE {where}
+        GROUP BY t.account_id, {display}
+        ORDER BY t.account_id, display_currency
+        """,
+        params,
+    ).fetchall()
+
+
 def currencies(
     connection: sqlite3.Connection, *, start: str | None = None, end: str | None = None
 ) -> list[str]:
@@ -738,7 +853,7 @@ def by_month(
 ) -> list[sqlite3.Row]:
     conf = settings.load()
     amount = _amount_in_display(conf, "t.")
-    large = _is_large(conf, "t.")
+    large = _is_large_effective(conf, "t.")
     where, params = _range_where(start, end)
     tail = "" if limit is None else "LIMIT ?"
     return connection.execute(
@@ -760,9 +875,57 @@ def by_month(
     ).fetchall()
 
 
+def trend_series(
+    connection: sqlite3.Connection,
+    *,
+    bucket: str = "day",
+    start: str | None = None,
+    end: str | None = None,
+) -> list[sqlite3.Row]:
+    """区间内每个时间桶的收入和支出，按显示币种分开。
+
+    ``bucket`` 只认 ``'day'`` / ``'month'``。口径跟合计完全一致：中性行不是收支，
+    大额被剔出合计，也就不进这两条线——图上画一根它没算进去的柱子，等于让图去
+    推翻旁边那几个数。
+
+    **不补零桶**。哪一天、哪个月一笔都没有，这里就没有那一行；补零是界面的事，
+    服务端补了反而会把「这一段根本没有数据」和「这一段花得少」混成一样的形状。
+    """
+    if bucket not in ("day", "month"):
+        raise BillError(f"不认识的时间桶「{bucket}」，只认 day / month。")
+    conf = settings.load()
+    key = (
+        "substr(t.occurred_date, 1, 10)"
+        if bucket == "day"
+        else "substr(t.occurred_date, 1, 7)"
+    )
+    amount = _amount_in_display(conf, "t.")
+    where, params = _range_where(start, end)
+    return connection.execute(
+        f"""
+        {_effective_cte(conf)}
+        SELECT {key} AS bucket,
+               {_group_by_display(conf, "t.")} AS display_currency,
+               COALESCE(SUM(
+                 CASE WHEN t.direction = 'out' AND NOT {_is_large(conf, "t.")}
+                      THEN {amount} END
+               ), 0) AS expense,
+               COALESCE(SUM(
+                 CASE WHEN t.direction = 'in' AND NOT {_is_large(conf, "t.")}
+                      THEN {amount} END
+               ), 0) AS income
+        FROM effective t
+        WHERE {where}
+        GROUP BY bucket, display_currency
+        ORDER BY bucket, display_currency
+        """,
+        params,
+    ).fetchall()
+
+
 def by_source_category(
     connection: sqlite3.Connection,
-    limit: int = 60,
+    limit: int | None = 60,
     *,
     start: str | None = None,
     end: str | None = None,
@@ -778,7 +941,7 @@ def by_source_category(
     """
     conf = settings.load()
     amount = _amount_in_display(conf, "t.")
-    large = _is_large(conf, "t.")
+    large = _is_large_effective(conf, "t.")
     where, params = _range_where(start, end)
     # 注意 GROUP BY 里必须重写整个表达式，不能写别名 category：effective 里本来
     # 就有一列叫 category（用户手改的那一列），SQLite 的分组会认输入列而不是输出
@@ -795,9 +958,9 @@ def by_source_category(
         WHERE {where}
         GROUP BY COALESCE(NULLIF(t.effective_category, ''), '未分类'), display_currency
         ORDER BY display_currency, expense DESC, income DESC
-        LIMIT ?
+        {"" if limit is None else "LIMIT ?"}
         """,
-        [*params, limit],
+        [*params, *(() if limit is None else (limit,))],
     ).fetchall()
 
 
@@ -886,7 +1049,7 @@ def large_transactions(
                CASE WHEN t.direction = 'out' THEN -({amount}) ELSE ({amount}) END
                  AS display_signed_cents
         FROM effective t
-        WHERE {where} AND {_is_large(conf, "t.")}
+        WHERE {where} AND {_is_large_effective(conf, "t.")}
         ORDER BY display_currency, display_cents DESC, t.occurred_at DESC, t.id DESC
         """,
         params,
@@ -976,7 +1139,7 @@ def _ranked_expenses(
         FROM effective t
         WHERE {where}
           AND t.direction = 'out'
-          AND NOT {_is_large(conf, "t.")}
+          AND NOT {_is_large_effective(conf, "t.")}
         ORDER BY display_currency, display_cents DESC, t.occurred_at DESC, t.id DESC
         """,
         params,
@@ -991,6 +1154,7 @@ def list_transactions(
     account_id: int | None = None,
     direction: str | None = None,
     search: str | None = None,
+    category: str | None = None,
     hidden: str | None = None,
     limit: int = 100,
     offset: int = 0,
@@ -1001,7 +1165,7 @@ def list_transactions(
     就是那一端不限。默认区间由调用方给（见 web.transactions）。
     """
     where, params = _transaction_filters(
-        start, end, account_id, direction, search, hidden
+        start, end, account_id, direction, search, hidden, category
     )
     params.extend([limit, offset])
 
@@ -1010,12 +1174,16 @@ def list_transactions(
     # 显示币种（见 _effective_cte），币种列也是显示币种，所以乘 1。
     conf = settings.load()
     amount = _amount_in_display(conf, "t.")
-    large_flag = _large_flag(conf, "t.")
+    large_flag = (
+        f"(CASE WHEN t.group_kind = 'rollup' THEN 0 "
+        f"ELSE {_large_flag(conf, 't.')} END)"
+    )
     return connection.execute(
         f"""
         {_effective_cte(conf, include_hidden=hidden != "0")}
         SELECT t.*, a.name AS account_name,
                {amount} AS display_cents,
+               {_group_by_display(conf, "t.")} AS display_currency,
                -- 大额不进合计这件事，列表页上只靠 is_large 那个标记交代：
                -- 金额照原样显示，标记说明它不算进上面的数。早先另有一列叫
                -- 「计入合计」，大额在那列写 0.00——列删了，理由还成立。
@@ -1037,13 +1205,14 @@ def count_transactions(
     account_id: int | None = None,
     direction: str | None = None,
     search: str | None = None,
+    category: str | None = None,
     hidden: str | None = None,
 ) -> int:
     """跟 list_transactions 同源同过滤：一个合并组算一条。两处对不上的话，
     「共 N 条」和列表行数就会各说各话。"""
     conf = settings.load()
     where, params = _transaction_filters(
-        start, end, account_id, direction, search, hidden
+        start, end, account_id, direction, search, hidden, category
     )
     return connection.execute(
         f"""
@@ -1061,6 +1230,7 @@ def _transaction_filters(
     direction: str | None,
     search: str | None,
     hidden: str | None = None,
+    category: str | None = None,
 ) -> tuple[str, list]:
     clauses = ["1 = 1"]
     params: list = []
@@ -1079,6 +1249,15 @@ def _transaction_filters(
     if direction in ("in", "out", "neutral"):
         clauses.append("t.direction = ?")
         params.append(direction)
+    if category:
+        # 分类用跟汇总页**同一个**表达式：手改过的 category 优先，没改过回落到
+        # 账单自带的 source_category，两个都空就是「未分类」。写成 `t.category = ?`
+        # 会让首页那个分类排行点进来少掉一大截——它数的是 effective_category。
+        # 合并组的 effective_category 在 CTE 里已经算好，所以这里也连组一起筛。
+        clauses.append(
+            "COALESCE(NULLIF(t.effective_category, ''), '未分类') = ?"
+        )
+        params.append(category)
     # 「不含隐藏」那一档用不着这一条：隐藏的行在 _effective_cte 里就已经不在了，
     # 留一条空跑的条件只会让人猜哪边在起作用。所以只给「只看隐藏」加。
     if hidden == "1":
@@ -1133,8 +1312,9 @@ def get_transaction(
     return connection.execute(
         f"""
         SELECT t.*, a.name AS account_name, {amount} AS display_cents,
+               {_group_by_display(conf, "t.")} AS display_currency,
                {_large_flag(conf, "t.")} AS is_large,
-               COALESCE(NULLIF(t.category, ''), t.source_category) AS effective_category,
+               {_effective_category("t.")} AS effective_category,
                m.group_id AS group_id, g.origin AS group_origin, g.title AS group_title
         FROM transactions t
         JOIN accounts a ON a.id = t.account_id
@@ -1229,10 +1409,28 @@ def update_transaction(
             {**changes, "edited_at": db.now(), "id": txn_id},
         )
 
-    if any(
+    breaking = any(
         name in changes and str(changes[name]) != str(before[name])
         for name in _BREAKING
-    ):
+    )
+    if not breaking:
+        # 月度汇总的分组依据是「对方 + 说明里的关键词」。把说明改成别的、
+        # 或把对方改掉，这一笔就不该再留在那个收益组里；而 AA 组不看这两列，
+        # 不能把这两项加进全局的 _BREAKING。
+        rollup = connection.execute(
+            """
+            SELECT 1 FROM tx_groups g JOIN tx_group_members m ON m.group_id = g.id
+            WHERE m.transaction_id = ? AND g.kind = 'rollup'
+            LIMIT 1
+            """,
+            (txn_id,),
+        ).fetchone()
+        if rollup is not None:
+            breaking = any(
+                name in changes and str(changes[name]) != str(before[name])
+                for name in ("counterparty", "description")
+            )
+    if breaking:
         _dissolve_auto_group_of(connection, txn_id)
 
     return True
@@ -1263,8 +1461,10 @@ def set_hidden(connection: sqlite3.Connection, txn_id: int, hidden: bool) -> boo
     if hidden:
         _dissolve_groups_touching(connection, "m.transaction_id = ?", (txn_id,))
         prune_groups(connection)
+    # 手动点过之后，这笔的隐藏状态归用户管；自动隐藏的标记一并清掉，
+    # 免得下次收益扫描又把刚藏掉的这笔合回去。
     cursor = connection.execute(
-        "UPDATE transactions SET hidden = ? WHERE id = ?",
+        "UPDATE transactions SET hidden = ?, auto_hidden = 0 WHERE id = ?",
         (1 if hidden else 0, txn_id),
     )
     return cursor.rowcount > 0
@@ -1294,11 +1494,13 @@ def reclassify(
 def transaction_categories(connection: sqlite3.Connection) -> list[str]:
     """库里出现过的分类名，给表单做候选（手改过的 + 账单自带的）。"""
     rows = connection.execute(
-        """
+        f"""
         SELECT DISTINCT name FROM (
-          SELECT category AS name FROM transactions WHERE category <> ''
+          SELECT {categories.canonical_sql("category")} AS name
+          FROM transactions WHERE category <> ''
           UNION ALL
-          SELECT source_category FROM transactions WHERE source_category <> ''
+          SELECT {categories.canonical_sql("source_category")}
+          FROM transactions WHERE source_category <> ''
         ) ORDER BY name
         """
     ).fetchall()
@@ -1311,6 +1513,24 @@ def transaction_currencies(connection: sqlite3.Connection) -> list[str]:
         "SELECT DISTINCT currency FROM transactions ORDER BY currency"
     ).fetchall()
     return [row["currency"] for row in rows]
+
+
+def currency_counts(connection: sqlite3.Connection) -> list[dict]:
+    """库里每个原币种有多少笔，给设置页列「账本里出现过的币种」。
+
+    只是「有哪些币种要管」的清单，**不参与任何合计**——统计一律走
+    `_effective_cte` 的合并后口径。隐藏记录也算：设置页管的是账本里真实
+    存在过的币种，恢复之后仍然要有汇率。
+    """
+    rows = connection.execute(
+        """
+        SELECT currency, COUNT(*) AS count
+        FROM transactions
+        GROUP BY currency
+        ORDER BY currency
+        """
+    ).fetchall()
+    return [{"currency": row["currency"], "count": row["count"]} for row in rows]
 
 
 # --------------------------------------------------------------------------
@@ -1329,15 +1549,23 @@ def create_group(
     title: str = "",
     category: str = "",
     note: str = "",
+    kind: str = "net",
+    rollup_key: str | None = None,
 ) -> int:
     """把若干笔并成一组，返回组 id。
 
     只管「几笔、哪几笔」，不管金额关系——手动合并是用户的断言，不需要满足
     等额数学；自动检测那边由 groups.candidates 先筛过。
+
+    ``kind='rollup'`` 是月度收益汇总：成员必须全是中性、同一个月/账户/对方/币种，
+    金额按「先求和再换算」算，方向固定成收入。它是自动检测专用的，手动合并
+    永远建 net 组。
     """
     ids = list(dict.fromkeys(transaction_ids))
     if len(ids) < 2:
         raise BillError("合并至少要两笔。")
+    if kind not in ("net", "rollup"):
+        raise BillError(f"不认识的合并类型：{kind!r}。")
     marks = ", ".join("?" * len(ids))
 
     alive = connection.execute(
@@ -1345,6 +1573,30 @@ def create_group(
     ).fetchone()["n"]
     if alive != len(ids):
         raise BillError("勾选的记录里有已经不在了的，刷新页面再试。")
+
+    if kind == "rollup":
+        if origin != "auto" or not rollup_key:
+            raise BillError("月度收益汇总只能由自动检测建立。")
+        members = connection.execute(
+            f"""
+            SELECT direction, account_id, counterparty, currency,
+                   substr(occurred_date, 1, 7) AS month
+            FROM transactions WHERE id IN ({marks})
+            """,
+            ids,
+        ).fetchall()
+        if any(item["direction"] != "neutral" for item in members):
+            raise BillError("月度收益汇总只能合并中性记录。")
+        if len({
+            (
+                item["account_id"],
+                (item["counterparty"] or "").strip().casefold(),
+                (item["currency"] or "").upper(),
+                item["month"],
+            )
+            for item in members
+        }) != 1:
+            raise BillError("月度收益汇总的成员必须同账户、同对方、同月、同币种。")
 
     # 隐藏的行不参与合并。它是「不算数」的那一档，合进来的话净额里一半算一半不算，
     # 而分组页上还写着「N 笔」——两个数一对不上就成了那种不报错的错。界面上隐藏的
@@ -1371,10 +1623,10 @@ def create_group(
 
     cursor = connection.execute(
         """
-        INSERT INTO tx_groups (origin, title, category, note, created_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO tx_groups (origin, kind, rollup_key, title, category, note, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (origin, title, category, note, db.now()),
+        (origin, kind, rollup_key, title, category, note, db.now()),
     )
     group_id = int(cursor.lastrowid)
     connection.executemany(
@@ -1382,6 +1634,67 @@ def create_group(
         [(group_id, txn_id) for txn_id in ids],
     )
     return group_id
+
+
+def append_rollup_members(
+    connection: sqlite3.Connection, group_id: int, transaction_ids: Sequence[int]
+) -> int:
+    """把新导入的收益追加进已有的月度组，返回真正加进去的笔数。
+
+    新导入常常只带来某个月的**一两笔**收益；另起一组会让同一个月出现两行，
+    而「把这个月的收益合成一条」正是这个功能本身。标题/分类不动，用户手改过的
+    东西不会被一次导入盖掉。
+
+    已经在别的组、不是中性的 id 一律跳过；唯一约束是最后一道防线，
+    `OR IGNORE` 保证单行冲突不把整次扫描带崩。
+
+    **配置自动隐藏的中性行照样可以入组**：支付宝的「不计收支」现在导入即隐藏，
+    其中余额宝收益正是这个汇总功能的原料。用户手动藏掉的（auto_hidden = 0）
+    仍然排除在外——否则手动一藏，下次扫描又把它合回去。组行本身按收入显示，
+    不受成员的隐藏标记影响（``_effective_cte`` 的合成行分支不过滤 hidden）。
+    """
+    group = connection.execute(
+        "SELECT kind, rollup_key FROM tx_groups WHERE id = ?", (group_id,)
+    ).fetchone()
+    if group is None or group["kind"] != "rollup":
+        raise BillError("这不是一个按月汇总的收益组。")
+
+    ids = list(dict.fromkeys(transaction_ids))
+    if not ids:
+        return 0
+    marks = ", ".join("?" * len(ids))
+    usable = [
+        row["id"]
+        for row in connection.execute(
+            f"""
+            SELECT t.id, t.account_id, t.counterparty, t.currency, t.occurred_date
+            FROM transactions t
+            WHERE t.id IN ({marks})
+              AND (t.hidden = 0 OR t.auto_hidden = 1)
+              AND t.direction = 'neutral'
+              AND NOT EXISTS (
+                SELECT 1 FROM tx_group_members m WHERE m.transaction_id = t.id
+              )
+            """,
+            ids,
+        )
+        if groups.rollup_key(
+            row["account_id"],
+            row["counterparty"],
+            (row["occurred_date"] or "")[:7],
+            row["currency"],
+        )
+        == group["rollup_key"]
+    ]
+    if not usable:
+        return 0
+    _refuse_unconvertible(connection, usable)
+    before = connection.total_changes
+    connection.executemany(
+        "INSERT OR IGNORE INTO tx_group_members (group_id, transaction_id) VALUES (?, ?)",
+        [(group_id, txn_id) for txn_id in usable],
+    )
+    return connection.total_changes - before
 
 
 def _refuse_unconvertible(connection: sqlite3.Connection, ids: Sequence[int]) -> None:
@@ -1423,7 +1736,19 @@ def dissolve_group(
     它们本来就是依据没了才散的。
     """
     if veto:
-        _record_veto(connection, group_id)
+        group = connection.execute(
+            "SELECT kind, rollup_key FROM tx_groups WHERE id = ?", (group_id,)
+        ).fetchone()
+        if group is not None and group["kind"] == "rollup" and group["rollup_key"]:
+            # 月度汇总按 key 记：以后补导入一笔更早的收益，锚点会变，但
+            # 「这个月的收益别再自动合」这个意思不应该跟着失效。
+            connection.execute(
+                "INSERT OR IGNORE INTO tx_rollup_vetoes (rollup_key, created_at)"
+                " VALUES (?, ?)",
+                (group["rollup_key"], db.now()),
+            )
+        else:
+            _record_veto(connection, group_id)
     cursor = connection.execute("DELETE FROM tx_groups WHERE id = ?", (group_id,))
     return cursor.rowcount > 0
 
@@ -1490,7 +1815,10 @@ def list_groups(connection: sqlite3.Connection) -> list[sqlite3.Row]:
         WITH grp_health AS ({_group_health_sql(conf)})
         SELECT g.*, h.member_count, h.unconvertible,
                CASE WHEN h.unconvertible = 0
-                    THEN SUM({signed} * ({conv})) END AS net_cents,
+                    THEN CASE WHEN g.kind = 'rollup'
+                              THEN {_rollup_amount_sql(conf)}
+                              ELSE SUM({signed} * ({conv})) END
+               END AS net_cents,
                MIN(s.occurred_at) AS first_at,
                COUNT(DISTINCT s.currency) AS currency_count,
                (SELECT GROUP_CONCAT(DISTINCT s2.currency)
@@ -1545,6 +1873,7 @@ def autodetect(
     *,
     since: str | None = None,
     until: str | None = None,
+    aa: bool = True,
 ) -> int:
     """扫一遍自动建合并组，返回新建了几组。
 
@@ -1552,37 +1881,143 @@ def autodetect(
     判定要用到支出之后那一段时间的收款，所以调用方得把范围往外放宽一个窗口。
     不传就是全库——给已经记了很久的账本补上用的。
 
-    检测是纯函数（``groups.detect``），这里只负责取数、换算和落库。
-    已经在你取消过的名单上的组合会跳过，不会再自己回来。
+    ``aa=False`` 只跑月度收益汇总，不动 AA / 收支平衡。两个开关是独立的：
+    用户可能只想关掉其中一个。
+
+    检测是纯函数（``groups.detect`` / ``groups.rollups``），这里只负责取数、
+    换算和落库。已经在你取消过的名单上的组合会跳过，不会再自己回来。
 
     **要放在调用方的事务里**（``with connection:``）：它只负责写，提交交给调用方。
     忘了包的话，这里会安安静静什么都不留下。
     """
     conf = settings.load()
-    planned = groups.detect(
-        _detect_rows(connection, conf, since=since, until=until),
-        window_hours=conf.merge_window_hours,
-        tolerance_cents=conf.tolerance_cents(),
-        keywords=conf.merge_keywords,
-        balanced_merge=conf.merge_balanced,
-    )
-    vetoed = _vetoes(connection)
     created = 0
-    for candidate in planned:
-        if candidate.anchor_id in vetoed:
-            continue
-        try:
-            create_group(
-                connection, origin="auto", transaction_ids=list(candidate.ids)
-            )
-        except (BillError, sqlite3.IntegrityError):
-            # 唯一约束是最后一道防线。真撞上了就跳过这一组，不为一行数据
-            # 把整次导入或整页扫描带崩。
-            continue
-        created += 1
+    if aa:
+        planned = groups.detect(
+            _detect_rows(connection, conf, since=since, until=until),
+            window_hours=conf.merge_window_hours,
+            tolerance_cents=conf.tolerance_cents(),
+            keywords=conf.merge_keywords,
+            balanced_merge=conf.merge_balanced,
+        )
+        vetoed = _vetoes(connection)
+        for candidate in planned:
+            if candidate.anchor_id in vetoed:
+                continue
+            try:
+                create_group(
+                    connection, origin="auto", transaction_ids=list(candidate.ids)
+                )
+            except (BillError, sqlite3.IntegrityError):
+                # 唯一约束是最后一道防线。真撞上了就跳过这一组，不为一行数据
+                # 把整次导入或整页扫描带崩。
+                continue
+            created += 1
+    if conf.merge_rollup:
+        created += autodetect_rollups(connection)
     # 万一刚才那一下是半截成功（组建了、成员没插全），别留个空壳组在库里。
     prune_groups(connection)
     return created
+
+
+def autodetect_rollups(connection: sqlite3.Connection) -> int:
+    """把「按日发放的收益」补成按月的组，返回新建了几组。
+
+    **刻意不按 since/until 圈范围**：一次导入可能只覆盖一天，而同月更早的收益
+    早就在库里了。只扫窗口内的话，新组永远凑不齐，已有的组也永远追加不到。
+    候选是「未入组 + 中性 + 金额 > 0」，几百行量级，全库扫没有压力。配置
+    自动隐藏的中性行也算——支付宝「不计收支」现在导入即隐藏，收益发放正是
+    从这里来的；用户手动藏掉的仍不算。
+
+    已有的同 key 组直接追加（只有一笔新收益也追加）；没有组时至少两笔才建。
+    """
+    conf = settings.load()
+    if not conf.merge_rollup:
+        return 0
+
+    found = groups.rollups(
+        _rollup_rows(connection), keywords=conf.merge_rollup_keywords
+    )
+    existing = {
+        row["rollup_key"]: row["id"]
+        for row in connection.execute(
+            "SELECT id, rollup_key FROM tx_groups"
+            " WHERE kind = 'rollup' AND rollup_key IS NOT NULL"
+        )
+    }
+    vetoed = {
+        row["rollup_key"]
+        for row in connection.execute("SELECT rollup_key FROM tx_rollup_vetoes")
+    }
+
+    created = 0
+    for item in found:
+        if item.key in vetoed:
+            continue
+        if item.key in existing:
+            try:
+                append_rollup_members(connection, existing[item.key], item.ids)
+            except BillError:
+                continue
+            continue
+        if len(item.ids) < 2:
+            # 只有一笔的月份先保持中性；等下一笔到来再成组。
+            continue
+        try:
+            group_id = create_group(
+                connection,
+                origin="auto",
+                transaction_ids=list(item.ids),
+                title=item.title,
+                kind="rollup",
+                rollup_key=item.key,
+            )
+        except sqlite3.IntegrityError:
+            # 同一个 key 已经有人建了组（并发扫描）：回查后改走追加。
+            row = connection.execute(
+                "SELECT id FROM tx_groups WHERE rollup_key = ?", (item.key,)
+            ).fetchone()
+            if row is not None:
+                try:
+                    append_rollup_members(connection, row["id"], item.ids)
+                except BillError:
+                    pass
+            continue
+        except BillError:
+            # 缺汇率、成员刚好被别的组拿走：跳过这一桶，不拖垮整次扫描。
+            continue
+        existing[item.key] = group_id
+        created += 1
+    return created
+
+
+def _rollup_rows(connection: sqlite3.Connection) -> list[groups.RollupRow]:
+    """月度收益汇总的输入：只取判断要用的字段。"""
+    rows = connection.execute(
+        """
+        SELECT t.id, t.occurred_date, t.account_id, t.currency,
+               t.counterparty, t.description,
+               (m.transaction_id IS NOT NULL) AS grouped
+        FROM transactions t
+        LEFT JOIN tx_group_members m ON m.transaction_id = t.id
+        WHERE t.direction = 'neutral'
+          AND (t.hidden = 0 OR t.auto_hidden = 1)
+          AND t.amount_cents > 0
+        ORDER BY t.occurred_date, t.id
+        """
+    ).fetchall()
+    return [
+        groups.RollupRow(
+            id=row["id"],
+            occurred_date=row["occurred_date"],
+            account_id=row["account_id"],
+            currency=row["currency"],
+            counterparty=row["counterparty"],
+            description=row["description"],
+            grouped=bool(row["grouped"]),
+        )
+        for row in rows
+    ]
 
 
 def _detect_rows(
