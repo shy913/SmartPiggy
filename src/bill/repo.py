@@ -1608,6 +1608,13 @@ def _detect_rows(
         f"""
         SELECT t.id, t.occurred_at, t.direction, {conv} AS display_cents,
                t.counterparty, t.description, t.source_category, t.category,
+               -- 微信账单没有分类列，但「交易类型」里写着群收款、转账、红包——
+               -- 这正是「钱回来了」最直接的证据。它不是分类，不能塞进
+               -- source_category（那一列保持账单原意），只在这里参与判断。
+               -- 其它来源的 raw_json 没有这个键，取出来就是空串。
+               CASE WHEN json_valid(t.raw_json)
+                    THEN COALESCE(json_extract(t.raw_json, '$."交易类型"'), '')
+                    ELSE '' END AS source_kind,
                (m.transaction_id IS NOT NULL) AS grouped
         FROM transactions t
         LEFT JOIN tx_group_members m ON m.transaction_id = t.id
@@ -1630,6 +1637,7 @@ def _detect_rows(
                     row["description"],
                     row["source_category"],
                     row["category"],
+                    row["source_kind"],
                 )
                 if part
             ),

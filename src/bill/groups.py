@@ -21,8 +21,10 @@
   放宽到「前后都算」会把先垫钱后消费的两个人混成一组。同一时刻是允许的——
   银行流水大多只有日期，同一天的几笔时间戳本来就一模一样。
 - **中性行不参与**。它本来就不计收支，并进来改变不了净额，只会让人以为算错了。
-- **容差是绝对额**（默认 ±0.5），不是百分比：朋友按汇率或者四舍五入多转一点很常见，
-  而按比例算的话，小额支出会宽松到把不相干的两笔凑上。
+- **容差以绝对额为主，小份额再压一道比例上限**（默认 ±0.5 且不超过份额的 25%）：
+  朋友按汇率或者四舍五入多转一点很常见，绝对额在大额上最稳；但金额很小时
+  ±0.5 可能超过份额本身（£1.12 分成两人，份额只有 £0.56），这时候比例上限
+  才挡得住把不相干的两笔凑成一组。
 - **宁可漏也不误合**。漏掉的结果是「没合并」，你看得见，手动勾一下就完事；
   误合的结果是统计被安静地改错。所以除了等额数学，还要求转入**看起来像还钱**
   （见 keywords）。
@@ -38,6 +40,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 __all__ = [
+    "MAX_DEVIATION_RATIO",
     "MAX_SPLIT",
     "Candidate",
     "Row",
@@ -48,6 +51,14 @@ __all__ = [
 
 # 最多算到几个人分。再多人一起摊的账，等额关系本来也难凑巧成立。
 MAX_SPLIT = 10
+
+# 每笔偏差的上限还要再乘上这个比例，跟绝对容差取小。
+#
+# 绝对容差在小额上会失控：一笔 £1.12 的支出分成两人，份额只有 £0.56，而
+# ±£0.5 相当于份额的九成——一笔 £0.12 的收款也能凑成「两人 AA」。大额则相反，
+# 一份 £40 的份额，25% 是 £10，远大于绝对容差，这个比例等于不起作用。
+# 两头各管一段，正是「按消费大小」该有的样子。
+MAX_DEVIATION_RATIO = 0.25
 
 _TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -61,7 +72,9 @@ class Row:
     direction: str  # in | out | neutral
     # 换算到**显示币种**的金额（分），恒为正。换算在 repo 里做。
     display_cents: int
-    # 判断「像不像别人还你钱」的文字：对方 + 说明 + 分类。
+    # 判断「像不像别人还你钱」的文字：对方 + 说明 + 分类 + 交易类型。
+    # 交易类型只有微信账单有（群收款、转账、红包），它不是分类，但比分类更
+    # 直接地说明「这是钱回来了」。
     text: str = ""
     # 已经属于某个合并组了，不再参与这一轮。
     grouped: bool = False
@@ -186,7 +199,12 @@ def balanced(
             ),
         )
         deviation = abs(mate.display_cents - expense.display_cents)
-        if deviation > tolerance_cents:
+        # 跟 AA 一样：小额时绝对容差会显得极宽，比例上限兜底。
+        allowed = min(
+            tolerance_cents,
+            int(expense.display_cents * MAX_DEVIATION_RATIO),
+        )
+        if deviation > allowed:
             continue
         found.append(
             Candidate(
@@ -279,7 +297,9 @@ def _best_split(
         if len(chosen) < size - 1:
             continue
         deviations = [abs(row.display_cents - share) for row in chosen]
-        if max(deviations) > tolerance_cents:
+        # 绝对容差管大额，比例上限管小额（见 MAX_DEVIATION_RATIO）。
+        allowed = min(tolerance_cents, int(share * MAX_DEVIATION_RATIO))
+        if max(deviations) > allowed:
             continue
 
         candidate = Candidate(
