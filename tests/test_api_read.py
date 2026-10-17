@@ -389,6 +389,218 @@ def test_clearing_both_dates_lands_on_the_same_view(client, book):
     assert txns(client)["total"] == txns(client, start="", end="")["total"] == 2
 
 
+# --------------------------------------------------------------------------
+# 分类：两套体系归一
+# --------------------------------------------------------------------------
+
+
+def test_categories_from_both_systems_are_merged(client, book):
+    book(
+        [
+            {
+                "occurred_at": f"{today()} 12:00:00",
+                "direction": "out",
+                "amount_cents": 1000,
+                "currency": "CNY",
+                "source_category": "日用百货",
+                "account": "支付宝",
+            },
+            {
+                "occurred_at": f"{today()} 13:00:00",
+                "direction": "out",
+                "amount_cents": 2000,
+                "currency": "GBP",
+                "source_category": "Groceries",
+                "account": "Monzo",
+            },
+        ]
+    )
+
+    categories = summary(client)["categories"]
+    # 两个币种仍然分开（那是另一条规矩），但分类名已经归一。
+    merged = [row for row in categories if row["category"] == "日用百货"]
+    assert {(row["display_currency"], row["expense"]) for row in merged} == {
+        ("CNY", 1000),
+        ("GBP", 2000),
+    }
+    assert all(row["category"] != "Groceries" for row in categories)
+
+
+def test_the_list_and_the_filter_use_the_canonical_name(client, book):
+    book(
+        [
+            {
+                "occurred_at": f"{today()} 12:00:00",
+                "direction": "out",
+                "amount_cents": 1000,
+                "source_category": "Groceries",
+                "account": "Monzo",
+            }
+        ]
+    )
+
+    assert txns(client)["rows"][0]["effective_category"] == "日用百货"
+    # 筛选候选也只给统一后的名字，否则下拉框里会同时有 Groceries 和日用百货。
+    names = meta(client)["categories"]
+    assert "Groceries" not in names
+    assert "日用百货" in names
+
+
+def test_a_hand_edited_category_wins_over_the_bill(client, book):
+    book(
+        [
+            {
+                "occurred_at": f"{today()} 12:00:00",
+                "direction": "out",
+                "amount_cents": 1000,
+                "source_category": "Groceries",
+                "category": "买菜",
+                "account": "Monzo",
+            }
+        ]
+    )
+    assert txns(client)["rows"][0]["effective_category"] == "买菜"
+
+
+def test_a_hand_edited_alias_is_normalised_too(client, book):
+    """手改里留着的英文名也要归一，否则筛选下拉里又会冒出一行英文。"""
+    book(
+        [
+            {
+                "occurred_at": f"{today()} 12:00:00",
+                "direction": "out",
+                "amount_cents": 1000,
+                "source_category": "Food",
+                "category": "Groceries",
+                "account": "Monzo",
+            }
+        ]
+    )
+    assert txns(client)["rows"][0]["effective_category"] == "日用百货"
+    assert "Groceries" not in meta(client)["categories"]
+
+
+# --------------------------------------------------------------------------
+# 汇总：账户区与导入提醒
+# --------------------------------------------------------------------------
+
+
+def _import(conn, account_id: int, *, uploaded_at: str | None = None) -> int:
+    import_id = repo.create_import(
+        conn,
+        account_id=account_id,
+        profile_name="alipay",
+        filename="账单.csv",
+        file_sha256=f"sha-{account_id}-{uploaded_at}",
+        size_bytes=1,
+        row_count=1,
+        coverage_start=None,
+        coverage_end=None,
+    )
+    if uploaded_at:
+        conn.execute(
+            "UPDATE imports SET uploaded_at = ? WHERE id = ?", (uploaded_at, import_id)
+        )
+    conn.commit()
+    return import_id
+
+
+def _accounts(conn) -> dict[str, int]:
+    return {row["name"]: row["id"] for row in repo.account_imports(conn)}
+
+
+def test_summary_reports_the_last_import_of_each_account(client, conn, book):
+    book(
+        [
+            {"account": "支付宝", "direction": "out", "amount_cents": 1000},
+            {"account": "中国银行", "direction": "out", "amount_cents": 2000},
+        ]
+    )
+    ids = _accounts(conn)
+    _import(conn, ids["支付宝"], uploaded_at=f"{today()}T10:00:00")
+    _import(conn, ids["中国银行"], uploaded_at=f"{days_ago(45)}T10:00:00")
+
+    by_name = {row["name"]: row for row in summary(client)["accounts"]}
+    assert by_name["支付宝"]["days_since_import"] == 0
+    assert by_name["支付宝"]["stale"] is False
+    assert by_name["中国银行"]["days_since_import"] == 45
+    assert by_name["中国银行"]["stale"] is True
+    assert by_name["中国银行"]["last_import_at"].startswith(days_ago(45))
+
+
+def test_summary_marks_an_account_that_has_never_imported(client, book):
+    book([{"account": "中国银行", "direction": "out", "amount_cents": 1000}])
+
+    account = summary(client)["accounts"][0]
+    assert account["never_imported"] is True
+    assert account["last_import_at"] is None
+    assert account["days_since_import"] is None
+    # 从没导入过当然算「该导了」。
+    assert account["stale"] is True
+
+
+def test_account_totals_follow_the_range(client, book):
+    book(
+        [
+            {"occurred_at": f"{today()} 12:00:00", "direction": "out", "amount_cents": 1000},
+            {"occurred_at": "2026-01-05 12:00:00", "direction": "out", "amount_cents": 700},
+        ]
+    )
+
+    this_month = summary(client)["accounts"][0]["totals"]
+    assert [(row["display_currency"], row["expense"]) for row in this_month] == [("CNY", 1000)]
+
+    whole = summary(client, range="all")["accounts"][0]["totals"]
+    assert [(row["display_currency"], row["expense"]) for row in whole] == [("CNY", 1700)]
+
+
+def test_account_totals_keep_currencies_apart(client, book):
+    """一个账户同时有人民币和英镑时，两行并列——绝不加成一条。"""
+    book(
+        [
+            {"currency": "CNY", "direction": "out", "amount_cents": 1000},
+            {"currency": "GBP", "direction": "out", "amount_cents": 500},
+        ]
+    )
+
+    totals = summary(client, range="all")["accounts"][0]["totals"]
+    assert [(row["display_currency"], row["expense"]) for row in totals] == [
+        ("CNY", 1000),
+        ("GBP", 500),
+    ]
+
+
+def test_account_totals_use_the_merged_netting(client, conn, book):
+    """合并组只算净额一次。直接数 transactions 表会把它算成两笔。"""
+    ids = book(
+        [
+            {"occurred_at": f"{today()} 10:00:00", "direction": "out", "amount_cents": 1000},
+            {"occurred_at": f"{today()} 18:00:00", "direction": "in", "amount_cents": 400},
+        ]
+    )
+    repo.create_group(conn, origin="manual", transaction_ids=ids, title="AA")
+    conn.commit()
+
+    totals = summary(client)["accounts"][0]["totals"]
+    assert len(totals) == 1
+    assert totals[0]["expense"] == 600
+    assert totals[0]["total"] == 1
+
+
+def test_stale_reminder_can_be_turned_off(client, book, isolated_data_dir):
+    path = isolated_data_dir / "settings.toml"
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\n[imports]\nstale_days = 0\n",
+        encoding="utf-8",
+    )
+    book([{"account": "中国银行", "direction": "out", "amount_cents": 1000}])
+
+    account = summary(client)["accounts"][0]
+    # 关掉的是「提醒」，不是「上次导入时间」。
+    assert account["never_imported"] is True
+    assert account["stale"] is False
+
+
 def test_the_summary_still_opens_on_this_month(client, book):
     """汇总那边没跟着改：它的默认仍然是「当月 1 号到今天」。"""
     book([{"occurred_at": "2026-01-05 12:00:00", "direction": "out", "amount_cents": 700}])

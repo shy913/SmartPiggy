@@ -68,6 +68,34 @@ export type LedgerRow = {
   emoji: string;
 };
 
+/** 一个账户在某个显示币种下的收支。形状跟总计一致，口径也一样。 */
+export type AccountTotalsRow = {
+  display_currency: string;
+  income: number;
+  expense: number;
+  neutral_amount: number;
+  neutral_count: number;
+  large_income: number;
+  large_expense: number;
+  large_count: number;
+  total: number;
+};
+
+/** 首页账户区的一行：账户本身 + 上次导入 + 区间内收支。 */
+export type AccountOverview = {
+  id: number;
+  name: string;
+  kind: string;
+  /** 从没导入过是 null。 */
+  last_import_at: string | null;
+  /** 距今几天，服务端按显示时区算好了。从没导入过是 null。 */
+  days_since_import: number | null;
+  never_imported: boolean;
+  /** 超过设置里的 stale_days 没导入（或从未导入）。 */
+  stale: boolean;
+  totals: AccountTotalsRow[];
+};
+
 export type Summary = {
   range: SummaryRange;
   /** 账本本身是不是空的。跟「这个区间里没有记录」是两回事，不能共用一句话。 */
@@ -82,6 +110,8 @@ export type Summary = {
   ranking: LedgerRow[];
   /** 每个币种在区间里一共有多少笔计入合计的支出——用来讲「另有多少笔」。 */
   ranking_counts: Record<string, number>;
+  /** 每个账户的上次导入时间和区间内收支。 */
+  accounts: AccountOverview[];
 };
 
 export type Account = { id: number; name: string };
@@ -265,6 +295,8 @@ export type HideResult = {
 export type GroupRow = {
   id: number;
   origin: string;
+  /** net = AA / 收支平衡的净额组；rollup = 按月汇总的收益组。 */
+  kind: "net" | "rollup";
   title: string;
   category: string;
   note: string;
@@ -360,6 +392,9 @@ export type SettingsValues = {
   merge_window_hours: string;
   merge_tolerance: string;
   merge_keywords: string;
+  merge_rollup: boolean;
+  merge_rollup_keywords: string;
+  stale_days: string;
 };
 
 export type SettingsPayload = {

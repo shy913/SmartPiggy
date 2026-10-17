@@ -110,6 +110,15 @@ afterEach(() => {
 });
 
 describe("交易记录页", () => {
+  it("页头有「记一笔」的入口", async () => {
+    draw(listBody());
+    await waitFor(() => expect(screen.getByText("共 0 条。")).toBeInTheDocument());
+    expect(screen.getByRole("link", { name: "记一笔" })).toHaveAttribute(
+      "href",
+      "/transactions/new",
+    );
+  });
+
   it("页头那行字直接用服务端给的，不自己拼", async () => {
     draw(listBody({ total: 12, hidden_total: 3, hint: "共 12 条，其中 3 条已隐藏。" }));
     await waitFor(() =>
@@ -313,6 +322,31 @@ describe("交易记录页", () => {
     expect(
       JSON.parse(sessionStorage.getItem(anchorKey("/transactions", ""))!),
     ).toMatchObject({ target: "group-12" });
+  });
+
+  it("按月汇总的收入合并行用收入色，不是支出色", async () => {
+    draw(
+      listBody({
+        total: 1,
+        group_count: 1,
+        rows: [
+          row({
+            id: null,
+            group_id: 12,
+            member_count: 3,
+            direction: "in",
+            display_cents: 300,
+            amount_cents: 300,
+            counterparty: "中欧基金管理有限公司 · 2026-09",
+            description: "余额宝-2026.09.05-收益发放",
+            effective_category: "投资理财",
+          }),
+        ],
+        members: { "12": [member()] },
+      }),
+    );
+    await waitFor(() => expect(screen.getByText("+3.00")).toBeInTheDocument());
+    expect(screen.getByText("+3.00").className).toContain("text-in");
   });
 
   it("展开合并组：主数是原币金额，换算过的那笔后面再跟一份换算结果", async () => {

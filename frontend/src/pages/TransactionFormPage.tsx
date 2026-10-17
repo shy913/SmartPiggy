@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -40,7 +40,10 @@ export function TransactionFormPage() {
   const editing = id !== undefined;
   const txnId = editing ? Number(id) : null;
   const navigate = useNavigate();
+  const location = useLocation();
   const client = useQueryClient();
+  // 从交易记录点「记一笔」过来时带着原列表地址，取消就回那一屏（筛选还在）。
+  const returnTo = (location.state as { from?: string } | null)?.from;
 
   // 两个接口回的是**同一个形状**（改一笔那个也带 errors / accounts /
   // currencies / categories / back_month），所以这一份表单能同时喂两种用途。
@@ -176,7 +179,13 @@ export function TransactionFormPage() {
             </Button>
             <Link
               className="inline-flex h-9 items-center rounded-md px-3 text-sm text-muted hover:text-text"
-              to={editing && data.back_month ? `/transactions?start=${data.back_month}-01&end=` : "/transactions"}
+              to={
+                editing
+                  ? data.back_month
+                    ? `/transactions?start=${data.back_month}-01&end=`
+                    : "/transactions"
+                  : (returnTo ?? "/transactions")
+              }
             >
               取消
             </Link>
