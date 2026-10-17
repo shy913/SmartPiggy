@@ -417,8 +417,8 @@ function Row({
       className={cn(
         "transition-colors duration-700",
         hidden && "text-muted",
-        // 用暖色闪：合并行本来就带一层淡蓝底色，再用强调色的深浅变化就分不出
-        // 「这一行是合并的」和「刚回到这一行」。
+        // 闪一下用暖色：合并行本来就带一层淡蓝底色，再用强调色的深浅变化，
+        // 就分不出「这一行是合并的」和「刚回到这一行」。
         highlighted && "bg-warn/20",
       )}
     >
