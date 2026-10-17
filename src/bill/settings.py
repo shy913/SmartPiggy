@@ -52,6 +52,8 @@ _CODE = re.compile(r"^[A-Z0-9]{1,8}$")
 # 注意它跟着 display 走：display 改成 CNY 之后，同样的数就变成 ¥500 / ¥2,000。
 DEFAULT_LARGE_OUT = 500
 DEFAULT_LARGE_IN = 2000
+# 多久没导入账单就在首页提醒。0 = 不提醒（但账户区仍显示上次导入时间）。
+DEFAULT_STALE_DAYS = 30
 
 
 def _threshold(value: object, label: str) -> int:
@@ -91,6 +93,8 @@ class Settings:
     merge_tolerance: float = DEFAULT_TOLERANCE
     # 转入要像「别人还你钱」才参与自动合并；空元组 = 不做这层过滤。
     merge_keywords: tuple[str, ...] = DEFAULT_KEYWORDS
+    # 一个账户超过这么多天没导入账单，首页就提醒。0 = 不提醒。
+    stale_days: int = DEFAULT_STALE_DAYS
 
     def tz(self):
         return dates.zone(self.timezone)
@@ -191,6 +195,16 @@ def load() -> Settings:
                 str(word).strip() for word in raw_keywords if str(word).strip()
             )
 
+        imports = parsed.get("imports") or {}
+        try:
+            stale_days = int(imports.get("stale_days", DEFAULT_STALE_DAYS))
+        except (TypeError, ValueError):
+            raise BillError(
+                f"imports 的 stale_days 得是个整数，现在是 {imports.get('stale_days')!r}。"
+            ) from None
+        if stale_days < 0:
+            raise BillError(f"imports 的 stale_days 不能是负数，现在是 {stale_days}。")
+
         return Settings(
             theme=theme,
             display_currency=display,
@@ -203,6 +217,7 @@ def load() -> Settings:
             merge_window_hours=window,
             merge_tolerance=tolerance,
             merge_keywords=keywords,
+            stale_days=stale_days,
         )
 
     return Settings()
@@ -233,6 +248,7 @@ def as_form(conf: Settings) -> dict[str, Any]:
         "merge_window_hours": f"{conf.merge_window_hours:g}",
         "merge_tolerance": f"{conf.merge_tolerance:g}",
         "merge_keywords": "、".join(conf.merge_keywords),
+        "stale_days": str(conf.stale_days),
     }
 
 
@@ -316,6 +332,16 @@ def read_form(data) -> tuple[Settings | None, dict[str, Any], list[str]]:
         if word.strip()
     )
 
+    # 空 = 用默认值，不是「关闭」：关闭要明确写 0。表单里清空一格不该把提醒
+    # 悄悄变成另一种口径——那种差别在页面上看不出来。
+    try:
+        stale_days = int(values["stale_days"] or DEFAULT_STALE_DAYS)
+        if stale_days < 0:
+            raise ValueError
+    except ValueError:
+        errors.append("「多久没导入算提醒」得是个不小于 0 的整数，0 表示不提醒。")
+        stale_days = DEFAULT_STALE_DAYS
+
     if errors:
         return None, values, errors
 
@@ -332,6 +358,7 @@ def read_form(data) -> tuple[Settings | None, dict[str, Any], list[str]]:
             merge_window_hours=window,
             merge_tolerance=tolerance,
             merge_keywords=keywords,
+            stale_days=stale_days,
         ),
         values,
         [],
@@ -360,6 +387,7 @@ def _echo(data) -> dict[str, Any]:
         "merge_window_hours": (data.get("merge_window_hours") or "").strip(),
         "merge_tolerance": (data.get("merge_tolerance") or "").strip(),
         "merge_keywords": (data.get("merge_keywords") or "").strip(),
+        "stale_days": (data.get("stale_days") or "").strip(),
     }
 
 
@@ -420,6 +448,11 @@ tolerance = {merge_tolerance}
 # 转入要像「别人还你钱」才参与自动合并。留空 = 关掉这道过滤。
 keywords = [{merge_keywords}]
 
+[imports]
+# 一个账户超过这么多天没导入账单，首页就提醒。0 = 不提醒
+# （账户区仍会显示每个账户上次导入的时间）。
+stale_days = {stale_days}
+
 [ui]
 # 界面配色：{theme_names}
 theme = "{theme}"
@@ -442,6 +475,7 @@ def render_toml(conf: Settings) -> str:
         merge_window=f"{conf.merge_window_hours:g}",
         merge_tolerance=f"{conf.merge_tolerance:g}",
         merge_keywords=keywords,
+        stale_days=conf.stale_days,
         theme=conf.theme,
         theme_names="、".join(themes.names()),
     )

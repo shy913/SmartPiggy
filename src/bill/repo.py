@@ -152,6 +152,24 @@ def accounts(connection: sqlite3.Connection) -> list[sqlite3.Row]:
     ).fetchall()
 
 
+def account_imports(connection: sqlite3.Connection) -> list[sqlite3.Row]:
+    """每个账户最后一次导入账单的时间。
+
+    从没导入过的账户**也要出现**，它的 ``last_import_at`` 是 NULL——首页靠这个
+    把「从未导入」和「导入过但很久没导」分开说。用 LEFT JOIN + MAX，不要写成
+    「先查 imports 再按账户匹配」：后者会让没导过的账户整条消失。
+    """
+    return connection.execute(
+        """
+        SELECT a.id, a.name, a.kind, MAX(i.uploaded_at) AS last_import_at
+        FROM accounts a
+        LEFT JOIN imports i ON i.account_id = a.id
+        GROUP BY a.id, a.name, a.kind
+        ORDER BY a.name
+        """
+    ).fetchall()
+
+
 # --------------------------------------------------------------------------
 # 导入记录
 # --------------------------------------------------------------------------
@@ -704,6 +722,36 @@ def overall_totals(
         WHERE {where}
         GROUP BY display_currency
         ORDER BY display_currency
+        """,
+        params,
+    ).fetchall()
+
+
+def account_totals(
+    connection: sqlite3.Connection, *, start: str | None = None, end: str | None = None
+) -> list[sqlite3.Row]:
+    """每个账户在各显示币种下的收支，跟随区间。
+
+    **走 effective，不数 transactions 表**：合并组已经折成净额，直接数原表
+    会把同一笔算两遍。金额口径复用 ``_totals``，所以账户卡和顶上的总计、
+    大额剔除规则永远一致。
+
+    按 ``account_id + display_currency`` 分组：一个账户可能同时有人民币和英镑
+    （中行双币卡就是），跨币种相加会得到一个不报错的错数。
+    """
+    conf = settings.load()
+    where, params = _range_where(start, end)
+    display = _group_by_display(conf, "t.")
+    return connection.execute(
+        f"""
+        {_effective_cte(conf)}
+        SELECT t.account_id,
+               {display} AS display_currency,
+               {_totals(conf, "t.")}
+        FROM effective t
+        WHERE {where}
+        GROUP BY t.account_id, {display}
+        ORDER BY t.account_id, display_currency
         """,
         params,
     ).fetchall()

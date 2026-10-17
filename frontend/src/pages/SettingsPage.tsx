@@ -208,6 +208,17 @@ export function SettingsPage() {
           </Field>
         </Section>
 
+        <Section title="导入提醒">
+          <Field label="超过多少天没导入账单就提醒" className="max-w-xs">
+            <Input
+              className="w-32"
+              value={current.stale_days}
+              onChange={(event) => set({ stale_days: event.target.value })}
+            />
+          </Field>
+          <Hint>填 0 表示不提醒；账户区仍会显示上次导入的时间。</Hint>
+        </Section>
+
         {errors.length ? (
           <ul className="m-0 list-none rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
             {errors.map((message) => (

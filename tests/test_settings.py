@@ -31,6 +31,7 @@ def form(**overrides) -> dict:
         "merge_window_hours": "12",
         "merge_tolerance": "0.5",
         "merge_keywords": "转账、还款",
+        "stale_days": "30",
     }
     values.update(overrides)
     return values
@@ -97,6 +98,21 @@ def test_saving_round_trips_through_the_file(client, isolated_data_dir):
     assert conf.merge_window_hours == 12
     assert conf.merge_tolerance == 0.5
     assert conf.merge_keywords == ("转账", "还款")
+
+
+def test_stale_days_round_trips_through_the_file(client, isolated_data_dir):
+    """保存时会整份重写设置文件，模板里漏一个键就等于把这个设置静默删掉。"""
+    assert save(client, stale_days="7").status_code == 200
+    written = (isolated_data_dir / "settings.toml").read_text(encoding="utf-8")
+    assert "[imports]" in written
+    assert "stale_days = 7" in written
+    assert settings.load().stale_days == 7
+
+
+def test_a_negative_stale_days_is_rejected_with_a_readable_message(client):
+    response = save(client, stale_days="-1")
+    assert response.status_code == 400
+    assert "不小于 0" in response.get_json()["errors"][0]
 
 
 def test_the_original_file_is_kept_as_a_backup_once(client, isolated_data_dir):
