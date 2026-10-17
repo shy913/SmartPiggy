@@ -66,6 +66,88 @@ export type LedgerRow = {
   display_currency: string;
 };
 
+/** 首页概览当前生效的区间。比 `SummaryRange` 多几个「能不能往前后走」的标记。 */
+export type DashboardRange = SummaryRange & {
+  /** 这个区间本来的结束日（整月最后一天 / 整年最后一天）。 */
+  natural_end: string;
+  /** 还没过完：结束日之后还有日子。 */
+  partial: boolean;
+  /** 今天就在这段区间里。 */
+  current: boolean;
+  can_prev: boolean;
+  can_next: boolean;
+};
+
+export type ForecastWindow = {
+  spent: number;
+  projected: number;
+  elapsed_days: number;
+  total_days: number;
+};
+
+export type DashboardStats = {
+  expense: number;
+  income: number;
+  net: number;
+  total: number;
+  neutral_count: number;
+  large_income: number;
+  large_expense: number;
+  large_count: number;
+  elapsed_days: number;
+  daily_average: number;
+};
+
+export type DashboardCategory = {
+  name: string;
+  emoji: string;
+  expense: number;
+  total: number;
+};
+
+export type TrendPoint = { key: string; expense: number };
+
+/**
+ * 首页概览。一次只含**一个币种**的数——预测、平均、趋势、排行都不跨币种。
+ * 接口里绝不会出现浮点，比例由两个整数在前端算。
+ */
+export type Dashboard = {
+  today: string;
+  has_data: boolean;
+  currency: string;
+  currencies: string[];
+  multi_currency: boolean;
+  display_currency: string;
+  range: DashboardRange;
+  stats: DashboardStats;
+  previous: {
+    start: string;
+    end: string;
+    label: string;
+    expense: number;
+  } | null;
+  forecast: { month: ForecastWindow; year: ForecastWindow };
+  averages: {
+    monthly: number;
+    yearly: number;
+    months: number;
+    from: string;
+    to: string;
+    total: number;
+  } | null;
+  trend: {
+    bucket: "day" | "month";
+    points: TrendPoint[];
+    total: number;
+    peak: TrendPoint | null;
+    average: number;
+  };
+  categories: DashboardCategory[];
+  singles: LedgerRow[];
+  single_count: number;
+  category_count: number;
+};
+
 export type Summary = {
   range: SummaryRange;
   /** 账本本身是不是空的。跟「这个区间里没有记录」是两回事，不能共用一句话。 */
@@ -157,6 +239,7 @@ export type ListFilters = {
   direction: string;
   account: number | null;
   q: string;
+  category: string;
   hidden: string;
 };
 

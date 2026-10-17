@@ -26,6 +26,7 @@ function listBody(overrides: Partial<TransactionList> = {}): TransactionList {
       direction: "",
       account: null,
       q: "",
+      category: "",
       hidden: "",
     },
     accounts: [{ id: 1, name: "支付宝" }],
@@ -135,6 +136,21 @@ describe("交易记录页", () => {
     const last = calls[calls.length - 1];
     expect(last).toContain("start=");
     expect(last).toContain("end=");
+  });
+
+  it("分类筛选原样进地址栏——首页排行点进来靠的就是它", async () => {
+    const user = userEvent.setup();
+    draw(listBody({ categories: ["餐饮美食", "交通出行"] }));
+
+    await waitFor(() => expect(screen.getByText("共 0 条。")).toBeInTheDocument());
+    await user.click(screen.getByText("筛选"));
+    await user.selectOptions(screen.getByLabelText("分类"), "餐饮美食");
+    await user.click(screen.getByRole("button", { name: "查看" }));
+
+    await waitFor(() => expect(calls.length).toBeGreaterThan(1));
+    expect(calls[calls.length - 1]).toContain(
+      "category=%E9%A4%90%E9%A5%AE%E7%BE%8E%E9%A3%9F",
+    );
   });
 
   it("大额的标记挂在金额旁边那一格里", async () => {

@@ -22,7 +22,20 @@ import json
 
 from flask import Blueprint, current_app, g, jsonify, request, session
 
-from . import auth, categories, config, dates, db, entry, ingest, params, repo, settings, themes
+from . import (
+    auth,
+    categories,
+    config,
+    dashboard as overview,
+    dates,
+    db,
+    entry,
+    ingest,
+    params,
+    repo,
+    settings,
+    themes,
+)
 from .errors import BillError, ProfileError, UploadError
 from .profiles import load_all, validate
 
@@ -294,6 +307,23 @@ def summary():
     )
 
 
+@blueprint.get("/dashboard")
+def dashboard():
+    """首页概览：区间数字、预测、平均、趋势、两个排行。
+
+    跟 ``/summary`` 共用同一套区间参数（``params.summary_range``），所以两个
+    接口对「本月」的边界不可能各说各话。这里只多一个 ``currency``：多币种时
+    一次看一个币种，绝不把两个币种加进同一张卡。
+    """
+    conf = settings.load()
+    connection = get_conn()
+    body = overview.build(connection, conf, request.args)
+    # 排行里的每一行还是库里的行，这里投影成界面的形状——顺便把合并行的
+    # 哨兵 id 归一成 null，前端据此决定点不点得进详情页。
+    body["singles"] = ledger_rows(body["singles"])
+    return jsonify(body)
+
+
 # --------------------------------------------------------------------------
 # 账目
 # --------------------------------------------------------------------------
@@ -310,6 +340,7 @@ def list_counts(connection, query) -> tuple[int, int]:
         "account_id": query["account_id"],
         "direction": query["direction"] or None,
         "search": query["search"] or None,
+        "category": query["category"] or None,
     }
     total = repo.count_transactions(connection, **common, hidden=query["hidden"] or None)
     if query["hidden"] == "1":
@@ -334,6 +365,7 @@ def transaction_list():
         account_id=query["account_id"],
         direction=query["direction"] or None,
         search=query["search"] or None,
+        category=query["category"] or None,
         hidden=query["hidden"] or None,
         limit=query["limit"],
         offset=offset,
@@ -368,6 +400,7 @@ def transaction_list():
             direction=query["direction"],
             account_id=query["account_id"],
             search=query["search"],
+            category=query["category"],
             hidden=query["hidden"],
         ),
         filters={
@@ -376,6 +409,7 @@ def transaction_list():
             "direction": query["direction"],
             "account": query["account_id"],
             "q": query["search"],
+            "category": query["category"],
             "hidden": query["hidden"],
         },
         accounts=_account_rows(connection),

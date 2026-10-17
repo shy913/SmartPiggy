@@ -9,6 +9,7 @@
 //    跨站的 `<form>` 发不出这个类型。忘了带，接口会回 415。
 
 import type {
+  Dashboard,
   FormPayload,
   GroupsPayload,
   HideResult,
@@ -109,6 +110,9 @@ export const getMeta = () => request<Meta>("/api/meta");
 
 export const getSummary = (params: Query = {}) =>
   request<Summary>(`/api/summary${queryString(params)}`);
+
+export const getDashboard = (params: Query = {}) =>
+  request<Dashboard>(`/api/dashboard${queryString(params)}`);
 
 // --------------------------------------------------------------------------
 // 交易

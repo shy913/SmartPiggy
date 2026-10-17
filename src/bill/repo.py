@@ -30,6 +30,7 @@ __all__ = [
     "dissolve_group",
     "ensure_account",
     "existing_dedup",
+    "expense_series",
     "finalize_import",
     "find_account",
     "fingerprints",
@@ -760,9 +761,53 @@ def by_month(
     ).fetchall()
 
 
+def expense_series(
+    connection: sqlite3.Connection,
+    *,
+    bucket: str = "day",
+    start: str | None = None,
+    end: str | None = None,
+) -> list[sqlite3.Row]:
+    """区间内每个时间桶的支出，按显示币种分开。
+
+    ``bucket`` 只认 ``'day'`` / ``'month'``。口径跟合计完全一致：中性行不是支出，
+    大额被剔出合计，也就不进这条线——图上画一根它没算进去的柱子，等于让图去
+    推翻旁边那几个数。
+
+    **不补零桶**。哪一天、哪个月一笔都没有，这里就没有那一行；补零是界面的事，
+    服务端补了反而会把「这一段根本没有数据」和「这一段花得少」混成一样的形状。
+    """
+    if bucket not in ("day", "month"):
+        raise BillError(f"不认识的时间桶「{bucket}」，只认 day / month。")
+    conf = settings.load()
+    key = (
+        "substr(t.occurred_date, 1, 10)"
+        if bucket == "day"
+        else "substr(t.occurred_date, 1, 7)"
+    )
+    amount = _amount_in_display(conf, "t.")
+    where, params = _range_where(start, end)
+    return connection.execute(
+        f"""
+        {_effective_cte(conf)}
+        SELECT {key} AS bucket,
+               {_group_by_display(conf, "t.")} AS display_currency,
+               COALESCE(SUM(
+                 CASE WHEN t.direction = 'out' AND NOT {_is_large(conf, "t.")}
+                      THEN {amount} END
+               ), 0) AS expense
+        FROM effective t
+        WHERE {where}
+        GROUP BY bucket, display_currency
+        ORDER BY bucket, display_currency
+        """,
+        params,
+    ).fetchall()
+
+
 def by_source_category(
     connection: sqlite3.Connection,
-    limit: int = 60,
+    limit: int | None = 60,
     *,
     start: str | None = None,
     end: str | None = None,
@@ -795,9 +840,9 @@ def by_source_category(
         WHERE {where}
         GROUP BY COALESCE(NULLIF(t.effective_category, ''), '未分类'), display_currency
         ORDER BY display_currency, expense DESC, income DESC
-        LIMIT ?
+        {"" if limit is None else "LIMIT ?"}
         """,
-        [*params, limit],
+        [*params, *(() if limit is None else (limit,))],
     ).fetchall()
 
 
@@ -991,6 +1036,7 @@ def list_transactions(
     account_id: int | None = None,
     direction: str | None = None,
     search: str | None = None,
+    category: str | None = None,
     hidden: str | None = None,
     limit: int = 100,
     offset: int = 0,
@@ -1001,7 +1047,7 @@ def list_transactions(
     就是那一端不限。默认区间由调用方给（见 web.transactions）。
     """
     where, params = _transaction_filters(
-        start, end, account_id, direction, search, hidden
+        start, end, account_id, direction, search, hidden, category
     )
     params.extend([limit, offset])
 
@@ -1037,13 +1083,14 @@ def count_transactions(
     account_id: int | None = None,
     direction: str | None = None,
     search: str | None = None,
+    category: str | None = None,
     hidden: str | None = None,
 ) -> int:
     """跟 list_transactions 同源同过滤：一个合并组算一条。两处对不上的话，
     「共 N 条」和列表行数就会各说各话。"""
     conf = settings.load()
     where, params = _transaction_filters(
-        start, end, account_id, direction, search, hidden
+        start, end, account_id, direction, search, hidden, category
     )
     return connection.execute(
         f"""
@@ -1061,6 +1108,7 @@ def _transaction_filters(
     direction: str | None,
     search: str | None,
     hidden: str | None = None,
+    category: str | None = None,
 ) -> tuple[str, list]:
     clauses = ["1 = 1"]
     params: list = []
@@ -1079,6 +1127,15 @@ def _transaction_filters(
     if direction in ("in", "out", "neutral"):
         clauses.append("t.direction = ?")
         params.append(direction)
+    if category:
+        # 分类用跟汇总页**同一个**表达式：手改过的 category 优先，没改过回落到
+        # 账单自带的 source_category，两个都空就是「未分类」。写成 `t.category = ?`
+        # 会让首页那个分类排行点进来少掉一大截——它数的是 effective_category。
+        # 合并组的 effective_category 在 CTE 里已经算好，所以这里也连组一起筛。
+        clauses.append(
+            "COALESCE(NULLIF(t.effective_category, ''), '未分类') = ?"
+        )
+        params.append(category)
     # 「不含隐藏」那一档用不着这一条：隐藏的行在 _effective_cte 里就已经不在了，
     # 留一条空跑的条件只会让人猜哪边在起作用。所以只给「只看隐藏」加。
     if hidden == "1":

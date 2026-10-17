@@ -242,7 +242,15 @@ function FilterBar({
   active,
   onChange,
 }: {
-  filters: { start: string; end: string; direction: string; account: number | null; q: string; hidden: string };
+  filters: {
+    start: string;
+    end: string;
+    direction: string;
+    account: number | null;
+    q: string;
+    category: string;
+    hidden: string;
+  };
   accounts: { id: number; name: string }[];
   categories: string[];
   active: string[];
@@ -254,6 +262,7 @@ function FilterBar({
     direction: filters.direction,
     account: filters.account ? String(filters.account) : "",
     q: filters.q,
+    category: filters.category,
     hidden: filters.hidden,
   });
 
@@ -299,6 +308,28 @@ function FilterBar({
             <option value="in">收入</option>
             <option value="out">支出</option>
             <option value="neutral">中性</option>
+          </select>
+        </Field>
+        <Field label="分类">
+          <select
+            className="h-9 rounded-md border border-border bg-bg px-2 text-sm"
+            value={draft.category}
+            onChange={(event) => setDraft({ ...draft, category: event.target.value })}
+          >
+            <option value="">全部</option>
+            {Array.from(
+              new Set([
+                ...categories,
+                // 空分类在汇总页上叫「未分类」，这里得能筛到它。它不在
+                // transaction_categories 里（那一列只收非空的原文）。
+                "未分类",
+                ...(draft.category ? [draft.category] : []),
+              ]),
+            ).map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
           </select>
         </Field>
         <Field label="账户">
@@ -347,7 +378,15 @@ function FilterBar({
           type="button"
           variant="ghost"
           onClick={() => {
-            setDraft({ start: "", end: "", direction: "", account: "", q: "", hidden: "" });
+            setDraft({
+              start: "",
+              end: "",
+              direction: "",
+              account: "",
+              q: "",
+              category: "",
+              hidden: "",
+            });
             const next = new URLSearchParams();
             next.set("start", "");
             next.set("end", "");

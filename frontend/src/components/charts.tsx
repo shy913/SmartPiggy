@@ -5,13 +5,15 @@ import {
   Cell,
   LabelList,
   Legend,
+  Line,
+  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
 
-import type { CategoryRow, MonthRow } from "../api/types";
+import type { CategoryRow, MonthRow, TrendPoint } from "../api/types";
 import { THEMES, DEFAULT_THEME, type Theme } from "../theme/themes";
 import { formatAmount } from "../lib/format";
 
@@ -226,5 +228,124 @@ export function CategoryChart({ rows, theme }: { rows: CategoryRow[]; theme: str
         <span>最高一类 {formatAmount(ranked[0].expense)}</span>
       </p>
     </div>
+  );
+}
+
+/** 折线/柱状两种画法共用的那个「一天」或「一个月」怎么念。 */
+export function trendLabel(key: string, bucket: "day" | "month"): string {
+  if (bucket === "day") {
+    return `${Number(key.slice(5, 7))}月${Number(key.slice(8, 10))}日`;
+  }
+  return `${Number(key.slice(0, 4))}年${Number(key.slice(5, 7))}月`;
+}
+
+/**
+ * 首页那条支出趋势。**只有一个序列**，所以只有一种颜色、也不需要图例——
+ * 标题已经说了画的是支出。折线图和柱状图是同一份数，只是画法不同：
+ * 看「哪天花得多」用柱状，看「整体走势」用折线。
+ *
+ * 当前这个月/年只画到今天。后面那些天不是 0，是「还没到」，画出来会变成
+ * 一条贴着底的线，读起来像「后来没花钱」。
+ */
+export function SpendTrendChart({
+  points,
+  bucket,
+  currency,
+  theme,
+  kind,
+}: {
+  points: TrendPoint[];
+  bucket: "day" | "month";
+  currency: string;
+  theme: string;
+  kind: "bar" | "line";
+}) {
+  const palette = paletteOf(theme);
+  if (!points.length) return <p className="text-muted">这个区间里没有支出。</p>;
+  if (!points.some((point) => point.expense > 0)) {
+    return <p className="text-muted">这个区间里没有支出。</p>;
+  }
+
+  const data = points.map((point) => ({
+    // 保留完整的 key：Tooltip 读它，轴上的字才不会被截成一个光秃秃的「5」。
+    key: point.key,
+    支出: point.expense,
+  }));
+
+  const tooltip = (
+    <Tooltip
+      cursor={kind === "bar" ? { fill: palette.grid } : { stroke: palette.muted, strokeDasharray: "4 4" }}
+      labelFormatter={(value: string) => trendLabel(value, bucket)}
+      formatter={(value: number) => [`${formatAmount(value)} ${currency}`, "支出"]}
+      contentStyle={tooltipBox(palette)}
+    />
+  );
+
+  const xTick = (value: string) => {
+    const [, month, day] = value.split("-");
+    return bucket === "day" ? String(Number(day)) : `${Number(month)}月`;
+  };
+
+  return (
+    <ResponsiveContainer width="100%" height={240}>
+      {kind === "line" ? (
+        <LineChart data={data} margin={{ top: 12, right: 8, bottom: 0, left: 8 }}>
+          <CartesianGrid vertical={false} stroke={palette.grid} />
+          <XAxis
+            dataKey="key"
+            tickFormatter={xTick}
+            minTickGap={bucket === "day" ? 16 : 8}
+            fontSize={AXIS_FONT}
+            stroke={palette.muted}
+            tickLine={false}
+          />
+          <YAxis
+            tickFormatter={compact}
+            fontSize={AXIS_FONT}
+            stroke={palette.muted}
+            tickLine={false}
+            width={52}
+          />
+          {tooltip}
+          <Line
+            type="monotone"
+            dataKey="支出"
+            stroke={palette.expense}
+            strokeWidth={2}
+            dot={false}
+            activeDot={{ r: 4 }}
+            animationDuration={SNAP}
+          />
+        </LineChart>
+      ) : (
+        <BarChart data={data} margin={{ top: 12, right: 8, bottom: 0, left: 8 }}>
+          <CartesianGrid vertical={false} stroke={palette.grid} />
+          <XAxis
+            dataKey="key"
+            tickFormatter={xTick}
+            minTickGap={bucket === "day" ? 16 : 8}
+            fontSize={AXIS_FONT}
+            stroke={palette.muted}
+            tickLine={false}
+          />
+          <YAxis
+            tickFormatter={compact}
+            fontSize={AXIS_FONT}
+            stroke={palette.muted}
+            tickLine={false}
+            width={52}
+          />
+          {tooltip}
+          {/* 顶端 4px 圆角、贴着零轴——柱子从基线长出来，不是一根浮着的胶囊。 */}
+          <Bar
+            dataKey="支出"
+            fill={palette.expense}
+            radius={[4, 4, 0, 0]}
+            maxBarSize={22}
+            animationDuration={SNAP}
+          />
+        </BarChart>
+      )}
+    </ResponsiveContainer>
   );
 }
