@@ -82,17 +82,17 @@ afterEach(() => vi.unstubAllGlobals());
 describe("这一笔", () => {
   it("回程链接和合并组页同一套：吸在视口顶上", async () => {
     draw({ from: "/transactions?start=2026-10-01&end=" });
-    await waitFor(() => expect(screen.getByText("← 交易记录")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("link", { name: "交易记录" })).toBeInTheDocument());
 
-    const link = screen.getByText("← 交易记录").closest("a");
+    const link = screen.getByRole("link", { name: "交易记录" }).closest("a");
     expect(link).toHaveAttribute("href", "/transactions?start=2026-10-01&end=");
     expect(link?.closest("div")).toHaveClass("sticky", "top-0");
   });
 
   it("直接打开时回这一笔现在待的那个月", async () => {
     draw();
-    await waitFor(() => expect(screen.getByText("← 交易记录")).toBeInTheDocument());
-    expect(screen.getByText("← 交易记录").closest("a")).toHaveAttribute(
+    await waitFor(() => expect(screen.getByRole("link", { name: "交易记录" })).toBeInTheDocument());
+    expect(screen.getByRole("link", { name: "交易记录" }).closest("a")).toHaveAttribute(
       "href",
       "/transactions?start=2026-10-01&end=",
     );

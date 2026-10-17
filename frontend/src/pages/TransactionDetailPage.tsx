@@ -2,7 +2,7 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ApiError, deleteTransaction, getTransaction, hideTransaction, unhideTransaction } from "../api/client";
-import { BackLink } from "../components/BackLink";
+import { BackLink, BackPill } from "../components/BackLink";
 import { Button } from "../components/ui/button";
 import { Card, Section } from "../components/ui/card";
 import { ErrorText, Tag } from "../components/ui/bits";
@@ -49,12 +49,12 @@ export function TransactionDetailPage() {
     return (
       <div>
         <ErrorText>{error instanceof ApiError ? error.message : "读不出来。"}</ErrorText>
-        <Link
-          className="mt-3 inline-block text-accent underline"
-          to={nav?.from ?? "/transactions"}
-        >
-          ← {nav?.backLabel ?? "交易记录"}
-        </Link>
+        <div className="mt-3">
+          <BackPill
+            to={nav?.from ?? "/transactions"}
+            label={nav?.backLabel ?? "交易记录"}
+          />
+        </div>
       </div>
     );
   if (!data) return null;
