@@ -10,7 +10,7 @@ import secrets
 import sqlite3
 from collections.abc import Iterable, Sequence
 
-from . import db, dedup, groups, settings
+from . import categories, db, dedup, groups, settings
 from .errors import BillError
 from .models import Issue, ParsedRow, Transaction
 
@@ -579,6 +579,20 @@ _EFFECTIVE_COLUMNS = """
 """
 
 
+def _effective_category(prefix: str = "t.") -> str:
+    """页面上显示的分类：手改的优先，两列都归一到统一体系。
+
+    手改的那一列仍然优先（用户自己的归类盖过账单原文），但**显示时也走同一张
+    映射表**：否则手改里留一个英文 ``Groceries``，汇总页和筛选下拉里就又会
+    冒出一行英文，等于没统一。原始值仍原样躺在 ``category`` 里，随时能对回去。
+
+    归一在查询时算，规则改了刷新就重算，库里的原文一个字都不动。
+    """
+    own = categories.canonical_sql(f"{prefix}category")
+    source = categories.canonical_sql(f"{prefix}source_category")
+    return f"COALESCE(NULLIF({own}, ''), {source})"
+
+
 def _effective_cte(conf, *, include_hidden: bool = False) -> str:
     """前缀式 CTE：``WITH ... effective AS (...)``，接上调用方自己的 SELECT。
 
@@ -629,7 +643,7 @@ def _effective_cte(conf, *, include_hidden: bool = False) -> str:
                t.counterparty_account, t.description, t.memo, t.payment_method,
                t.status, t.source_txn_id, t.merchant_txn_id, t.source_category,
                t.category,
-               COALESCE(NULLIF(t.category, ''), t.source_category) AS effective_category,
+               {_effective_category("t.")} AS effective_category,
                t.profile_name, t.dedup_key, t.content_hash, t.raw_json,
                t.created_at, t.edited_at, t.hidden, t.signed_cents,
                NULL AS group_id, 1 AS member_count
@@ -655,7 +669,9 @@ def _effective_cte(conf, *, include_hidden: bool = False) -> str:
                COALESCE(NULLIF(g.note, ''), a.memo),
                a.payment_method, a.status, a.source_txn_id, a.merchant_txn_id,
                a.source_category, g.category,
-               COALESCE(NULLIF(g.category, ''), NULLIF(a.category, ''), a.source_category),
+               COALESCE(NULLIF({categories.canonical_sql("g.category")}, ''),
+                        NULLIF({categories.canonical_sql("a.category")}, ''),
+                        {categories.canonical_sql("a.source_category")}),
                a.profile_name, '', '', '{{}}', g.created_at, NULL, 0,
                z.net,
                g.id, z.member_count
@@ -1182,7 +1198,7 @@ def get_transaction(
         f"""
         SELECT t.*, a.name AS account_name, {amount} AS display_cents,
                {_large_flag(conf, "t.")} AS is_large,
-               COALESCE(NULLIF(t.category, ''), t.source_category) AS effective_category,
+               {_effective_category("t.")} AS effective_category,
                m.group_id AS group_id, g.origin AS group_origin, g.title AS group_title
         FROM transactions t
         JOIN accounts a ON a.id = t.account_id
@@ -1342,11 +1358,13 @@ def reclassify(
 def transaction_categories(connection: sqlite3.Connection) -> list[str]:
     """库里出现过的分类名，给表单做候选（手改过的 + 账单自带的）。"""
     rows = connection.execute(
-        """
+        f"""
         SELECT DISTINCT name FROM (
-          SELECT category AS name FROM transactions WHERE category <> ''
+          SELECT {categories.canonical_sql("category")} AS name
+          FROM transactions WHERE category <> ''
           UNION ALL
-          SELECT source_category FROM transactions WHERE source_category <> ''
+          SELECT {categories.canonical_sql("source_category")}
+          FROM transactions WHERE source_category <> ''
         ) ORDER BY name
         """
     ).fetchall()

@@ -390,6 +390,97 @@ def test_clearing_both_dates_lands_on_the_same_view(client, book):
 
 
 # --------------------------------------------------------------------------
+# 分类：两套体系归一
+# --------------------------------------------------------------------------
+
+
+def test_categories_from_both_systems_are_merged(client, book):
+    book(
+        [
+            {
+                "occurred_at": f"{today()} 12:00:00",
+                "direction": "out",
+                "amount_cents": 1000,
+                "currency": "CNY",
+                "source_category": "日用百货",
+                "account": "支付宝",
+            },
+            {
+                "occurred_at": f"{today()} 13:00:00",
+                "direction": "out",
+                "amount_cents": 2000,
+                "currency": "GBP",
+                "source_category": "Groceries",
+                "account": "Monzo",
+            },
+        ]
+    )
+
+    categories = summary(client)["categories"]
+    # 两个币种仍然分开（那是另一条规矩），但分类名已经归一。
+    merged = [row for row in categories if row["category"] == "日用百货"]
+    assert {(row["display_currency"], row["expense"]) for row in merged} == {
+        ("CNY", 1000),
+        ("GBP", 2000),
+    }
+    assert all(row["category"] != "Groceries" for row in categories)
+
+
+def test_the_list_and_the_filter_use_the_canonical_name(client, book):
+    book(
+        [
+            {
+                "occurred_at": f"{today()} 12:00:00",
+                "direction": "out",
+                "amount_cents": 1000,
+                "source_category": "Groceries",
+                "account": "Monzo",
+            }
+        ]
+    )
+
+    assert txns(client)["rows"][0]["effective_category"] == "日用百货"
+    # 筛选候选也只给统一后的名字，否则下拉框里会同时有 Groceries 和日用百货。
+    names = meta(client)["categories"]
+    assert "Groceries" not in names
+    assert "日用百货" in names
+
+
+def test_a_hand_edited_category_wins_over_the_bill(client, book):
+    book(
+        [
+            {
+                "occurred_at": f"{today()} 12:00:00",
+                "direction": "out",
+                "amount_cents": 1000,
+                "source_category": "Groceries",
+                "category": "买菜",
+                "account": "Monzo",
+            }
+        ]
+    )
+    assert txns(client)["rows"][0]["effective_category"] == "买菜"
+
+
+def test_a_hand_edited_alias_is_normalised_too(client, book):
+    """手改里留着的英文名也要归一，否则筛选下拉里又会冒出一行英文。"""
+    book(
+        [
+            {
+                "occurred_at": f"{today()} 12:00:00",
+                "direction": "out",
+                "amount_cents": 1000,
+                "source_category": "Food",
+                "category": "Groceries",
+                "account": "Monzo",
+            }
+        ]
+    )
+    assert txns(client)["rows"][0]["effective_category"] == "日用百货"
+    assert "Groceries" not in meta(client)["categories"]
+
+
+# --------------------------------------------------------------------------
 # 汇总：账户区与导入提醒
 # --------------------------------------------------------------------------
 
