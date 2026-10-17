@@ -123,12 +123,16 @@ export const getTransaction = (id: number) =>
 export const newTransactionForm = () =>
   request<FormPayload>("/api/transactions/new");
 
+/** 记一笔 / 改一笔回的东西：落在哪个月，以及（改一笔才有）还在不在组里。
+ *  记一笔不回组号，所以这里标成可空。 */
+export type SaveResult = { id: number; month: string; group_id?: number | null };
+
 /** 记一笔。校验没过时服务端会回 400，错误体里带着填过的内容。 */
 export const createTransaction = (values: Record<string, string>) =>
-  request<{ id: number; month: string }>("/api/transactions", json({ ...values }));
+  request<SaveResult>("/api/transactions", json({ ...values }));
 
 export const updateTransaction = (id: number, values: Record<string, string>) =>
-  request<{ id: number; month: string }>(`/api/transactions/${id}`, {
+  request<SaveResult>(`/api/transactions/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...values }),

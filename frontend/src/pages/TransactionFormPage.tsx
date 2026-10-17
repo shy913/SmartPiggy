@@ -70,7 +70,9 @@ export function TransactionFormPage() {
       if (editing) {
         // 改完要回去的是这一笔现在待的那个月。地址是刚拼出来的，跟离开列表时
         // 那一屏的地址往往对不上，锚点得跟着搬过去，回去才会定位并亮一下。
-        moveAnchor(returnTo, monthList, `txn-${txnId}`);
+        // 还在合并组里的话，列表上是一行合并记录，目标得指向那一组。
+        const target = body.group_id ? `group-${body.group_id}` : `txn-${txnId}`;
+        moveAnchor(returnTo, monthList, target);
       }
       // 刚记的这笔要是立刻被并进了别个月的组，就跳它现在待的那一个月。
       navigate(monthList);

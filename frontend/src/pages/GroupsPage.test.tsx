@@ -125,6 +125,8 @@ describe("合并组页", () => {
       "href",
       "/transactions?start=2026-10-01&end=&limit=400",
     );
+    // 这一页可能很长；回程按钮吸在视口顶上，翻到哪儿都点得到。
+    expect(screen.getByText("← 交易记录").closest("div")).toHaveClass("sticky", "top-0");
   });
 
   it("刷新后 state 没了，但只要还带着 group 参数，回程链接仍在", async () => {

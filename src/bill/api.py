@@ -739,7 +739,10 @@ def transaction_update(txn_id: int):
     with connection:
         repo.update_transaction(connection, txn_id, draft.fields())
         month = repo.effective_month(connection, txn_id) or draft.month
-    return jsonify(id=txn_id, month=month)
+    after = repo.get_transaction(connection, txn_id)
+    # 改完这一笔在列表上落在哪一行：还在组里的话，列表画的是一行合并记录，
+    # 前端拿 `group_id` 才知道回去该亮哪一行；组散了才是这一笔自己。
+    return jsonify(id=txn_id, month=month, group_id=after["group_id"] if after else None)
 
 
 @blueprint.delete("/transactions/<int:txn_id>")
