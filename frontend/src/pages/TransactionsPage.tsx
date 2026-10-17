@@ -37,6 +37,16 @@ const STEP = 200;
  */
 const STICKY = "sticky right-0 bg-bg";
 
+/**
+ * 合并记录的底色。
+ *
+ * 用实色而不是 `bg-accent/5`：那层半透明要是一格叠在行的同一层半透明底上，
+ * 就会比别处深一块（右侧钉住的那一格正是如此）；而且半透明底也盖不住横向
+ * 滚过去的内容。`color-mix` 把不透明度预先合进颜色里，两个问题一起没了。
+ */
+const GROUP_TINT = "bg-[color-mix(in_oklab,var(--accent)_5%,var(--bg))]";
+const GROUP_TINT_WARN = "bg-[color-mix(in_oklab,var(--warn)_20%,var(--bg))]";
+
 /** 方向 -> 金额前面那个符号。列表上没有单独的「收支」列：`. 符号 + 颜色`就说清了。 */
 function signed(row: { direction: string; display_cents: number }) {
   const value = row.direction === "neutral" ? 0 : row.display_cents;
@@ -545,7 +555,13 @@ function Row({
   );
 }
 
-/** 合并行：一行净额，下面挂一个可展开的原始成员列表。 */
+/**
+ * 合并行：一行净额，下面挂着可展开的原始成员列表。
+ *
+ * 「展开这 N 笔」属于上面这条合并记录，不是另起一行——所以它和成员列表
+ * 都铺同一层蓝色底，跟上面那行连成一块。收起时底部那条边线留给外层：
+ * 行与行之间的分隔线不能从记录中间穿过去。
+ */
 function GroupRow({
   row,
   members,
@@ -565,9 +581,10 @@ function GroupRow({
         data-anchor-id={target}
         data-flash={highlighted ? "1" : undefined}
         className={cn(
-          "transition-colors duration-700",
+          // 底线留给下面那块展开区，记录中间不能有一条横线。
+          "border-b-0 transition-colors duration-700",
           // 合并行本来就有底色；闪的时候换成暖色，跟「这一行是合并的」区分开。
-          highlighted ? "bg-warn/20" : "bg-accent/5",
+          highlighted ? GROUP_TINT_WARN : GROUP_TINT,
         )}
       >
         <TD />
@@ -607,7 +624,7 @@ function GroupRow({
           className={cn(
             "text-right",
             STICKY,
-            highlighted ? "bg-warn/20" : "bg-accent/5",
+            highlighted ? GROUP_TINT_WARN : GROUP_TINT,
           )}
         >
           {/* 合并行不是一条记录，进不了详情页——它只能去合并组页取消合并。
@@ -625,13 +642,19 @@ function GroupRow({
           </Link>
         </TD>
       </TR>
-      <tr className="border-b border-border">
-        <td colSpan={6} className="px-0 py-0">
+      <tr className="border-b border-border last:border-0">
+        <td
+          colSpan={6}
+          className={cn(
+            "px-0 py-0 transition-colors duration-700",
+            highlighted ? GROUP_TINT_WARN : GROUP_TINT,
+          )}
+        >
           <details>
-            <summary className="cursor-pointer px-2 py-1 text-xs text-muted">
+            <summary className="cursor-pointer px-2 py-1 text-xs text-muted hover:text-text">
               展开这 {row.member_count} 笔
             </summary>
-            <ul className="m-0 list-none px-4 py-2 text-xs">
+            <ul className="m-0 list-none border-t border-border px-4 py-2 text-xs">
               {members.map((member) => (
                 <li key={member.id} className="flex flex-wrap items-center gap-3 py-0.5">
                   <span className="text-muted">{minute(member.occurred_at)}</span>
