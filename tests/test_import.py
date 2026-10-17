@@ -45,18 +45,30 @@ def test_alipay_plan_is_parsed_field_by_field(conn):
     assert takeout.merchant_txn_id == "MT001"
 
 
-def test_alipay_neutral_rows_are_kept_but_excluded_from_totals(conn):
+def test_alipay_neutral_rows_are_hidden_but_kept(conn):
     preview = ingest.stage(conn, "支付宝账单.csv", alipay_csv())
     transfer = rows_by_description(preview.plan)["转账"]
 
     assert transfer.transaction.direction is Direction.NEUTRAL
+    assert transfer.transaction.hidden is True
     assert transfer.transaction.amount_cents == 10000, "金额本身要留着"
     assert transfer.transaction.signed_cents == 0
     assert preview.counts()["neutral"] == 1
+    assert preview.counts()["hidden"] == 1
 
     income, expense = preview.totals_by_currency()["CNY"]
     assert income == 1200000
     assert expense == 3250, "中性那 100 块不能算进支出"
+
+
+def test_alipay_neutral_rows_land_hidden_but_are_still_in_the_ledger(conn):
+    preview = ingest.stage(conn, "支付宝账单.csv", alipay_csv())
+    ingest.confirm(conn, preview.token)
+
+    assert conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 3
+    hidden = repo.list_transactions(conn, hidden="1")
+    assert [row["description"] for row in hidden] == ["转账"]
+    assert hidden[0]["direction"] == "neutral"
 
 
 def test_alipay_preamble_and_footer_do_not_become_transactions(conn):
@@ -99,7 +111,10 @@ def test_wechat_plan_has_no_float_noise(conn):
 
 def test_wechat_slash_means_neutral(conn):
     preview = ingest.stage(conn, "微信支付账单.xlsx", wechat_xlsx())
-    assert rows_by_description(preview.plan)["转账"].transaction.direction is Direction.NEUTRAL
+    transfer = rows_by_description(preview.plan)["转账"].transaction
+    assert transfer.direction is Direction.NEUTRAL
+    # 隐藏规则只写在支付宝配置里，微信的「/」仍按普通中性行显示。
+    assert transfer.hidden is False
     assert preview.counts()["neutral"] == 1
 
 
@@ -241,7 +256,8 @@ def test_confirm_writes_everything_and_is_idempotent_on_reupload(conn):
 
     again = ingest.stage(conn, "支付宝账单.csv", alipay_csv())
     assert again.counts() == {
-        "new": 0, "duplicate": 3, "possible": 0, "neutral": 0, "problem": 0,
+        "new": 0, "duplicate": 3, "possible": 0, "neutral": 0, "hidden": 0,
+        "problem": 0,
     }
     assert any("导过一次" in note for note in again.notes)
     ingest.confirm(conn, again.token)
