@@ -94,6 +94,53 @@ def test_upgrading_an_old_ledger_keeps_the_data(tmp_path):
     connection.close()
 
 
+def test_upgrading_hides_old_alipay_bu_ji_shou_zhi_rows(tmp_path):
+    """v6 之前入库的支付宝「不计收支」要补上隐藏标记；别的行一笔不动。
+
+    这些老记录的方向仍是 neutral——按月收益汇总还要靠它，迁移只改 hidden。
+    """
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    for batch in db.MIGRATIONS[:5]:  # 只跑到 v5
+        for statement in batch:
+            old.execute(statement)
+    old.execute("PRAGMA user_version = 5")
+    old.execute(
+        "INSERT INTO accounts (name, kind, created_at)"
+        " VALUES ('支付宝', 'alipay', '2026-01-01')"
+    )
+    for direction, raw in (
+        ("neutral", '{"收/支": "不计收支", "商品说明": "转账"}'),
+        ("out", '{"收/支": "支出", "商品说明": "外卖"}'),
+    ):
+        old.execute(
+            """
+            INSERT INTO transactions (
+              account_id, occurred_at, occurred_date, direction, amount_cents,
+              currency, description, profile_name, dedup_key, content_hash,
+              raw_json, created_at
+            ) VALUES (1, '2026-01-05 12:30:45', '2026-01-05', ?, 1000,
+                      'CNY', 'x', 'alipay', ?, ?, ?, '2026-01-01')
+            """,
+            (direction, f"k-{direction}", f"h-{direction}", raw),
+        )
+    old.commit()
+    old.close()
+
+    connection = db.connect(path)
+    db.init_db(connection)
+    rows = {
+        row["direction"]: (row["hidden"], row["auto_hidden"])
+        for row in connection.execute(
+            "SELECT direction, hidden, auto_hidden FROM transactions"
+        )
+    }
+    assert rows == {"neutral": (1, 1), "out": (0, 0)}
+    connection.close()
+
+
 def test_ensure_account_is_idempotent(conn):
     first = repo.ensure_account(conn, "支付宝", "alipay")
     assert repo.ensure_account(conn, "支付宝", "alipay") == first

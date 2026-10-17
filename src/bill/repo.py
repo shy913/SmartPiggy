@@ -65,12 +65,12 @@ INSERT INTO transactions (
   account_id, import_id, occurred_at, occurred_date, direction, amount_cents,
   currency, counterparty, counterparty_account, description, memo, payment_method,
   status, source_txn_id, merchant_txn_id, source_category, category, profile_name,
-  dedup_key, content_hash, raw_json, created_at
+  dedup_key, content_hash, raw_json, created_at, hidden, auto_hidden
 ) VALUES (
   :account_id, :import_id, :occurred_at, :occurred_date, :direction, :amount_cents,
   :currency, :counterparty, :counterparty_account, :description, :memo, :payment_method,
   :status, :source_txn_id, :merchant_txn_id, :source_category, :category, :profile_name,
-  :dedup_key, :content_hash, :raw_json, :created_at
+  :dedup_key, :content_hash, :raw_json, :created_at, :hidden, :auto_hidden
 )
 """
 
@@ -114,6 +114,12 @@ def _tx_params(
         "content_hash": content_hash,
         "raw_json": raw_json,
         "created_at": created_at,
+        # 配置把某类「收/支」直接标成隐藏时（支付宝的「不计收支」），
+        # 写入就带上标记；手动记账没有这个概念，默认 0。
+        "hidden": int(transaction.hidden),
+        # 导入时这次的隐藏是配置自动给的，收益汇总据此决定要不要照常取数。
+        # 手动记账永远不是自动的。
+        "auto_hidden": int(transaction.hidden),
     }
 
 
@@ -1455,8 +1461,10 @@ def set_hidden(connection: sqlite3.Connection, txn_id: int, hidden: bool) -> boo
     if hidden:
         _dissolve_groups_touching(connection, "m.transaction_id = ?", (txn_id,))
         prune_groups(connection)
+    # 手动点过之后，这笔的隐藏状态归用户管；自动隐藏的标记一并清掉，
+    # 免得下次收益扫描又把刚藏掉的这笔合回去。
     cursor = connection.execute(
-        "UPDATE transactions SET hidden = ? WHERE id = ?",
+        "UPDATE transactions SET hidden = ?, auto_hidden = 0 WHERE id = ?",
         (1 if hidden else 0, txn_id),
     )
     return cursor.rowcount > 0
@@ -1637,8 +1645,13 @@ def append_rollup_members(
     而「把这个月的收益合成一条」正是这个功能本身。标题/分类不动，用户手改过的
     东西不会被一次导入盖掉。
 
-    已经在别的组、已隐藏、不是中性的 id 一律跳过；唯一约束是最后一道防线，
+    已经在别的组、不是中性的 id 一律跳过；唯一约束是最后一道防线，
     `OR IGNORE` 保证单行冲突不把整次扫描带崩。
+
+    **配置自动隐藏的中性行照样可以入组**：支付宝的「不计收支」现在导入即隐藏，
+    其中余额宝收益正是这个汇总功能的原料。用户手动藏掉的（auto_hidden = 0）
+    仍然排除在外——否则手动一藏，下次扫描又把它合回去。组行本身按收入显示，
+    不受成员的隐藏标记影响（``_effective_cte`` 的合成行分支不过滤 hidden）。
     """
     group = connection.execute(
         "SELECT kind, rollup_key FROM tx_groups WHERE id = ?", (group_id,)
@@ -1657,7 +1670,7 @@ def append_rollup_members(
             SELECT t.id, t.account_id, t.counterparty, t.currency, t.occurred_date
             FROM transactions t
             WHERE t.id IN ({marks})
-              AND t.hidden = 0
+              AND (t.hidden = 0 OR t.auto_hidden = 1)
               AND t.direction = 'neutral'
               AND NOT EXISTS (
                 SELECT 1 FROM tx_group_members m WHERE m.transaction_id = t.id
@@ -1912,7 +1925,9 @@ def autodetect_rollups(connection: sqlite3.Connection) -> int:
 
     **刻意不按 since/until 圈范围**：一次导入可能只覆盖一天，而同月更早的收益
     早就在库里了。只扫窗口内的话，新组永远凑不齐，已有的组也永远追加不到。
-    候选是「未入组 + 未隐藏 + 中性 + 金额 > 0」，几百行量级，全库扫没有压力。
+    候选是「未入组 + 中性 + 金额 > 0」，几百行量级，全库扫没有压力。配置
+    自动隐藏的中性行也算——支付宝「不计收支」现在导入即隐藏，收益发放正是
+    从这里来的；用户手动藏掉的仍不算。
 
     已有的同 key 组直接追加（只有一笔新收益也追加）；没有组时至少两笔才建。
     """
@@ -1986,7 +2001,7 @@ def _rollup_rows(connection: sqlite3.Connection) -> list[groups.RollupRow]:
         FROM transactions t
         LEFT JOIN tx_group_members m ON m.transaction_id = t.id
         WHERE t.direction = 'neutral'
-          AND t.hidden = 0
+          AND (t.hidden = 0 OR t.auto_hidden = 1)
           AND t.amount_cents > 0
         ORDER BY t.occurred_date, t.id
         """

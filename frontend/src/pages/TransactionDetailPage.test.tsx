@@ -1,10 +1,23 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { TransactionDetailPage } from "./TransactionDetailPage";
 import type { TransactionDetail } from "../api/types";
+import type { BackState } from "../lib/useBack";
+
+/** 回到列表时看一眼它收到的来源，测试里不用真渲染整张列表。 */
+function Probe() {
+  const location = useLocation();
+  const nav = location.state as BackState;
+  return (
+    <p>
+      {`探针:${nav?.backLabel ?? "无"}:${nav?.noHistoryBack ? "链接" : "回退"}`}
+    </p>
+  );
+}
 
 function detail(overrides: Partial<TransactionDetail> = {}): TransactionDetail {
   return {
@@ -59,7 +72,7 @@ function detail(overrides: Partial<TransactionDetail> = {}): TransactionDetail {
 }
 
 function draw(
-  state?: { from: string; backLabel?: string },
+  state?: BackState,
   overrides: Partial<TransactionDetail> = {},
 ) {
   vi.stubGlobal(
@@ -76,13 +89,17 @@ function draw(
       <MemoryRouter initialEntries={[{ pathname: "/transactions/3", state }]}>
         <Routes>
           <Route path="/transactions/:id" element={<TransactionDetailPage />} />
+          <Route path="/transactions" element={<Probe />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe("这一笔", () => {
   it("回程链接和合并组页同一套：吸在视口顶上", async () => {
@@ -120,5 +137,20 @@ describe("这一笔", () => {
     expect(screen.getByText("-690.00 CNY")).toBeInTheDocument();
     // 明细里的「原金额」仍是账单上那个数。
     expect(screen.getByText("690.00 CNY")).toBeInTheDocument();
+  });
+
+  it("删掉之后回到列表，并把列表自己的来路带回去", async () => {
+    // 没有应用内历史（MemoryRouter）时走 replace 兜底，列表的 state 只能靠
+    // `up` 显式带过去；真实浏览器里 navigate(-1) 会自然恢复原条目的 state。
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
+    draw({
+      from: "/transactions?start=2026-10-01&end=",
+      backLabel: "交易记录",
+      up: { from: "/?range=month&month=2026-10", backLabel: "汇总" },
+    });
+    await user.click(await screen.findByRole("button", { name: "删除" }));
+
+    expect(await screen.findByText("探针:汇总:回退")).toBeInTheDocument();
   });
 });

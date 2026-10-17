@@ -14,6 +14,7 @@ import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { ErrorText, Field, Input } from "../components/ui/bits";
 import { moveAnchor } from "../lib/anchor";
+import type { BackState } from "../lib/useBack";
 
 const BLANK: FormValues = {
   occurred_at: "",
@@ -45,7 +46,19 @@ export function TransactionFormPage() {
   const client = useQueryClient();
   // 从交易记录点进来时带着原列表地址（「记一笔」是列表传的，改一笔由详情页
   // 转交），取消或改完都回那一屏，筛选还在、锚点也认得。
-  const returnTo = (location.state as { from?: string } | null)?.from;
+  const nav = location.state as BackState;
+  const returnTo = nav?.from;
+  // 回到列表之后，列表顶上的「← 汇总」也要还在——把列表自己的来路还给它。
+  const up = nav?.up;
+  // 取消/保存都是 push：回到列表时前一条历史是这张表单，回程按钮只能走
+  // 普通链接，不能退历史。
+  const cancelState = up ? { ...up, noHistoryBack: true } : undefined;
+  // 保存后落在交易记录页。只有从交易记录链进来时，`up` 才是那个列表的来路；
+  // 从合并组/导入详情进来时塞过去会造出一个指向别处的假回程。
+  const saveState =
+    returnTo?.startsWith("/transactions") && up
+      ? { ...up, noHistoryBack: true }
+      : undefined;
 
   // 两个接口回的是**同一个形状**（改一笔那个也带 errors / accounts /
   // currencies / categories / back_month），所以这一份表单能同时喂两种用途。
@@ -75,7 +88,7 @@ export function TransactionFormPage() {
         moveAnchor(returnTo, monthList, target);
       }
       // 刚记的这笔要是立刻被并进了别个月的组，就跳它现在待的那一个月。
-      navigate(monthList);
+      navigate(monthList, { state: saveState });
     },
     onError: (failure) => {
       if (failure instanceof ApiError) {
@@ -197,6 +210,7 @@ export function TransactionFormPage() {
                   ? `/transactions?start=${data.back_month}-01&end=`
                   : "/transactions")
               }
+              state={cancelState}
             >
               取消
             </Link>

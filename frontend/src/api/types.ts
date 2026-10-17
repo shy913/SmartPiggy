@@ -462,6 +462,8 @@ export type Preview = {
     duplicate: number;
     possible: number;
     neutral: number;
+    /** 其中导入后直接处于隐藏状态的有几条。 */
+    hidden: number;
     problem: number;
   };
   totals: { currency: string; income: number; expense: number }[];

@@ -21,6 +21,7 @@ import { anchorKey, saveAnchor } from "../lib/anchor";
 import { formatSigned, minute } from "../lib/format";
 import { useFlash } from "../lib/useFlash";
 import { useReturnAnchor } from "../lib/useReturnAnchor";
+import type { BackState } from "../lib/useBack";
 import { cn } from "../lib/utils";
 
 /** 一次多要多少条。跟服务端 `params.LIST_STEP` 是同一个节奏。 */
@@ -59,12 +60,17 @@ export function TransactionsPage() {
   const location = useLocation();
   // 从首页排行、KPI 或合并组点过来时带着回程地址。没有就照常从导航栏进出，
   // 不凭空造一个「返回」——那会把人送到一个他没去过的地方。
-  const nav = location.state as { from?: string; backLabel?: string } | null;
+  const nav = location.state as BackState;
   const client = useQueryClient();
   const navigate = useNavigate();
   const [selected, setSelected] = useState<number[]>([]);
   const [category, setCategory] = useState("");
   const [error, setError] = useState("");
+
+  // 换筛选是 push 一条新列表：前一条历史是旧筛选，不是 `from`，回程按钮
+  // 不能再退历史，否则「← 汇总」会退回上一个筛选。
+  const pushParams = (next: URLSearchParams) =>
+    setParams(next, { state: nav ? { ...nav, noHistoryBack: true } : undefined });
 
   const query = useMemo(() => Object.fromEntries(params.entries()), [params]);
   const { data, isPending, isFetching, error: loadError } = useQuery({
@@ -136,7 +142,8 @@ export function TransactionsPage() {
         if (!entries.some((entry) => entry.isIntersecting)) return;
         const next = new URLSearchParams(params);
         next.set("limit", String(limit + STEP));
-        setParams(next, { replace: true });
+        // 加载更多是 replace 同一个历史条目，前一条仍是真正的来源。
+        setParams(next, { replace: true, state: nav });
       },
       { rootMargin: "200px" },
     );
@@ -155,14 +162,24 @@ export function TransactionsPage() {
 
   return (
     <div>
-      {nav?.from ? <BackLink to={nav.from} label={nav.backLabel ?? "汇总"} /> : null}
+      {nav?.from ? (
+        <BackLink
+          to={nav.from}
+          label={nav.backLabel ?? "汇总"}
+          back={!nav.noHistoryBack}
+        />
+      ) : null}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold">交易记录</h1>
         {/* 带上当前列表地址：取消回来时筛选条件还在原位。 */}
         <Link
           className={cn(buttonStyles(), "ml-auto")}
           to="/transactions/new"
-          state={{ from: `${location.pathname}${location.search}`, backLabel: "交易记录" }}
+          state={{
+            from: `${location.pathname}${location.search}`,
+            backLabel: "交易记录",
+            up: nav,
+          }}
         >
           记一笔
         </Link>
@@ -174,7 +191,7 @@ export function TransactionsPage() {
         active={data.active_filters}
         onChange={(next) => {
           setSelected([]);
-          setParams(next);
+          pushParams(next);
         }}
       />
 
@@ -246,7 +263,7 @@ export function TransactionsPage() {
             onClick={() => {
               const next = new URLSearchParams(params);
               next.set("limit", String(limit + STEP));
-              setParams(next);
+              pushParams(next);
             }}
           >
             继续往下加载（还有 {remaining} 条）
@@ -457,6 +474,7 @@ function Row({
 }) {
   const hidden = row.hidden === 1;
   const location = useLocation();
+  const nav = location.state as BackState;
   const back = `${location.pathname}${location.search}`;
   const remember = () =>
     saveAnchor(anchorKey(location.pathname, location.search), `txn-${row.id}`);
@@ -493,7 +511,7 @@ function Row({
           <Link
             className="text-accent underline"
             to={`/transactions/${row.id}`}
-            state={{ from: back, backLabel: "交易记录" }}
+            state={{ from: back, backLabel: "交易记录", up: nav }}
             onClick={remember}
           >
             <When value={row.occurred_at} />
@@ -531,7 +549,7 @@ function Row({
             className="line-clamp-2 min-w-0 text-accent underline [overflow-wrap:anywhere]"
             title={row.counterparty}
             to={`/transactions/${row.id}`}
-            state={{ from: back, backLabel: "交易记录" }}
+            state={{ from: back, backLabel: "交易记录", up: nav }}
             onClick={remember}
           >
             <CategoryMark category={row.effective_category} emoji={row.emoji} />{" "}
@@ -548,7 +566,7 @@ function Row({
               className="line-clamp-3 min-w-0 text-accent underline [overflow-wrap:anywhere]"
               title={row.description}
               to={`/transactions/${row.id}`}
-              state={{ from: back, backLabel: "交易记录" }}
+              state={{ from: back, backLabel: "交易记录", up: nav }}
               onClick={remember}
             >
               {row.description}
@@ -580,6 +598,7 @@ function GroupRow({
   highlighted: boolean;
 }) {
   const location = useLocation();
+  const nav = location.state as BackState;
   const target = `group-${row.group_id}`;
   const remember = () =>
     saveAnchor(anchorKey(location.pathname, location.search), target);
@@ -642,6 +661,7 @@ function GroupRow({
             state={{
               from: `${location.pathname}${location.search}`,
               backLabel: "交易记录",
+              up: nav,
             }}
             onClick={remember}
           >

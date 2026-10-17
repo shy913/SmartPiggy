@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { TransactionsPage } from "./TransactionsPage";
-import type { MemberRow, TransactionList, TransactionRow } from "../api/types";
+import { TransactionDetailPage } from "./TransactionDetailPage";
+import type { MemberRow, TransactionDetail, TransactionList, TransactionRow } from "../api/types";
 import { anchorKey } from "../lib/anchor";
 
 function listBody(overrides: Partial<TransactionList> = {}): TransactionList {
@@ -497,5 +498,98 @@ describe("交易记录页", () => {
     // 本来就是显示币种的那笔，没有第二份。
     expect(screen.getByText("-7.92")).toBeInTheDocument();
     expect(screen.queryByText("-7.92 GBP")).toBeNull();
+  });
+});
+
+describe("从列表进去再返回", () => {
+  function detailBody(): TransactionDetail {
+    return {
+      transaction: {
+        id: 3,
+        occurred_at: "2026-10-05 12:30:45",
+        direction: "out",
+        amount_cents: 3250,
+        currency: "CNY",
+        display_cents: 3250,
+        display_currency: "CNY",
+        counterparty: "美团平台商户",
+        counterparty_account: "",
+        description: "午饭",
+        memo: "",
+        effective_category: "餐饮美食",
+        source_category: "餐饮美食",
+        account_name: "支付宝",
+        is_large: 0,
+        hidden: 0,
+        edited_at: null,
+        dedup_key: "k",
+        content_hash: "h",
+        source_txn_id: "",
+        merchant_txn_id: "",
+        status: "",
+        payment_method: "",
+      },
+      values: {
+        occurred_at: "2026-10-05T12:30",
+        direction: "out",
+        amount: "32.50",
+        currency: "CNY",
+        category: "",
+        account_name: "支付宝",
+        counterparty: "美团平台商户",
+        counterparty_account: "",
+        description: "午饭",
+        memo: "",
+        payment_method: "",
+      },
+      raw: {},
+      record: null,
+      accounts: [{ id: 1, name: "支付宝" }],
+      currencies: ["CNY"],
+      categories: ["餐饮美食"],
+      display_currency: "CNY",
+      back_month: "2026-10",
+      errors: [],
+    };
+  }
+
+  it("看完一笔退回列表，顶上那条「汇总」还在", async () => {
+    // 首页点支出进来时列表带着来源；点进详情再退回，来源不能被这一层吃掉，
+    // 否则用户落到列表就再也回不到首页。
+    const user = userEvent.setup();
+    const list = listBody({ total: 1, rows: [row({ id: 3 })] });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        const body = String(input).includes("/api/transactions/3") ? detailBody() : list;
+        return { ok: true, status: 200, text: async () => JSON.stringify(body) };
+      }),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter
+          initialEntries={[
+            {
+              pathname: "/transactions",
+              search: "?start=2026-10-01&end=",
+              state: { from: "/?range=month&month=2026-10", backLabel: "汇总" },
+            },
+          ]}
+        >
+          <Routes>
+            <Route path="/transactions" element={<TransactionsPage />} />
+            <Route path="/transactions/:id" element={<TransactionDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await user.click(await screen.findByRole("link", { name: /美团平台商户/ }));
+    await screen.findByRole("heading", { name: "这一笔" });
+    await user.click(screen.getByRole("link", { name: "交易记录" }));
+
+    const back = await screen.findByRole("link", { name: "汇总" });
+    expect(back).toHaveAttribute("href", "/?range=month&month=2026-10");
   });
 });
