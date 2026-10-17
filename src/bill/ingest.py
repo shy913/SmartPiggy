@@ -63,8 +63,8 @@ class StagedPreview:
             return {"new": 0, "duplicate": 0, "possible": 0, "neutral": 0, "problem": 0}
         return self.plan.counts()
 
-    def totals(self) -> tuple[int, int]:
-        return self.plan.totals() if self.plan else (0, 0)
+    def totals_by_currency(self) -> dict[str, tuple[int, int]]:
+        return self.plan.totals_by_currency() if self.plan else {}
 
     def rows(self, limit: int | None = None):
         if self.plan is None:

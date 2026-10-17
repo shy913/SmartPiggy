@@ -134,19 +134,28 @@ class ImportPlan:
             if not row.duplicate and row.transaction.direction is Direction.NEUTRAL
         )
 
-    def totals(self) -> tuple[int, int]:
-        """(收入分, 支出分)，只统计将要新入库的行。"""
-        income = sum(
-            row.transaction.amount_cents
-            for row in self.new_rows
-            if row.transaction.direction is Direction.IN
-        )
-        expense = sum(
-            row.transaction.amount_cents
-            for row in self.new_rows
-            if row.transaction.direction is Direction.OUT
-        )
-        return income, expense
+    def totals_by_currency(self) -> dict[str, tuple[int, int]]:
+        """币种 -> (收入分, 支出分)，只统计将要新入库的行。
+
+        不跨币种相加：人民币的「分」和英镑的便士不是同一种东西。一份账单里
+        同时出现几种币种时，预览页要把它们分开列出来。
+        """
+        income: dict[str, int] = {}
+        expense: dict[str, int] = {}
+        for row in self.new_rows:
+            transaction = row.transaction
+            if transaction.direction is Direction.IN:
+                income[transaction.currency] = (
+                    income.get(transaction.currency, 0) + transaction.amount_cents
+                )
+            elif transaction.direction is Direction.OUT:
+                expense[transaction.currency] = (
+                    expense.get(transaction.currency, 0) + transaction.amount_cents
+                )
+        return {
+            currency: (income.get(currency, 0), expense.get(currency, 0))
+            for currency in sorted(set(income) | set(expense))
+        }
 
     def issues_by_code(self) -> dict[str, list[Issue]]:
         grouped: dict[str, list[Issue]] = {}

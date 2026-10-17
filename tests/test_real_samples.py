@@ -21,7 +21,8 @@ REAL_DIR = pathlib.Path(__file__).parent / "fixtures" / "real"
 _samples = sorted(
     path
     for path in REAL_DIR.glob("*")
-    if path.suffix.lower() in {".csv", ".tsv", ".txt", ".xlsx", ".xlsm", ".zip"}
+    if path.suffix.lower()
+    in {".csv", ".tsv", ".txt", ".xlsx", ".xlsm", ".zip", ".pdf"}
 ) if REAL_DIR.is_dir() else []
 
 pytestmark = [
@@ -42,11 +43,14 @@ def test_real_sample_imports_cleanly(conn_module, path):
 
     # 把摘要打出来，人工核对一眼。
     counts = preview.counts()
-    income, expense = preview.totals()
+    totals = "、".join(
+        f"{currency} 收入 {income / 100:.2f} / 支出 {expense / 100:.2f}"
+        for currency, (income, expense) in preview.totals_by_currency().items()
+    )
     print(
         f"\n{path.name}: {preview.profile_name} · "
         f"新增 {counts['new']} · 重复 {counts['duplicate']} · "
-        f"中性 {counts['neutral']} · 收入 {income / 100:.2f} · 支出 {expense / 100:.2f}"
+        f"中性 {counts['neutral']} · {totals}"
     )
 
 

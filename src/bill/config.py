@@ -11,6 +11,7 @@ from pathlib import Path
 
 __all__ = [
     "MAX_BYTES",
+    "MAX_PDF_PAGES",
     "MAX_ROWS",
     "PREVIEW_KEEP",
     "PREVIEW_ROWS",
@@ -31,6 +32,10 @@ DEFAULT_DATA_DIR = "~/.local/share/bill"
 # 导入绝不能复用预览那份被截断的数据，否则后面的记录会静默丢掉。
 MAX_ROWS = 100_000
 MAX_BYTES = 20 * 1024 * 1024
+
+# 一页对账单通常几行到几十行；银行一年的 PDF 也就几十页。五百页足够，
+# 再往上更像是拿错文件或者恶意构造的文档。
+MAX_PDF_PAGES = 500
 
 # 预览页最多列这么多行，跟 MAX_ROWS 是两条独立的路径。
 PREVIEW_ROWS = 200

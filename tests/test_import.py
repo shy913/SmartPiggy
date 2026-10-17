@@ -54,7 +54,7 @@ def test_alipay_neutral_rows_are_kept_but_excluded_from_totals(conn):
     assert transfer.transaction.signed_cents == 0
     assert preview.counts()["neutral"] == 1
 
-    income, expense = preview.totals()
+    income, expense = preview.totals_by_currency()["CNY"]
     assert income == 1200000
     assert expense == 3250, "中性那 100 块不能算进支出"
 
@@ -365,7 +365,7 @@ def test_monzo_zero_amount_card_checks_become_neutral(conn):
     assert zero_rows, "样本里应该有 0.00 的行"
     assert all(row.transaction.direction is Direction.NEUTRAL for row in zero_rows)
 
-    income, expense = preview.totals()
+    income, expense = preview.totals_by_currency()["GBP"]
     assert income == 100000, "0.00 的行不该影响收入"
     assert expense == 5540 + 385
 

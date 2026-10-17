@@ -276,8 +276,9 @@ def test_upload_preview_confirm(client):
     assert preview["counts"]["new"] == 3
     assert preview["counts"]["duplicate"] == 0
     assert preview["counts"]["neutral"] == 1, "¥100 那笔是「不计收支」，要有交代"
-    assert preview["totals"]["income"] == 1200000
-    assert preview["totals"]["expense"] == 3250
+    assert preview["totals"] == [
+        {"currency": "CNY", "income": 1200000, "expense": 3250}
+    ]
     assert preview["token"] == token
 
     import_id = confirm(client, token)

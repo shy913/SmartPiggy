@@ -335,7 +335,7 @@ export type Preview = {
     neutral: number;
     problem: number;
   };
-  totals: { income: number; expense: number };
+  totals: { currency: string; income: number; expense: number }[];
   issues: { code: string; level: string; message: string; row_number: number | null }[];
   issues_total: number;
   rows: PreviewRow[];

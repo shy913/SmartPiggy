@@ -282,8 +282,8 @@ def test_large_rows_stay_out_of_the_total_and_are_listed_separately(
 def test_preview_totals_still_count_large_rows(conn, isolated_data_dir):
     """导入预览页的「新增收入/支出」是「这次写进去多少」，不套阈值。
 
-    套上会让那个标签变成假的；而且 ImportPlan.totals() 是 models.py 里的纯函数，
-    刻意不接 settings 和币种，把阈值塞进去要破坏那个模块的职责。
+    套上会让那个标签变成假的；ImportPlan.totals_by_currency() 是 models.py 里的
+    纯函数，按币种分组但刻意不接 settings，把阈值塞进去会破坏那个模块的职责。
     """
     write_settings(isolated_data_dir, DISPLAY_GBP + THRESHOLDS)
     row = ParsedRow(
@@ -298,7 +298,9 @@ def test_preview_totals_still_count_large_rows(conn, isolated_data_dir):
         content_hash="h",
     )
 
-    assert ImportPlan(profile_name="x", rows=[row]).totals() == (0, 500000)
+    assert ImportPlan(profile_name="x", rows=[row]).totals_by_currency() == {
+        "GBP": (0, 500000)
+    }
 
 
 # ---------------------------------------------------------------- 配置校验

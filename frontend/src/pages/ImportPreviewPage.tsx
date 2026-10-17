@@ -155,8 +155,20 @@ export function ImportPreviewPage() {
               {data.counts.problem ? <Tag tone="out">有问题 {data.counts.problem}</Tag> : null}
             </div>
             <Hint>
-              将新增收入 {formatAmount(data.totals.income)}、支出{" "}
-              {formatAmount(data.totals.expense)}。
+              {data.totals.length === 0
+                ? "没有要新增的收支。"
+                : data.totals.length === 1
+                  ? `将新增收入 ${formatAmount(data.totals[0].income)}、支出 ${formatAmount(
+                      data.totals[0].expense,
+                    )}（${data.totals[0].currency}）。`
+                  : `将新增：${data.totals
+                      .map(
+                        (item) =>
+                          `${item.currency} 收入 ${formatAmount(item.income)}、支出 ${formatAmount(
+                            item.expense,
+                          )}`,
+                      )
+                      .join("；")}。`}
             </Hint>
           </Section>
 

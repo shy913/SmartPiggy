@@ -51,7 +51,7 @@ export function ImportPage() {
             ref={input}
             type="file"
             className="hidden"
-            accept=".csv,.txt,.xlsx,.xls,.zip"
+            accept=".csv,.txt,.xlsx,.xls,.zip,.pdf"
             onChange={(event) => pick(event.target.files?.[0])}
           />
           <Button onClick={() => input.current?.click()} disabled={upload.isPending}>

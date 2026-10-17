@@ -872,7 +872,7 @@ def _preview_payload(preview) -> dict:
     """
     detected = preview.detected
     rows = preview.rows(config.PREVIEW_ROWS)
-    income, expense = preview.totals()
+    totals = preview.totals_by_currency()
     issues = preview.plan.issues if preview.plan else []
     seen: dict[str, int] = {}
     grouped: list[dict] = []
@@ -914,7 +914,10 @@ def _preview_payload(preview) -> dict:
             for number, cells in preview.raw_preview(15)
         ],
         "counts": preview.counts(),
-        "totals": {"income": income, "expense": expense},
+        "totals": [
+            {"currency": currency, "income": income, "expense": expense}
+            for currency, (income, expense) in totals.items()
+        ],
         "issues": grouped,
         "issues_total": len(issues),
         "rows": [

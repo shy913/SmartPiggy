@@ -18,12 +18,13 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from pathlib import PurePosixPath
 
-from .config import MAX_BYTES, MAX_ROWS
+from .config import MAX_BYTES, MAX_PDF_PAGES, MAX_ROWS
 from .errors import UploadError
 
 __all__ = [
     "ACCEPT_ATTR",
     "DELIMITED_SUFFIXES",
+    "PDF_SUFFIXES",
     "SPREADSHEET_SUFFIXES",
     "Grid",
     "RawTable",
@@ -35,11 +36,15 @@ __all__ = [
 SPREADSHEET_SUFFIXES = {".xlsx", ".xlsm"}
 DELIMITED_SUFFIXES = {".csv", ".tsv", ".txt"}
 ZIP_SUFFIXES = {".zip"}
+PDF_SUFFIXES = {".pdf"}
 
 # 文件选择框里给出的类型，加上 .zip —— 支付宝的导出就是一个压缩包。
-ACCEPT_ATTR = ",".join(sorted(SPREADSHEET_SUFFIXES | DELIMITED_SUFFIXES | ZIP_SUFFIXES))
+ACCEPT_ATTR = ",".join(
+    sorted(SPREADSHEET_SUFFIXES | DELIMITED_SUFFIXES | ZIP_SUFFIXES | PDF_SUFFIXES)
+)
 
 _ZIP_MAGIC = b"PK\x03\x04"
+_PDF_MAGIC = b"%PDF-"
 _DELIMITERS = (",", "\t", ";", "|")
 
 # UTF-8 之外的候选。注意不能照「第一个不报错的就用」来挑：cp1252 / latin-1 对
@@ -53,7 +58,7 @@ class RawTable:
     """一份文件解码后的原始行，还没决定哪一行是表头。"""
 
     filename: str
-    kind: str  # "csv" | "xlsx"
+    kind: str  # "csv" | "xlsx" | "pdf"
     rows: list[list[str]]
     encoding: str = ""
     delimiter: str = ""
@@ -126,11 +131,13 @@ def read_table(
         return _read_excel(name, data)
     if suffix == ".xls":
         raise UploadError("不支持老的 .xls 格式——请另存为 .xlsx 或 .csv 再传。")
+    if suffix in PDF_SUFFIXES or data[:5] == _PDF_MAGIC:
+        return _read_pdf(name, data, probes)
     if suffix in ZIP_SUFFIXES or data[:4] == _ZIP_MAGIC:
         return _read_zip(name, data, probes, encoding, delimiter)
     if suffix in DELIMITED_SUFFIXES or not suffix:
         return _read_delimited(name, data, probes, encoding, delimiter)
-    raise UploadError(f"不认识的格式「{suffix}」。支持 CSV、TSV、XLSX 和 ZIP。")
+    raise UploadError(f"不认识的格式「{suffix}」。支持 CSV、TSV、XLSX、PDF 和 ZIP。")
 
 
 # --------------------------------------------------------------------------
@@ -378,6 +385,195 @@ def _read_zip(
         best.notes.append(f"压缩包里有 {len(members)} 个表格，用了「{best.member}」。")
     best.filename = filename
     return best
+
+
+# --------------------------------------------------------------------------
+# PDF（文字版对账单）
+# --------------------------------------------------------------------------
+
+
+def _read_pdf(filename: str, data: bytes, probes: tuple[str, ...]) -> RawTable:
+    """把文字版 PDF 的表格摊成「表头 + 数据行」。
+
+    只做抽取，不做列映射：每页的表格交给 ``extract_tables``，重复的表头丢掉，
+    单元格里的排版折行拼回去，剩下的跟 CSV 一样交给 ``find_header``。
+
+    密码按中国银行导出的习惯，先试文件名去掉扩展名，再试完整文件名。改过名的
+    文件解不开时明确说清楚——静默跳过会让用户以为文件是空的。
+    """
+    try:
+        import pdfplumber
+    except ImportError:
+        raise UploadError("缺少 PDF 支持（pdfplumber 没装）。")
+
+    name = PurePosixPath(filename.replace("\\", "/")).name
+    stem = PurePosixPath(name).stem
+    pdf = None
+    last_kind = "broken"
+    # 每次都用新的 BytesIO：失败的解析会把流读到一半，复用会报奇怪的错。
+    for password in (None, stem, name):
+        try:
+            pdf = pdfplumber.open(io.BytesIO(data), password=password)
+            break
+        except Exception as error:  # pdfplumber 把 pdfminer 的异常包了一层
+            last_kind = _pdf_error_kind(error)
+            if last_kind != "password":
+                break
+
+    if pdf is None:
+        if last_kind == "password":
+            raise UploadError(
+                "这个 PDF 有密码，用文件名（去掉 .pdf）解不开。"
+                "中国银行流水导出的密码就是文件名去掉 .pdf，请确认文件名没被改过。"
+            )
+        if last_kind == "forbidden":
+            raise UploadError("这个 PDF 不允许提取文字，请换一份能复制的导出版本。")
+        if last_kind == "encrypted":
+            raise UploadError("这个 PDF 的加密方式不支持，请用阅读器另存一份再传。")
+        raise UploadError("这个 PDF 打不开，可能已经损坏。")
+
+    rows: list[list[str]] = []
+    header: list[str] | None = None
+    skipped_pages: list[int] = []
+    truncated = False
+    total_pages = 0
+
+    try:
+        total_pages = len(pdf.pages)
+        for page_number, page in enumerate(pdf.pages[:MAX_PDF_PAGES], 1):
+            try:
+                tables = page.extract_tables() or []
+            except Exception:
+                skipped_pages.append(page_number)
+                continue
+            table = _pick_pdf_table(tables, probes)
+            if not table:
+                skipped_pages.append(page_number)
+                continue
+
+            cleaned = [[_pdf_cell(cell) for cell in row] for row in table]
+            if not cleaned:
+                continue
+
+            if header is None:
+                # 表格开头可能还有标题行；用命中最多的那一行当规范表头。
+                header = _pdf_header(cleaned, probes)
+                rows.extend(cleaned)
+            else:
+                # 只丢与规范表头完全相同的行，不合并「看起来一样」的数据行：
+                # 同一份文件里两笔真实相同的消费必须都留下来。
+                rows.extend(row for row in cleaned if row != header)
+
+            if len(rows) >= MAX_ROWS:
+                truncated = True
+                break
+    finally:
+        pdf.close()
+
+    if header is None:
+        raise UploadError(
+            "这个 PDF 里没有找到表格。图片版（扫描件）需要先 OCR 成文字版再传。"
+        )
+
+    notes: list[str] = [f"共 {total_pages} 页。"]
+    if total_pages > MAX_PDF_PAGES:
+        notes.append(f"PDF 超过 {MAX_PDF_PAGES} 页，只读了前面这些。")
+        truncated = True
+    if skipped_pages:
+        listed = "、".join(str(number) for number in skipped_pages[:5])
+        notes.append(f"第 {listed} 页没有可抽取的表格，已跳过。")
+    if truncated:
+        notes.append(f"文件超过 {MAX_ROWS:,} 行，只读了前面这些。")
+
+    return RawTable(
+        filename=filename,
+        kind="pdf",
+        rows=rows[:MAX_ROWS],
+        truncated=truncated,
+        notes=notes,
+    )
+
+
+def _pick_pdf_table(
+    tables: list[list[list[str | None]]], probes: tuple[str, ...]
+) -> list[list[str | None]] | None:
+    """一页里有多张表时，选最像交易明细的那张。
+
+    只看前几行命中了多少列名，再比宽度和行数。银行 PDF 末尾常有汇总表，
+    宽度可能一样，但列名对不上。
+    """
+    wanted = {probe.strip() for probe in probes if probe.strip()}
+    best = None
+    best_key: tuple[int, int, int] | None = None
+    for table in tables:
+        if not table:
+            continue
+        head = [cell for row in table[:3] for cell in row if cell]
+        hits = len(wanted & {cell.strip() for cell in head})
+        width = max((len(row) for row in table), default=0)
+        key = (hits, width, len(table))
+        if best_key is None or key > best_key:
+            best, best_key = table, key
+    return best
+
+
+def _pdf_header(rows: list[list[str]], probes: tuple[str, ...]) -> list[str]:
+    """在前几行里挑最像表头的那一行。"""
+    wanted = {probe.strip() for probe in probes if probe.strip()}
+    best = rows[0]
+    best_hits = -1
+    for row in rows[:3]:
+        hits = len(wanted & {cell.strip() for cell in row})
+        if hits > best_hits:
+            best, best_hits = row, hits
+    return best
+
+
+_ASCII_LETTERS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+
+def _pdf_cell(value: object) -> str:
+    """把一个 PDF 单元格规整成一行文字。
+
+    单元格里的换行是排版折行，不是内容：中文、数字、括号两侧直接相连
+    （``万科支\\n行`` → ``万科支行``），只有两个 ASCII 字母之间才补空格
+    （``FLYWIRE\\nPAYMENTS`` → ``FLYWIRE PAYMENTS``）。
+    """
+    text = "" if value is None else str(value)
+    text = text.replace("\r", "").replace("\xa0", " ")
+    parts = text.split("\n")
+    joined = parts[0]
+    for part in parts[1:]:
+        if joined[-1:] in _ASCII_LETTERS and part[:1] in _ASCII_LETTERS:
+            joined += " "
+        joined += part
+    return " ".join(joined.split()).strip()
+
+
+def _pdf_error_kind(error: BaseException | None) -> str:
+    """沿异常链找 pdfminer 的真实原因。
+
+    pdfplumber 把 pdfminer 的异常包成 ``PdfminerException``，``str()`` 是空串；
+    真正的原因在 ``args[0]`` 或 ``__context__`` 里，所以不能靠错误文字判断。
+    """
+    seen: set[int] = set()
+    stack: list[object] = [error]
+    while stack:
+        current = stack.pop()
+        if current is None or id(current) in seen:
+            continue
+        seen.add(id(current))
+        name = type(current).__name__
+        if name == "PDFPasswordIncorrect":
+            return "password"
+        if name == "PDFTextExtractionNotAllowed":
+            return "forbidden"
+        if name == "PDFEncryptionError":
+            return "encrypted"
+        stack.extend(getattr(current, "args", ()))
+        stack.append(getattr(current, "__cause__", None))
+        stack.append(getattr(current, "__context__", None))
+    return "broken"
 
 
 # --------------------------------------------------------------------------
