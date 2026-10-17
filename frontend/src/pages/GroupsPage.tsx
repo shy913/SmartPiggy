@@ -207,8 +207,17 @@ function GroupCard({
           {effective ? formatAmount(group.net_cents!) : "—"}
         </span>
         <span className="text-xs text-muted">{displayCurrency}</span>
-        <span className="text-sm text-muted">{group.member_count} 笔 · {minute(group.first_at)}</span>
-        <Tag>{group.origin === "manual" ? "手动合并" : "自动认出"}</Tag>
+        <span className="text-sm text-muted">
+          {group.member_count} 笔{group.kind === "rollup" ? "合计" : ""} ·{" "}
+          {minute(group.first_at)}
+        </span>
+        <Tag>
+          {group.kind === "rollup"
+            ? "按月汇总"
+            : group.origin === "manual"
+              ? "手动合并"
+              : "自动认出"}
+        </Tag>
       </div>
 
       {effective ? null : (

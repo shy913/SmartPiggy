@@ -786,13 +786,14 @@ def _autodetect_around(connection, conf, moment: str) -> int:
 
     范围只在那一笔前后各一个窗口，不扫全库——手动记一笔不该顺带把整个账本重算一遍。
     """
-    if not conf.merge_enabled or not moment:
+    if not (conf.merge_enabled or conf.merge_rollup) or not moment:
         return 0
     reach = conf.merge_window_hours
     return repo.autodetect(
         connection,
         since=dates.shift(moment, hours=-reach),
         until=dates.shift(moment, hours=reach),
+        aa=conf.merge_enabled,
     )
 
 

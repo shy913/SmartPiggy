@@ -363,7 +363,12 @@ def confirm(connection: sqlite3.Connection, token: str) -> int:
                 connection,
                 since=dates.shift(coverage_start, hours=-reach),
                 until=dates.shift(coverage_end, hours=reach),
+                aa=True,
             )
+        elif conf.merge_rollup:
+            # 只开了利息汇总，或者这份账单没有覆盖区间：AA 需要时间窗，
+            # 收益汇总不需要，单独跑一遍。
+            merged = repo.autodetect(connection, aa=False)
 
         repo.finalize_import(
             connection,

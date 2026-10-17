@@ -304,6 +304,31 @@ describe("交易记录页", () => {
     ).toMatchObject({ target: "group-12" });
   });
 
+  it("按月汇总的收入合并行用收入色，不是支出色", async () => {
+    draw(
+      listBody({
+        total: 1,
+        group_count: 1,
+        rows: [
+          row({
+            id: null,
+            group_id: 12,
+            member_count: 3,
+            direction: "in",
+            display_cents: 300,
+            amount_cents: 300,
+            counterparty: "中欧基金管理有限公司 · 2026-09",
+            description: "余额宝-2026.09.05-收益发放",
+            effective_category: "投资理财",
+          }),
+        ],
+        members: { "12": [member()] },
+      }),
+    );
+    await waitFor(() => expect(screen.getByText("+3.00")).toBeInTheDocument());
+    expect(screen.getByText("+3.00").className).toContain("text-in");
+  });
+
   it("展开合并组：主数是原币金额，换算过的那笔后面再跟一份换算结果", async () => {
     // 组里跨币种（微信代付 + Monzo 刷卡）。主数就是账单上那个数，好跟微信里
     // 那条转账对回去；换过币种的那笔后面跟一份换算到显示币种的数，好跟组头
