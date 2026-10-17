@@ -93,9 +93,16 @@ export function GroupsPage() {
   return (
     <div>
       {backTo ? (
-        <Link className="mb-3 inline-block text-accent underline" to={backTo}>
-          ← {nav?.backLabel ?? "交易记录"}
-        </Link>
+        // 吸在视口顶上：这一页可能很长（一组一张卡片），翻到哪儿都还够得到
+        // 回交易记录。底下垫一层不透明背景，滚过去的卡片不会从字缝里透出来。
+        <div className="sticky top-0 z-10 -mx-4 mb-3 bg-bg/95 px-4 py-2 backdrop-blur">
+          <Link
+            className="inline-flex items-center rounded-md py-1 pr-2 text-accent underline"
+            to={backTo}
+          >
+            ← {nav?.backLabel ?? "交易记录"}
+          </Link>
+        </div>
       ) : null}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold">合并组</h1>

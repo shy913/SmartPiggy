@@ -91,7 +91,13 @@ export function TransactionDetailPage() {
       </Card>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        <Button variant="outline" onClick={() => navigate(`/transactions/${txnId}/edit`)}>
+        <Button
+          variant="outline"
+          onClick={() =>
+            // 把来路带给表单：改完要回的是原来那一屏，锚点才知道往哪儿搬。
+            navigate(`/transactions/${txnId}/edit`, { state: nav })
+          }
+        >
           改一笔
         </Button>
         <Button

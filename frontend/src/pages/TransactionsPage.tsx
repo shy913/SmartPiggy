@@ -51,13 +51,15 @@ export function TransactionsPage() {
   const [error, setError] = useState("");
 
   const query = useMemo(() => Object.fromEntries(params.entries()), [params]);
-  const { data, isPending, error: loadError } = useQuery({
+  const { data, isPending, isFetching, error: loadError } = useQuery({
     queryKey: ["transactions", query],
     queryFn: () => listTransactions(query),
   });
 
-  // 等行渲染出来再恢复滚动位置：页面还矮的时候 scrollTo 会被夹到 0。
-  const flashTarget = useReturnAnchor(!isPending && !!data);
+  // 等**这一屏的数据**到齐再恢复：页面还矮的时候 scrollTo 会被夹到 0；而且刚
+  // 改过一笔时缓存里还是改之前那份，先拿它取锚点，目标行可能还没出现，锚点
+  // 就被白白取走了。`isFetching` 为真期间先不动。
+  const flashTarget = useReturnAnchor(!isPending && !isFetching && !!data);
   const flashed = useFlash(flashTarget);
 
   const refresh = () => client.invalidateQueries({ queryKey: ["transactions"] });

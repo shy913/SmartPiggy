@@ -13,6 +13,7 @@ import type { FormPayload, FormValues } from "../api/types";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { ErrorText, Field, Input } from "../components/ui/bits";
+import { moveAnchor } from "../lib/anchor";
 
 const BLANK: FormValues = {
   occurred_at: "",
@@ -61,8 +62,14 @@ export function TransactionFormPage() {
               : createTransaction(current as unknown as Record<string, string>),
     onSuccess: (body) => {
       client.invalidateQueries();
+      const monthList = `/transactions?start=${body.month}-01&end=`;
+      if (editing) {
+        // 改完要回去的是这一笔现在待的那个月。地址是刚拼出来的，跟离开列表时
+        // 那一屏的地址往往对不上，锚点得跟着搬过去，回去才会定位并亮一下。
+        moveAnchor(returnTo, monthList, `txn-${txnId}`);
+      }
       // 刚记的这笔要是立刻被并进了别个月的组，就跳它现在待的那一个月。
-      navigate(`/transactions?start=${body.month}-01&end=`);
+      navigate(monthList);
     },
     onError: (failure) => {
       if (failure instanceof ApiError) {
@@ -176,7 +183,14 @@ export function TransactionFormPage() {
             </Button>
             <Link
               className="inline-flex h-9 items-center rounded-md px-3 text-sm text-muted hover:text-text"
-              to={editing && data.back_month ? `/transactions?start=${data.back_month}-01&end=` : "/transactions"}
+              // 从列表点进来就回原来那一屏（筛选、limit 都在），锚点也还认得；
+              // 只有直接打开这一页时才退回到这一笔现在待的那个月。
+              to={
+                returnTo ??
+                (editing && data.back_month
+                  ? `/transactions?start=${data.back_month}-01&end=`
+                  : "/transactions")
+              }
             >
               取消
             </Link>
