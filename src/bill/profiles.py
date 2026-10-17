@@ -102,6 +102,9 @@ class Profile:
     in_values: tuple[str, ...] = ("收入",)
     out_values: tuple[str, ...] = ("支出",)
     neutral_values: tuple[str, ...] = ("不计收支", "/", "")
+    # 「收/支」列等于这些值的行，导入时就带上隐藏标记。方向仍按 neutral
+    # 那套判（金额留着、去重照常），只是默认不出现在合计和汇总里。
+    hidden_values: tuple[str, ...] = ()
     id_null_values: frozenset[str] = field(default_factory=frozenset)
     footer_patterns: tuple[str, ...] = ()
     min_columns: int = DEFAULT_MIN_COLUMNS
@@ -255,6 +258,7 @@ def load_profile(path: Path, origin: str = "builtin") -> Profile:
         out_values=_as_tuple(values.get("out")) or ("支出",),
         neutral_values=_as_tuple(values.get("neutral"))
         or ("不计收支", "/", ""),
+        hidden_values=_as_tuple(values.get("hidden")),
         id_null_values=frozenset(_as_tuple(dedup.get("id_null_values")) or ("", "/", "--", "0")),
         footer_patterns=_as_tuple(cleanup.get("footer_patterns")),
         min_columns=int(cleanup.get("min_columns") or DEFAULT_MIN_COLUMNS),

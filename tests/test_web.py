@@ -37,13 +37,15 @@ def test_the_whole_chain_lines_up(client):
     totals = home["overall"][0]
     assert totals["income"] == 1200000
     assert totals["expense"] == 3250
-    assert totals["total"] == 3
-    assert totals["neutral_count"] == 1, "「不计收支」那笔要另有交代，不进合计"
+    assert totals["total"] == 2, "自动隐藏的那笔不进汇总"
+    assert totals["neutral_count"] == 0, "支付宝「不计收支」已经藏起来了，不再单独交代"
 
     # 列表页的条数只有把区间放开才是整本——默认是当月，而夹具在 2026 年 1 月。
+    # 默认「连隐藏一起」看得见那笔，但会标明它是隐藏的。
     listing = txns(client, start="", end="")
     assert listing["total"] == 3
-    assert listing["hint"] == "共 3 条。"
+    assert listing["hidden_total"] == 1
+    assert listing["hint"] == "共 3 条，其中 1 条已隐藏。"
 
     # 详情页上那一笔的数，跟它在汇总里贡献的数是同一个。
     expense = next(row for row in listing["rows"] if row["direction"] == "out")

@@ -152,6 +152,7 @@ export function ImportPreviewPage() {
               <Tag>已存在跳过 {data.counts.duplicate}</Tag>
               <Tag>可能重复 {data.counts.possible}</Tag>
               <Tag>不计收支 {data.counts.neutral}</Tag>
+              {data.counts.hidden ? <Tag>其中隐藏 {data.counts.hidden}</Tag> : null}
               {data.counts.problem ? <Tag tone="out">有问题 {data.counts.problem}</Tag> : null}
             </div>
             <Hint>
@@ -213,6 +214,7 @@ export function ImportPreviewPage() {
                       <TD>
                         {row.duplicate ? <Tag>已存在</Tag> : null}
                         {row.possible_duplicate ? <Tag>可能重复</Tag> : null}
+                        {row.status === "hidden" ? <Tag>已隐藏</Tag> : null}
                         {row.status === "neutral" ? <Tag>不计收支</Tag> : null}
                       </TD>
                     </TR>

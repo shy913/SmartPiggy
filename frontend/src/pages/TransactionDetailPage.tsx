@@ -8,6 +8,7 @@ import { Card, Section } from "../components/ui/card";
 import { ErrorText, Tag } from "../components/ui/bits";
 import { Table, TableScroll, TBody, TD, TH, TR } from "../components/ui/table";
 import { formatAmount, minute } from "../lib/format";
+import { type BackState, useBack } from "../lib/useBack";
 
 /** 空值留个破折号：一片空白分不清「没有」和「没查出来」。 */
 function show(value: unknown): string {
@@ -15,15 +16,13 @@ function show(value: unknown): string {
   return text === "" ? "—" : text;
 }
 
-/** 列表点过来时把原地址和「从哪儿来」一并带上，返回才能回到原来那一屏。 */
-type BackState = { from?: string; backLabel?: string } | null;
-
 export function TransactionDetailPage() {
   const { id } = useParams();
   const txnId = Number(id);
   const navigate = useNavigate();
   const location = useLocation();
   const nav = location.state as BackState;
+  const goBack = useBack();
   const client = useQueryClient();
 
   const { data, isPending, error } = useQuery({
@@ -40,7 +39,9 @@ export function TransactionDetailPage() {
     onSuccess: (_result, action) => {
       client.invalidateQueries();
       // 删完仍回到原来那个列表，筛选不丢；行没了，位置恢复会自然落空。
-      if (action === "delete") navigate(nav?.from ?? "/transactions");
+      if (action === "delete") {
+        goBack(nav?.from ?? "/transactions", { state: nav?.up });
+      }
     },
   });
 
@@ -53,6 +54,8 @@ export function TransactionDetailPage() {
           <BackPill
             to={nav?.from ?? "/transactions"}
             label={nav?.backLabel ?? "交易记录"}
+            back
+            state={nav?.up}
           />
         </div>
       </div>
@@ -70,6 +73,8 @@ export function TransactionDetailPage() {
       <BackLink
         to={nav?.from ?? `/transactions?start=${data.back_month}-01&end=`}
         label={nav?.backLabel ?? "交易记录"}
+        back
+        state={nav?.up}
       />
 
       <h1 className="mb-4 text-xl font-semibold">这一笔</h1>

@@ -222,6 +222,43 @@ MIGRATIONS: list[list[str]] = [
         )
         """,
     ],
+    [
+        # v6：支付宝的「不计收支」导入后直接是隐藏状态，不再只是中性。
+        #
+        # 隐藏不改变任何原始数据：金额、币种、方向、去重键、内容指纹都没动，
+        # 只是这一行默认不进合计（中性本来也不进），并且默认视图里灰着。
+        # 方向仍是 neutral——按月收益汇总靠它取数，改成别的会让余额宝收益
+        # 那几百笔从月度收入里悄悄消失。
+        #
+        # auto_hidden 把「账单配置自动藏的」和「用户手点的」分开：收益汇总
+        # 要把自动隐藏的余额宝收益照常合进来，但手动藏掉的一笔不能被下次扫描
+        # 又悄悄合回去（见 tests/test_rollup.py）。
+        "ALTER TABLE transactions ADD COLUMN auto_hidden INTEGER NOT NULL DEFAULT 0",
+        # v1 的视图同样在 `t.*` 里展开了当时的列清单，新列要重建一次才看得见。
+        "DROP VIEW tx_signed",
+        """
+        CREATE VIEW tx_signed AS
+        SELECT t.*,
+               CASE t.direction
+                 WHEN 'out' THEN -t.amount_cents
+                 WHEN 'in'  THEN  t.amount_cents
+                 ELSE 0
+               END AS signed_cents
+        FROM transactions t
+        """,
+        # 只补已经入库的历史数据。新导入的行由支付宝配置里的
+        # [values].hidden 在解析时标记，规则只写在一处（profile），不散在代码里。
+        #
+        # json_valid 兜一下：raw_json 一直是本程序写的合法 JSON，但这条迁移
+        # 失败会让服务起不来，不值得赌。
+        """
+        UPDATE transactions SET hidden = 1, auto_hidden = 1
+        WHERE profile_name = 'alipay'
+          AND direction = 'neutral'
+          AND json_valid(raw_json)
+          AND json_extract(raw_json, '$."收/支"') = '不计收支'
+        """,
+    ],
 ]
 
 

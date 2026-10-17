@@ -142,6 +142,7 @@ def parse(
             currency=profile.currency_code(_raw(row, indexes, "currency")),
             profile_name=profile.name,
             account_id=account_id,
+            hidden=_hidden_by_config(row, indexes, profile),
             raw={name: value for name, value in zip(grid.header, row)},
         )
 
@@ -250,6 +251,23 @@ def _neutralized(
         return Direction.NEUTRAL
 
     return direction
+
+
+def _hidden_by_config(
+    row: list[str], indexes: dict[str, int], profile: Profile
+) -> bool:
+    """「收/支」列原文命中配置里的 hidden 值，就按隐藏处理。
+
+    只认方向列的原文，不看改判之后的方向：隐藏说的是「账单上这一类」，
+    比如支付宝的「不计收支」。它跟中性不是一回事——中性说的是算不算钱，
+    隐藏说的是要不要在默认视图里露脸。
+    """
+    values = {
+        _normalize_value(item) for item in profile.hidden_values if item.strip()
+    }
+    if not values:
+        return False
+    return _normalize_value(_raw(row, indexes, "direction")) in values
 
 
 def _direction_from_text(text: str, profile: Profile) -> Direction | None:

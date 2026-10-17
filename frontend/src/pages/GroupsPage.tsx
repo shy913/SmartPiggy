@@ -19,12 +19,13 @@ import { anchorKey, saveAnchor } from "../lib/anchor";
 import { formatAmount, minute } from "../lib/format";
 import { useFlash } from "../lib/useFlash";
 import { useReturnAnchor } from "../lib/useReturnAnchor";
+import type { BackState } from "../lib/useBack";
 import { cn } from "../lib/utils";
 
 export function GroupsPage() {
   const [params] = useSearchParams();
   const location = useLocation();
-  const nav = location.state as { from?: string; backLabel?: string } | null;
+  const nav = location.state as BackState;
   const created = params.get("created");
   // 交易记录页点「管理」带过来的组：落到那一张卡片上。
   const focusGroup = Number(params.get("group")) || null;
@@ -93,7 +94,14 @@ export function GroupsPage() {
 
   return (
     <div>
-      {backTo ? <BackLink to={backTo} label={nav?.backLabel ?? "交易记录"} /> : null}
+      {backTo ? (
+        <BackLink
+          to={backTo}
+          label={nav?.backLabel ?? "交易记录"}
+          back={!nav?.noHistoryBack}
+          state={nav?.up}
+        />
+      ) : null}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold">合并组</h1>
         <Button
@@ -181,6 +189,7 @@ function GroupCard({
   onSaved: () => void;
 }) {
   const location = useLocation();
+  const nav = location.state as BackState;
   const [title, setTitle] = useState(group.title);
   const [category, setCategory] = useState(group.category);
   const [note, setNote] = useState(group.note);
@@ -256,7 +265,11 @@ function GroupCard({
               <Link
                 className="text-accent underline"
                 to={`/transactions/${member.id}`}
-                state={{ from: `${location.pathname}${location.search}`, backLabel: "合并组" }}
+                state={{
+                  from: `${location.pathname}${location.search}`,
+                  backLabel: "合并组",
+                  up: nav,
+                }}
                 onClick={() =>
                   saveAnchor(anchorKey(location.pathname, location.search), `member-${member.id}`)
                 }
