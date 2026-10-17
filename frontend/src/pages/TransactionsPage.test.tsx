@@ -110,6 +110,15 @@ afterEach(() => {
 });
 
 describe("交易记录页", () => {
+  it("页头有「记一笔」的入口", async () => {
+    draw(listBody());
+    await waitFor(() => expect(screen.getByText("共 0 条。")).toBeInTheDocument());
+    expect(screen.getByRole("link", { name: "记一笔" })).toHaveAttribute(
+      "href",
+      "/transactions/new",
+    );
+  });
+
   it("页头那行字直接用服务端给的，不自己拼", async () => {
     draw(listBody({ total: 12, hidden_total: 3, hint: "共 12 条，其中 3 条已隐藏。" }));
     await waitFor(() =>

@@ -12,7 +12,7 @@ import {
 } from "../api/client";
 import type { MemberRow, TransactionRow } from "../api/types";
 import { MemberAmount } from "../components/MemberAmount";
-import { Button } from "../components/ui/button";
+import { Button, buttonStyles } from "../components/ui/button";
 import { ErrorText, Field, Hint, Input, Tag } from "../components/ui/bits";
 import { NumTD, NumTH, Table, TableScroll, TBody, TD, TH, THead, TR } from "../components/ui/table";
 import { anchorKey, saveAnchor } from "../lib/anchor";
@@ -129,7 +129,17 @@ export function TransactionsPage() {
 
   return (
     <div>
-      <h1 className="mb-4 text-xl font-semibold">交易记录</h1>
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <h1 className="text-xl font-semibold">交易记录</h1>
+        {/* 带上当前列表地址：取消回来时筛选条件还在原位。 */}
+        <Link
+          className={cn(buttonStyles(), "ml-auto")}
+          to="/transactions/new"
+          state={{ from: `${location.pathname}${location.search}`, backLabel: "交易记录" }}
+        >
+          记一笔
+        </Link>
+      </div>
       <FilterBar
         filters={data.filters}
         accounts={data.accounts}
