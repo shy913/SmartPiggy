@@ -1,474 +1,939 @@
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Fragment, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode, type TouchEvent } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
-import { getSummary } from "../api/client";
-import type { LedgerRow, Summary, TotalsRow } from "../api/types";
-import { CategoryChart, MonthlyChart } from "../components/charts";
-import { RangePicker } from "../components/RangePicker";
-import { Card, Section } from "../components/ui/card";
+import { getDashboard, getSummary } from "../api/client";
+import type {
+  AccountOverview,
+  Dashboard,
+  DashboardCategory,
+  LedgerRow,
+  Summary,
+} from "../api/types";
+import { CategoryMark } from "../components/CategoryMark";
+import {
+  AccountExpensePie,
+  CategoryPie,
+  Sparkline,
+  SpendTrendChart,
+  trendLabel,
+} from "../components/charts";
+import { Card } from "../components/ui/card";
 import { useMeta } from "../App";
-import { Empty, ErrorText, Hint, Tag } from "../components/ui/bits";
-import { NumTD, NumTH, Table, TableScroll, TBody, TD, TH, THead, TR } from "../components/ui/table";
-import { day, formatAmount } from "../lib/format";
+import { Button } from "../components/ui/button";
+import { Empty, ErrorText, Hint } from "../components/ui/bits";
+import { day, formatAmount, formatSigned } from "../lib/format";
+import { cn } from "../lib/utils";
 
-/** 排行每个币种列多少条。后端也是 20，两边对不上就会出现「写着 20 条、画了 18 行」。 */
-const RANKING_PER_CURRENCY = 20;
+/** 排行先露几条，点「更多」之后展开到几条。 */
+const TOP_ROWS = 5;
+const MORE_ROWS = 20;
 
 export function SummaryPage() {
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   // 把地址栏原样交给接口：区间就是地址栏，刷新和分享都还原得出来。
-  const query = Object.fromEntries(params.entries());
+  const query = useMemo(() => Object.fromEntries(params.entries()), [params]);
 
-  const { data, isPending, error } = useQuery({
+  const overview = useQuery({
+    queryKey: ["dashboard", query],
+    queryFn: () => getDashboard(query),
+  });
+  // 账户和那几笔大额还从汇总接口取：它们不属于某一个「区间数字」，而是这一页
+  // 下面两块清单的原料。
+  const summary = useQuery({
     queryKey: ["summary", query],
     queryFn: () => getSummary(query),
   });
 
-  if (isPending) return <p className="text-muted">正在读取账本…</p>;
-  if (error) return <ErrorText>{error.message}</ErrorText>;
-  if (!data) return null;
+  if (overview.isPending) return <p className="text-muted">正在读取账本…</p>;
+  if (overview.error) return <ErrorText>{overview.error.message}</ErrorText>;
+  if (!overview.data) return null;
+
+  if (!overview.data.has_data) {
+    return (
+      <div>
+        {summary.data ? <StaleImports accounts={summary.data.accounts} /> : null}
+        <Empty>
+          还没有数据。
+          <Link className="ml-1 text-accent underline" to="/import">
+            导入账单 →
+          </Link>
+        </Empty>
+      </div>
+    );
+  }
 
   return (
     <div>
-      <h1 className="mb-4 text-xl font-semibold">汇总</h1>
-      <RangePicker range={data.range} />
-
-      {data.overall.length === 0 ? (
-        <EmptyState summary={data} />
-      ) : (
-        <>
-          <Totals summary={data} />
-          <Charts summary={data} />
-          <Months summary={data} />
-          <Categories summary={data} />
-          <RankingAndLarge summary={data} />
-        </>
-      )}
+      {/* 提醒放在区间之外：账户多久没导入跟这个区间里有没有记录无关。 */}
+      {summary.data ? <StaleImports accounts={summary.data.accounts} /> : null}
+      <DashboardView
+        data={overview.data}
+        summary={summary.data}
+        params={params}
+        setParams={setParams}
+      />
     </div>
   );
 }
 
 /**
- * 两种「空」要分得开。
+ * 久未导入提醒。
  *
- * 账本里一笔都没有，和账本里有账、只是不在这个区间里，是两件事。共用一句
- * 「还没有数据 + 导入账单」会把人送去导入页，而问题其实在区间上——
- * 最可能的情况是他刚把年份改成了一个没有记录的年份。
+ * 只用一句灰字加一个链接：这是「该做的一件事」，不是错误，不该用红色警报
+ * 把整页压住。没有任何账户超期时整块不出现。
  */
-function EmptyState({ summary }: { summary: Summary }) {
-  if (!summary.has_data) {
-    return (
-      <Empty>
-        还没有数据。
-        <Link className="ml-1 text-accent underline" to="/import">
-          导入账单 →
-        </Link>
-      </Empty>
-    );
-  }
-  return <Empty>这个区间里没有记录。</Empty>;
-}
-
-function Totals({ summary }: { summary: Summary }) {
-  return (
-    <Section title="总计">
-      {summary.overall.map((totals) => (
-        <CurrencyBlock key={totals.display_currency} summary={summary} currency={totals.display_currency}>
-          <TotalsGrid totals={totals} />
-        </CurrencyBlock>
-      ))}
-      <NeutralHint summary={summary} />
-      <LargeHint summary={summary} />
-    </Section>
+function StaleImports({ accounts }: { accounts: AccountOverview[] }) {
+  const stale = accounts.filter((account) => account.stale);
+  if (!stale.length) return null;
+  const parts = stale.map((account) =>
+    account.never_imported
+      ? `${account.name} 从未导入`
+      : `${account.name} 已 ${account.days_since_import} 天没导入`,
   );
-}
-
-/**
- * 大额也只在这里交代一句：不在合计里，但钱确实花出去了。
- *
- * 不说的话，上面那排数看着就是「这个区间的全部」——而它少了一截，少了多少
- * 又只能自己翻到页面底部去对。跟中性那行一样，是一句**解释口径**的话，
- * 不是实现说明。
- */
-function LargeHint({ summary }: { summary: Summary }) {
-  const count = summary.overall.reduce((sum, row) => sum + row.large_count, 0);
-  if (!count) return null;
-  const income = summary.overall.reduce((sum, row) => sum + row.large_income, 0);
-  const expense = summary.overall.reduce((sum, row) => sum + row.large_expense, 0);
-  const parts = [
-    income ? `收入 ${formatAmount(income)}` : "",
-    expense ? `支出 ${formatAmount(expense)}` : "",
-  ].filter(Boolean);
   return (
-    <Hint>
-      另有 {count} 笔大额未计入合计{parts.length ? `（${parts.join("、")}）` : ""}，
-      <a className="text-accent underline" href="#large">
-        列在下面 →
-      </a>
-    </Hint>
-  );
-}
-
-function TotalsGrid({ totals }: { totals: TotalsRow }) {
-  const stats = [
-    { label: "收入", value: formatAmount(totals.income), tone: "text-in" },
-    { label: "支出", value: formatAmount(totals.expense), tone: "text-out" },
-    {
-      label: "结余",
-      value: formatAmount(totals.income - totals.expense),
-      tone: "text-text",
-    },
-    { label: "记录条数", value: String(totals.total), tone: "text-muted" },
-  ];
-  return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-      {stats.map((stat) => (
-        <Card key={stat.label} className="p-3">
-          <div className={`tabular text-lg ${stat.tone}`}>{stat.value}</div>
-          <div className="text-xs text-muted">{stat.label}</div>
-        </Card>
-      ))}
-    </div>
-  );
-}
-
-/**
- * 中性行只留一行灰字。
- *
- * 它们不是收支，摆成一排数或者一张表，读起来都像「有一块账没算进去」——
- * 真正的情况是那一块本来就不该进来。要逐笔看就去交易记录页按「中性」筛。
- */
-function NeutralHint({ summary }: { summary: Summary }) {
-  const count = summary.overall.reduce((sum, row) => sum + row.neutral_count, 0);
-  if (!count) return null;
-  return (
-    <Hint>
-      另有 {count} 笔中性记录未计入合计，
-      <Link
-        className="text-accent underline"
-        to={`/transactions?direction=neutral&start=${summary.range.start}&end=${summary.range.end}`}
-      >
-        逐笔看 →
+    <Hint className="mt-0 mb-4">
+      {parts.join("，")}。
+      <Link className="ml-1 text-accent underline" to="/import">
+        去导入 →
       </Link>
     </Hint>
   );
 }
 
-/** 多币种时给每个币种起一个小标题。没配汇率的币种各成一组，绝不加成一条。 */
-function CurrencyBlock({
-  summary,
-  currency,
-  children,
-}: {
-  summary: Summary;
-  currency: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="mb-4">
-      {summary.multi_currency ? (
-        <h3 className="mb-2 text-sm font-medium text-muted">{currency}</h3>
-      ) : null}
-      {children}
-    </div>
-  );
-}
-
 /**
- * 图按币种分开画。
+ * 首页dashboard。
  *
- * 把英镑和人民币画进同一组柱子，等于换个方式把它们相加——那正是这一页处处
- * 在避免的错。月份表是倒序的（最近的在上面），画时间轴要正过来。
+ * 区间切换是这一页的主要动作，所以它摆在最上面、左右各一个按钮；手机上还可以
+ * 直接在卡片上滑——横向滑动**不会**让页面左右滚，`touch-action: pan-y` 把
+ * 横向手势留给了这一页。
  */
-function Charts({ summary }: { summary: Summary }) {
+function DashboardView({
+  data,
+  summary,
+  params,
+  setParams,
+}: {
+  data: Dashboard;
+  summary?: Summary;
+  params: URLSearchParams;
+  setParams: (next: URLSearchParams) => void;
+}) {
+  const [chartKind, setChartKind] = useState<"bar" | "line">("bar");
+  const touch = useRef<{ x: number; y: number } | null>(null);
   const meta = useMeta();
+  const location = useLocation();
+  const back = `${location.pathname}${location.search}`;
+  const range = data.range;
+  const navigable = range.mode === "month" || range.mode === "year";
   const theme = meta.data?.theme ?? "dark";
 
-  const groups = summary.currencies
-    .map((currency) => ({
-      currency,
-      months: summary.months
-        .filter((row) => row.display_currency === currency)
-        .slice()
-        .sort((left, right) => left.month.localeCompare(right.month)),
-      categories: summary.categories.filter((row) => row.display_currency === currency),
-    }))
-    .filter((group) => group.months.length || group.categories.length);
+  const apply = (changes: Record<string, string | null>) => {
+    const next = new URLSearchParams(params);
+    for (const [key, value] of Object.entries(changes)) {
+      if (value === null) next.delete(key);
+      else next.set(key, value);
+    }
+    setParams(next);
+  };
 
-  if (!groups.length) return null;
+  const move = (step: -1 | 1) => {
+    if (range.mode === "month") {
+      const [year, month] = range.month.split("-").map(Number);
+      const index = year * 12 + (month - 1) + step;
+      const nextYear = Math.floor(index / 12);
+      const nextMonth = (index % 12) + 1;
+      const target = `${nextYear}-${String(nextMonth).padStart(2, "0")}`;
+      // 翻回本月时落回「1 号到今天」——跟打开首页时一样。显式传 month 会拿到
+      // 整月，多出来的那几天只是还没发生。
+      apply({
+        range: "month",
+        month: target === data.today.slice(0, 7) ? null : target,
+        year: String(nextYear),
+      });
+      return;
+    }
+    if (range.mode === "year") {
+      const year = Number(range.year) + step;
+      apply({ range: "year", year: String(year), month: `${year}-${range.month.slice(5)}` });
+    }
+  };
+
+  const switchMode = (mode: "month" | "year") => {
+    if (mode === "month") {
+      apply({
+        range: "month",
+        month: range.mode === "year" ? `${range.year}-${range.month.slice(5)}` : range.month,
+      });
+    } else {
+      const year = range.mode === "month" ? range.month.slice(0, 4) : range.year;
+      apply({ range: "year", year });
+    }
+  };
+
+  const toCurrent = () => {
+    if (range.mode === "year") {
+      apply({ range: "year", year: data.today.slice(0, 4) });
+    } else {
+      // 不传 month = 「当月 1 号到今天」，跟打开首页时一样。
+      apply({ range: "month", month: null });
+    }
+  };
+
+  const changeCurrency = (code: string) => apply({ currency: code });
+
+  const onTouchStart = (event: TouchEvent) => {
+    const first = event.touches[0];
+    touch.current = { x: first.clientX, y: first.clientY };
+  };
+
+  const onTouchEnd = (event: TouchEvent) => {
+    const start = touch.current;
+    touch.current = null;
+    if (!start || !navigable) return;
+    const last = event.changedTouches[0];
+    const dx = last.clientX - start.x;
+    const dy = last.clientY - start.y;
+    // 斜着划不算：纵向滚动时手指总会带一点横向位移。
+    if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    if (dx < 0 && range.can_next) move(1);
+    if (dx > 0) move(-1);
+  };
+
+  const currentMonth = data.today.slice(0, 7);
+  const currentYear = data.today.slice(0, 4);
+  const atCurrent =
+    range.mode === "month"
+      ? range.month === currentMonth
+      : range.mode === "year"
+        ? range.year === currentYear
+        : false;
 
   return (
-    <Section title="图表">
-      {groups.map((group) => (
-        <div key={group.currency} className="mb-6">
-          {summary.multi_currency ? (
-            <h3 className="mb-2 text-sm font-medium text-muted">{group.currency}</h3>
-          ) : null}
-          <Card className="mb-4">
-            <h4 className="mb-2 text-sm font-medium">
-              每月收支 <span className="text-muted">{group.currency}</span>
-            </h4>
-            <MonthlyChart rows={group.months} currency={group.currency} theme={theme} />
-          </Card>
-          <Card>
-            <h4 className="mb-2 text-sm font-medium">
-              支出构成 <span className="text-muted">按分类 · {group.currency}</span>
-            </h4>
-            <CategoryChart rows={group.categories} theme={theme} />
-          </Card>
-        </div>
-      ))}
-    </Section>
-  );
-}
-
-function Months({ summary }: { summary: Summary }) {
-  if (!summary.months.length) return null;
-  return (
-    <Section title="按月">
-      <TableScroll>
-        <Table>
-          <THead>
-            <TR>
-              <TH>月份</TH>
-              {summary.multi_currency ? <TH>币种</TH> : null}
-              <NumTH>收入</NumTH>
-              <NumTH>支出</NumTH>
-              <NumTH>结余</NumTH>
-              <NumTH>总条数</NumTH>
-            </TR>
-          </THead>
-          <TBody>
-            {summary.months.map((row) => (
-              <TR key={`${row.month}-${row.display_currency}`}>
-                <TD>
-                  {/* 列表页默认只看当月，这里点过去要的是那一整月，所以把月份摊成起止日期。 */}
-                  <Link
-                    className="text-accent underline"
-                    to={`/transactions?start=${row.month}-01&end=${endOfMonth(row.month)}`}
-                  >
-                    {row.month}
-                  </Link>
-                </TD>
-                {summary.multi_currency ? <TD className="text-muted">{row.display_currency}</TD> : null}
-                <NumTD className="text-in">{formatAmount(row.income)}</NumTD>
-                <NumTD className="text-out">{formatAmount(row.expense)}</NumTD>
-                <NumTD>{formatAmount(row.income - row.expense)}</NumTD>
-                <NumTD className="text-muted">{row.total}</NumTD>
-              </TR>
+    <div onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} style={{ touchAction: "pan-y" }}>
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <h1 className="text-xl font-semibold">汇总</h1>
+        {data.multi_currency ? (
+          <div className="ml-auto flex flex-wrap items-center gap-1">
+            {data.currencies.map((code) => (
+              <Button
+                key={code}
+                type="button"
+                size="sm"
+                variant={code === data.currency ? "default" : "outline"}
+                onClick={() => changeCurrency(code)}
+              >
+                {code}
+              </Button>
             ))}
-          </TBody>
-        </Table>
-      </TableScroll>
-    </Section>
-  );
-}
-
-function Categories({ summary }: { summary: Summary }) {
-  // 占比的分母是**同一个币种**的支出合计。跨币种凑一个分母等于把两种钱加起来，
-  // 那是这一页处处在避免的事。
-  const totals = new Map<string, number>();
-  for (const row of summary.categories) {
-    totals.set(row.display_currency, (totals.get(row.display_currency) ?? 0) + row.expense);
-  }
-
-  return (
-    <Section title="按分类">
-      {summary.categories.length ? (
-        <TableScroll>
-          <Table>
-            <THead>
-              <TR>
-                <TH>分类</TH>
-                {summary.multi_currency ? <TH>币种</TH> : null}
-                <NumTH>支出</NumTH>
-                <NumTH>占比</NumTH>
-                <NumTH>收入</NumTH>
-                <NumTH>条数</NumTH>
-              </TR>
-            </THead>
-            <TBody>
-              {summary.categories.map((row) => {
-                const total = totals.get(row.display_currency) ?? 0;
-                return (
-                  <TR key={`${row.category}-${row.display_currency}`}>
-                    <TD>{row.category}</TD>
-                    {summary.multi_currency ? <TD className="text-muted">{row.display_currency}</TD> : null}
-                    <NumTD className="text-out">{formatAmount(row.expense)}</NumTD>
-                    <NumTD className="text-muted">
-                      {total ? `${Math.round((row.expense / total) * 100)}%` : "—"}
-                    </NumTD>
-                    <NumTD className="text-in">{formatAmount(row.income)}</NumTD>
-                    <NumTD className="text-muted">{row.total}</NumTD>
-                  </TR>
-                );
-              })}
-            </TBody>
-          </Table>
-        </TableScroll>
-      ) : (
-        <Empty>还没有数据。</Empty>
-      )}
-    </Section>
-  );
-}
-
-/**
- * 开销排行与大额并排两栏。
- *
- * 它们是同一件事的两半：左边是「计入合计的支出里最大的那些」，右边是「没计入
- * 合计的那些」。所以排行**排除大额**——不排除的话同一笔会在两栏各出现一次，
- * 而且排行的名次会跟上方的「支出」合计对不上账（合计剔了大额，排行没剔）。
- *
- * 窄屏堆成一列（700px 那个断点跟旧界面一致）。
- */
-function RankingAndLarge({ summary }: { summary: Summary }) {
-  return (
-    <Section title="开销排行与大额">
-      <div className="grid gap-6 min-[700px]:grid-cols-2">
-        <div>
-          <h3 className="mb-2 text-base font-semibold">开销排行</h3>
-          <Ranking summary={summary} />
-        </div>
-        <div id="large">
-          <h3 className="mb-2 text-base font-semibold">
-            不计入合计的大额{summary.large.length ? `（${summary.large.length} 笔）` : ""}
-          </h3>
-          <Large summary={summary} />
-        </div>
+          </div>
+        ) : (
+          <span className="ml-auto rounded-full border border-border px-2 py-0.5 text-xs text-muted">
+            {data.currency}
+          </span>
+        )}
       </div>
-    </Section>
-  );
-}
 
-function Ranking({ summary }: { summary: Summary }) {
-  if (!summary.ranking.length) return <Empty>这个区间里没有支出。</Empty>;
-  return (
-    <>
-      {groupBy(summary.ranking).map(([currency, rows]) => (
-        <Fragment key={currency}>
-          <LedgerTable summary={summary} currency={currency} rows={rows} tone="out" />
-          <RankingTail
-            shown={rows.length}
-            total={summary.ranking_counts[currency] ?? rows.length}
+      <Card className="relative mb-4 overflow-hidden">
+        {/* 日期栏自己的背景：这一段区间的支出走势。只铺在日期那一带、向下渐隐，
+            不填空也不画均值线——它是上下文，不是第二张要读的图。 */}
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-24 opacity-60 [mask-image:linear-gradient(to_bottom,black_45%,transparent)]">
+          <Sparkline
+            points={data.trend.points}
+            series="expense"
+            average={0}
+            theme={theme}
+            area={false}
+            dashed={false}
           />
-        </Fragment>
-      ))}
-    </>
-  );
-}
+        </div>
+        <div className="relative flex items-center justify-between gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-10 w-10 rounded-full"
+            disabled={!navigable}
+            onClick={() => move(-1)}
+            aria-label="上一个区间"
+          >
+            <ChevronLeft size={18} />
+          </Button>
+          <div className="min-w-0 text-center">
+            <div className="truncate text-2xl font-semibold">{periodTitle(data)}</div>
+            <div className="text-xs text-muted">{periodSubtitle(data)}</div>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-10 w-10 rounded-full"
+            disabled={!navigable || !range.can_next}
+            onClick={() => move(1)}
+            aria-label="下一个区间"
+          >
+            <ChevronRight size={18} />
+          </Button>
+        </div>
 
-/** 「另有 N 笔」——N 是**总数**减掉列出来的那些，总数由服务端给，不在前端猜。 */
-function RankingTail({ shown, total }: { shown: number; total: number }) {
-  const rest = total - shown;
-  if (rest <= 0) return null;
-  return (
-    <p className="mt-2 text-xs text-muted">
-      另有 {rest} 笔未列出（每币种只列前 {RANKING_PER_CURRENCY} 条）。
-    </p>
-  );
-}
-
-function Large({ summary }: { summary: Summary }) {
-  if (!summary.large.length) return <Empty>这个区间里没有大额。</Empty>;
-  return (
-    <>
-      {groupBy(summary.large).map(([currency, rows]) => (
-        <LedgerTable key={currency} summary={summary} currency={currency} rows={rows} />
-      ))}
-    </>
-  );
-}
-
-/** 合并后的账本里的一行：日期、金额、对方 / 说明。 */
-function LedgerTable({
-  summary,
-  currency,
-  rows,
-  tone,
-}: {
-  summary: Summary;
-  currency: string;
-  rows: LedgerRow[];
-  tone?: "out";
-}) {
-  return (
-    <div className={summary.multi_currency ? "mb-4" : ""}>
-      {summary.multi_currency && rows.length ? (
-        <h4 className="mb-1 text-xs font-medium text-muted">{currency}</h4>
-      ) : null}
-      <TableScroll>
-        <Table>
-          <THead>
-            <TR>
-              <TH>日期</TH>
-              <NumTH>金额（{currency}）</NumTH>
-              <TH>对方 / 说明</TH>
-            </TR>
-          </THead>
-          <TBody>
-            {rows.map((row) => (
-              <TR key={`${row.id ?? "g"}-${row.group_id ?? 0}-${row.occurred_at}`}>
-                <TD className="whitespace-nowrap text-muted">{day(row.occurred_at)}</TD>
-                <NumTD className={tone === "out" ? "text-out" : "text-text"}>
-                  {formatAmount(row.display_signed_cents)}
-                </NumTD>
-                <TD>
-                  <LedgerLabel row={row} />
-                </TD>
-              </TR>
+        {/* 「按月 / 按年」是区间粒度，「回到本月」是一次跳转。两件事不做成
+            并排的三个按钮：那会让「本月」看起来也是一种粒度。 */}
+        <div className="relative mt-3 flex flex-wrap items-center justify-center gap-3">
+          <div className="flex items-center rounded-md border border-border p-0.5 text-xs">
+            {(
+              [
+                ["month", "按月"],
+                ["year", "按年"],
+              ] as const
+            ).map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                className={cn(
+                  "rounded px-2.5 py-1 transition-colors",
+                  range.mode === mode
+                    ? "bg-panel-hover text-text"
+                    : "text-muted hover:text-text",
+                )}
+                onClick={() => switchMode(mode)}
+              >
+                {label}
+              </button>
             ))}
-          </TBody>
-        </Table>
-      </TableScroll>
+          </div>
+          {!atCurrent ? (
+            <button
+              type="button"
+              className="border-l border-border pl-3 text-xs text-accent underline"
+              onClick={toCurrent}
+            >
+              回到{range.mode === "year" ? "今年" : "本月"}
+            </button>
+          ) : null}
+        </div>
+      </Card>
+
+      {/* 账本里有账、只是这个区间里一笔都没有。跟「还没有数据」是两件事，
+          共用一句话会把人送去导入页，而问题其实在区间上。 */}
+      {data.stats.total === 0 ? <Hint>这个区间里没有记录。</Hint> : null}
+
+      <Kpis data={data} back={back} theme={theme} />
+
+      <ExclusionHints data={data} back={back} />
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <Forecast data={data} />
+        <Card>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-base font-semibold">支出趋势</h2>
+            <div className="flex items-center rounded-md border border-border p-0.5 text-xs">
+              {(["bar", "line"] as const).map((kind) => (
+                <button
+                  key={kind}
+                  type="button"
+                  className={cn(
+                    "rounded px-2.5 py-1 transition-colors",
+                    chartKind === kind ? "bg-panel-hover text-text" : "text-muted hover:text-text",
+                  )}
+                  onClick={() => setChartKind(kind)}
+                >
+                  {kind === "bar" ? "柱状" : "折线"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <SpendTrendChart
+            points={data.trend.points}
+            bucket={data.trend.bucket}
+            currency={data.currency}
+            theme={theme}
+            kind={chartKind}
+          />
+          <p className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
+            <span>合计支出 {formatAmount(data.trend.total)}</span>
+            {data.trend.peak ? (
+              <span>
+                最高 {trendLabel(data.trend.peak.key, data.trend.bucket)}{" "}
+                {formatAmount(data.trend.peak.expense)}
+              </span>
+            ) : null}
+            <span>
+              {data.trend.bucket === "day" ? "日均" : "月均"} {formatAmount(data.trend.average)}
+            </span>
+          </p>
+        </Card>
+      </div>
+
+      <Ranking data={data} back={back} theme={theme} />
+
+      <Insights data={data} summary={summary} back={back} theme={theme} />
+    </div>
+  );
+}
+
+function periodTitle(data: Dashboard): string {
+  const range = data.range;
+  if (range.mode === "month") {
+    const [year, month] = range.month.split("-");
+    return `${year}年${Number(month)}月`;
+  }
+  if (range.mode === "year") return `${range.year}年`;
+  return range.label;
+}
+
+function periodSubtitle(data: Dashboard): string {
+  const range = data.range;
+  if (!range.partial) return "";
+  if (range.mode === "month") {
+    return `${Number(range.start.slice(8))}日–${Number(range.end.slice(8))}日`;
+  }
+  if (range.mode === "year") {
+    return `${Number(range.start.slice(5, 7))}月${Number(range.start.slice(8))}日–${Number(range.end.slice(5, 7))}月${Number(range.end.slice(8))}日`;
+  }
+  return "";
+}
+
+function Kpis({
+  data,
+  back,
+  theme,
+}: {
+  data: Dashboard;
+  back: string;
+  theme: string;
+}) {
+  const stats = data.stats;
+  const filtered = (direction: "in" | "out") => {
+    const query = new URLSearchParams({
+      start: data.range.start,
+      end: data.range.end,
+      direction,
+    });
+    return `/transactions?${query.toString()}`;
+  };
+
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <MetricCard
+        label="支出"
+        value={stats.expense}
+        tone="text-out"
+        href={filtered("out")}
+        back={back}
+        spark={
+          <Sparkline
+            points={data.trend.points}
+            series="expense"
+            average={data.trend.average}
+            theme={theme}
+          />
+        }
+      >
+        <Delta data={data} />
+      </MetricCard>
+      <MetricCard
+        label="收入"
+        value={stats.income}
+        tone="text-in"
+        href={filtered("in")}
+        back={back}
+        spark={
+          <Sparkline
+            points={data.trend.points}
+            series="income"
+            average={data.trend.income_average}
+            theme={theme}
+          />
+        }
+      />
+      <MetricCard
+        label="结余"
+        value={stats.net}
+        tone={stats.net < 0 ? "text-out" : "text-text"}
+      />
+      <MetricCard
+        label="日均支出"
+        value={stats.daily_average}
+        tone="text-text"
+        spark={
+          <Sparkline
+            points={data.trend.points}
+            average={data.trend.average}
+            theme={theme}
+          />
+        }
+      >
+        已过 {stats.elapsed_days} 天
+      </MetricCard>
     </div>
   );
 }
 
 /**
- * 一行叫什么。
- *
- * 合并组只有 `group_id`、没有 `id`——那一行不是一条记录，是几笔折成的净额，
- * 所以它点不进详情页，只能去合并组页看。服务端特意没给负数哨兵 id，
- * 就是为了让这里的判断是个**字段在不在**的问题，而不是「id 是不是小于零」。
+ * 一格指标。带 `href` 的那些（支出、收入）整格可点，右上角有一个淡淡的「›」
+ * 作为可点击的提示；不带的就是一块读数。
  */
-function LedgerLabel({ row }: { row: LedgerRow }) {
-  const text = row.counterparty || row.description;
-  if (row.group_id) {
-    return (
-      <span className="flex flex-wrap items-center gap-2">
-        <Tag>合</Tag>
-        <Link className="text-accent underline" to="/groups">
-          {text}
-        </Link>
-      </span>
-    );
-  }
+function MetricCard({
+  label,
+  value,
+  tone,
+  href,
+  back,
+  spark,
+  children,
+}: {
+  label: string;
+  value: number;
+  tone: string;
+  href?: string;
+  back?: string;
+  spark?: ReactNode;
+  children?: ReactNode;
+}) {
+  const body = (
+    <Card
+      className={cn(
+        "relative h-full overflow-hidden p-3",
+        href && "transition-colors hover:border-accent/40 hover:bg-panel-hover",
+      )}
+    >
+      {spark}
+      <div className="relative">
+        <div className="flex items-center justify-between text-xs text-muted">
+          <span>{label}</span>
+          {href ? <span aria-hidden>›</span> : null}
+        </div>
+        <div className={`tabular mt-1 text-xl font-semibold ${tone}`}>
+          {formatAmount(value)}
+        </div>
+        <div className="mt-0.5 min-h-4 text-xs text-muted">{children}</div>
+      </div>
+    </Card>
+  );
+  if (!href) return body;
   return (
-    <span className="flex flex-wrap items-center gap-2">
-      <span>{text}</span>
-      {row.effective_category ? (
-        <span className="text-xs text-muted">{row.effective_category}</span>
-      ) : null}
+    <Link
+      to={href}
+      state={back ? { from: back, backLabel: "汇总" } : undefined}
+      className="block rounded-lg"
+    >
+      {body}
+    </Link>
+  );
+}
+
+/** 跟上一个同长度区间比。上期是 0 的时候不说百分比——除以 0 没有意义。 */
+function Delta({ data }: { data: Dashboard }) {
+  const previous = data.previous;
+  if (!previous) return null;
+  const current = data.stats.expense;
+  if (previous.expense === 0) {
+    return current > 0 ? <span>上期无支出</span> : null;
+  }
+  const percent = Math.round(((current - previous.expense) / previous.expense) * 100);
+  if (percent === 0) return <span>{previous.label}持平</span>;
+  return (
+    <span className={percent > 0 ? "text-out" : "text-in"}>
+      {percent > 0 ? "+" : ""}
+      {percent}% <span className="text-muted">{previous.label}</span>
     </span>
   );
 }
 
-/** 接口已经把行按币种排好了，这里只做切分——顺序一个字都不动。 */
-function groupBy(rows: LedgerRow[]): [string, LedgerRow[]][] {
-  const groups: [string, LedgerRow[]][] = [];
-  for (const row of rows) {
-    const last = groups[groups.length - 1];
-    if (last && last[0] === row.display_currency) last[1].push(row);
-    else groups.push([row.display_currency, [row]]);
-  }
-  return groups;
+/**
+ * 合计里少掉的那两块，各交代一句。
+ *
+ * 少了它们，上面那排数看着就是「这个区间的全部」——而大额和中性明明在账本里。
+ * 中性那笔带链接是因为它确实是一类可以逐笔翻的记录；大额在下面的卡片里。
+ */
+function ExclusionHints({ data, back }: { data: Dashboard; back: string }) {
+  const stats = data.stats;
+  const parts = [
+    stats.large_income ? `收入 ${formatAmount(stats.large_income)}` : "",
+    stats.large_expense ? `支出 ${formatAmount(stats.large_expense)}` : "",
+  ].filter(Boolean);
+  if (!stats.large_count && !stats.neutral_count) return null;
+  return (
+    <div className="mt-2 space-y-1">
+      {stats.large_count ? (
+        <Hint className="mt-1">
+          另有 {stats.large_count} 笔大额未计入合计
+          {parts.length ? `（${parts.join("、")}）` : ""}，
+          <a className="text-accent underline" href="#large">
+            列在下面 →
+          </a>
+        </Hint>
+      ) : null}
+      {stats.neutral_count ? (
+        <Hint className="mt-1">
+          另有 {stats.neutral_count} 笔中性记录未计入合计，
+          <Link
+            className="text-accent underline"
+            to={`/transactions?direction=neutral&start=${data.range.start}&end=${data.range.end}`}
+            state={{ from: back, backLabel: "汇总" }}
+          >
+            逐笔看 →
+          </Link>
+        </Hint>
+      ) : null}
+    </div>
+  );
 }
 
-/** 某个 'YYYY-MM' 的最后一天。用 0 号那一天 = 上个月的最后一天，闰年也自动对。 */
-function endOfMonth(month: string): string {
-  const [year, number] = month.split("-").map(Number);
-  const last = new Date(Date.UTC(year, number, 0));
-  return last.toISOString().slice(0, 10);
+function Forecast({ data }: { data: Dashboard }) {
+  const averages = data.averages;
+  return (
+    <Card>
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-base font-semibold">预测与平均</h2>
+        <span className="text-xs text-muted">{data.currency}</span>
+      </div>
+      <div className="mt-3 grid gap-4 sm:grid-cols-2">
+        <ForecastItem label="预计本月支出" window={data.forecast.month} />
+        <ForecastItem label="预计本年支出" window={data.forecast.year} />
+      </div>
+      {averages ? (
+        <div className="mt-4 grid grid-cols-2 gap-3 border-t border-border pt-3">
+          <div>
+            <div className="text-xs text-muted">月均支出</div>
+            <div className="tabular text-lg font-semibold">{formatAmount(averages.monthly)}</div>
+            <div className="text-xs text-muted">近 {averages.months} 个完整月</div>
+          </div>
+          <div>
+            <div className="text-xs text-muted">年均支出</div>
+            <div className="tabular text-lg font-semibold">{formatAmount(averages.yearly)}</div>
+            <div className="text-xs text-muted">按近 {averages.months} 个月折算</div>
+          </div>
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
+function ForecastItem({
+  label,
+  window,
+}: {
+  label: string;
+  window: Dashboard["forecast"]["month"];
+}) {
+  const percent = window.total_days
+    ? Math.min(Math.round((window.elapsed_days / window.total_days) * 100), 100)
+    : 0;
+  return (
+    <div>
+      <div className="text-xs text-muted">{label}</div>
+      <div className="tabular mt-0.5 text-2xl font-semibold">{formatAmount(window.projected)}</div>
+      <div className="mt-1 flex items-center justify-between gap-2 text-xs text-muted">
+        <span>已花 {formatAmount(window.spent)}</span>
+        <span className="tabular">
+          {window.elapsed_days}/{window.total_days} 天
+        </span>
+      </div>
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-panel-hover">
+        <div className="h-full rounded-full bg-out/70" style={{ width: `${percent}%` }} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 花费排行：分类和单次两个榜，默认各露 5 条。
+ *
+ * 每一行都是链接，落到**同一个区间**的交易记录（分类会一并带上筛选），
+ * 或者落到那一笔的详情。榜单和它上面的合计是同一口径——都剔除了大额。
+ * 分类榜还可以切成饼图看构成；饼图的扇区和下面的图例同样能点进去。
+ */
+function Ranking({
+  data,
+  back,
+  theme,
+}: {
+  data: Dashboard;
+  back: string;
+  theme: string;
+}) {
+  const [tab, setTab] = useState<"category" | "single">("category");
+  const [categoryView, setCategoryView] = useState<"list" | "pie">("list");
+  const [expanded, setExpanded] = useState(false);
+  const navigate = useNavigate();
+
+  const rows = tab === "category" ? categoryRows(data, back) : singleRows(data, back);
+  const visible = rows.slice(0, expanded ? MORE_ROWS : TOP_ROWS);
+  const max = rows[0]?.amount ?? 0;
+  const total = tab === "category" ? data.category_count : data.single_count;
+  const pie = tab === "category" && categoryView === "pie";
+
+  return (
+    <Card className="mt-4">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-base font-semibold">花费排行</h2>
+          <div className="flex items-center rounded-md border border-border p-0.5 text-xs">
+            {(
+              [
+                ["category", "分类"],
+                ["single", "单次"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                className={cn(
+                  "rounded px-2.5 py-1 transition-colors",
+                  tab === key ? "bg-panel-hover text-text" : "text-muted hover:text-text",
+                )}
+                onClick={() => {
+                  setTab(key);
+                  setExpanded(false);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {tab === "category" ? (
+          <div className="flex items-center rounded-md border border-border p-0.5 text-xs">
+            {(
+              [
+                ["list", "列表"],
+                ["pie", "饼图"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                className={cn(
+                  "rounded px-2.5 py-1 transition-colors",
+                  categoryView === key
+                    ? "bg-panel-hover text-text"
+                    : "text-muted hover:text-text",
+                )}
+                onClick={() => setCategoryView(key)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      {pie ? (
+        <CategoryPie
+          rows={data.categories}
+          currency={data.currency}
+          theme={theme}
+          onOpen={(name) =>
+            navigate(categoryLink(data, name), {
+              state: { from: back, backLabel: "汇总" },
+            })
+          }
+        />
+      ) : visible.length ? (
+        <ol className="m-0 list-none p-0">
+          {visible.map((row, index) => (
+            <li key={row.key}>
+              <Link
+                to={row.to}
+                state={row.state}
+                className="relative flex items-center gap-3 overflow-hidden rounded-md px-2 py-2 hover:bg-panel-hover"
+              >
+                {/* 金额的横条是这一页唯一的「长度」编码：一眼能看出前几名差多少。 */}
+                <span
+                  aria-hidden
+                  className="absolute inset-y-0 left-0 rounded-md bg-out/10"
+                  style={{ width: `${max ? Math.max((row.amount / max) * 100, 2) : 0}%` }}
+                />
+                <span className="tabular relative w-5 text-right text-xs text-muted">
+                  {index + 1}
+                </span>
+                <span className="relative min-w-0 flex-1">
+                  <span className="flex items-center gap-2">
+                    {row.emoji ? <span>{row.emoji}</span> : null}
+                    <span className="truncate text-sm">{row.title}</span>
+                  </span>
+                  {row.sub ? <span className="block truncate text-xs text-muted">{row.sub}</span> : null}
+                </span>
+                <span className="tabular relative text-sm">{formatAmount(row.amount)}</span>
+                <span className="tabular relative w-10 text-right text-xs text-muted">
+                  {data.stats.expense
+                    ? `${Math.round((row.amount / data.stats.expense) * 100)}%`
+                    : ""}
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <Empty>这个区间里没有支出。</Empty>
+      )}
+
+      <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted">
+        {!pie && rows.length > TOP_ROWS ? (
+          <button
+            type="button"
+            className="text-accent underline"
+            onClick={() => setExpanded(!expanded)}
+          >
+            {expanded ? "收起" : `更多（${Math.min(rows.length, MORE_ROWS) - TOP_ROWS}）`}
+          </button>
+        ) : null}
+        {!pie && total > rows.length ? <span>还有 {total - rows.length} 条未列出</span> : null}
+        <Link
+          className="ml-auto text-accent underline"
+          to={allExpenses(data)}
+          state={{ from: back, backLabel: "汇总" }}
+        >
+          查看全部支出 →
+        </Link>
+      </div>
+    </Card>
+  );
+}
+
+type RankRow = {
+  key: string;
+  title: string;
+  sub?: string;
+  emoji?: string;
+  amount: number;
+  to: string;
+  state?: { from: string; backLabel: string };
+};
+
+function categoryRows(data: Dashboard, back: string): RankRow[] {
+  return data.categories.map((row: DashboardCategory) => ({
+    key: `category-${row.name}`,
+    title: row.name,
+    sub: `${row.total} 笔`,
+    emoji: row.emoji,
+    amount: row.expense,
+    to: categoryLink(data, row.name),
+    state: { from: back, backLabel: "汇总" },
+  }));
+}
+
+function singleRows(data: Dashboard, back: string): RankRow[] {
+  return data.singles.map((row: LedgerRow) => ({
+    key: `single-${row.id ?? `g${row.group_id}`}-${row.occurred_at}`,
+    title: row.counterparty || row.description || "（无说明）",
+    sub: [day(row.occurred_at), row.effective_category].filter(Boolean).join(" · "),
+    emoji: row.emoji,
+    amount: row.display_cents,
+    // 合并行不是一条记录，进不了详情页——它只能去合并组页。
+    to: row.group_id
+      ? `/groups?group=${row.group_id}`
+      : row.id !== null
+        ? `/transactions/${row.id}`
+        : allExpenses(data),
+    state: { from: back, backLabel: "汇总" },
+  }));
+}
+
+function categoryLink(data: Dashboard, category: string): string {
+  const query = new URLSearchParams({
+    start: data.range.start,
+    end: data.range.end,
+    direction: "out",
+    category,
+  });
+  return `/transactions?${query.toString()}`;
+}
+
+function allExpenses(data: Dashboard): string {
+  const query = new URLSearchParams({
+    start: data.range.start,
+    end: data.range.end,
+    direction: "out",
+  });
+  return `/transactions?${query.toString()}`;
+}
+
+/**
+ * 明细区删掉之后留下的两块仍然有用的东西：账户支出构成和大额清单。
+ *
+ * 大额是「钱确实花了、但没进上面合计」的那几笔，不能只看一句提示；账户构成
+ * 回答的是「这个月主要是哪张卡在花」。两张表都只取当前币种，绝不跨币种相加。
+ */
+function Insights({
+  data,
+  summary,
+  back,
+  theme,
+}: {
+  data: Dashboard;
+  summary?: Summary;
+  back: string;
+  theme: string;
+}) {
+  if (!summary) return null;
+  const large = summary.large.filter(
+    (row) => row.display_currency === data.currency,
+  );
+  const hasAccountSpend = summary.accounts.some((account) =>
+    account.totals.some(
+      (row) => row.display_currency === data.currency && row.expense > 0,
+    ),
+  );
+  if (!hasAccountSpend && !large.length) return null;
+
+  return (
+    <div className={cn("mt-4 grid gap-4", hasAccountSpend && large.length && "lg:grid-cols-2")}>
+      {hasAccountSpend ? (
+        <Card>
+          <h2 className="mb-2 text-base font-semibold">
+            账户支出构成 <span className="text-sm font-normal text-muted">{data.currency}</span>
+          </h2>
+          <AccountExpensePie
+            accounts={summary.accounts}
+            currency={data.currency}
+            theme={theme}
+          />
+        </Card>
+      ) : null}
+      {large.length ? (
+        <Card id="large">
+          <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-base font-semibold">不计入合计的大额</h2>
+            <span className="text-xs text-muted">{large.length} 笔</span>
+          </div>
+          <ul className="m-0 list-none p-0">
+            {large.map((row) => (
+              <li key={`${row.id ?? "g"}-${row.group_id ?? 0}-${row.occurred_at}`}>
+                <Link
+                  to={
+                    row.group_id
+                      ? `/groups?group=${row.group_id}`
+                      : row.id !== null
+                        ? `/transactions/${row.id}`
+                        : allExpenses(data)
+                  }
+                  state={{ from: back, backLabel: "汇总" }}
+                  className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md px-2 py-2 text-sm hover:bg-panel-hover"
+                >
+                  <span className="tabular w-20 shrink-0 text-xs text-muted">
+                    {day(row.occurred_at)}
+                  </span>
+                  <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                    <CategoryMark category={row.effective_category} emoji={row.emoji} />
+                    <span className="truncate">{row.counterparty || row.description}</span>
+                  </span>
+                  <span
+                    className={cn(
+                      "tabular shrink-0",
+                      row.display_signed_cents > 0 ? "text-in" : "text-out",
+                    )}
+                  >
+                    {formatSigned(row.display_signed_cents)}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
+    </div>
+  );
 }

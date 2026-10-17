@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -13,6 +13,7 @@ import type { FormPayload, FormValues } from "../api/types";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { ErrorText, Field, Input } from "../components/ui/bits";
+import { moveAnchor } from "../lib/anchor";
 
 const BLANK: FormValues = {
   occurred_at: "",
@@ -40,7 +41,11 @@ export function TransactionFormPage() {
   const editing = id !== undefined;
   const txnId = editing ? Number(id) : null;
   const navigate = useNavigate();
+  const location = useLocation();
   const client = useQueryClient();
+  // 从交易记录点进来时带着原列表地址（「记一笔」是列表传的，改一笔由详情页
+  // 转交），取消或改完都回那一屏，筛选还在、锚点也认得。
+  const returnTo = (location.state as { from?: string } | null)?.from;
 
   // 两个接口回的是**同一个形状**（改一笔那个也带 errors / accounts /
   // currencies / categories / back_month），所以这一份表单能同时喂两种用途。
@@ -61,8 +66,16 @@ export function TransactionFormPage() {
               : createTransaction(current as unknown as Record<string, string>),
     onSuccess: (body) => {
       client.invalidateQueries();
+      const monthList = `/transactions?start=${body.month}-01&end=`;
+      if (editing) {
+        // 改完要回去的是这一笔现在待的那个月。地址是刚拼出来的，跟离开列表时
+        // 那一屏的地址往往对不上，锚点得跟着搬过去，回去才会定位并亮一下。
+        // 还在合并组里的话，列表上是一行合并记录，目标得指向那一组。
+        const target = body.group_id ? `group-${body.group_id}` : `txn-${txnId}`;
+        moveAnchor(returnTo, monthList, target);
+      }
       // 刚记的这笔要是立刻被并进了别个月的组，就跳它现在待的那一个月。
-      navigate(`/transactions?start=${body.month}-01&end=`);
+      navigate(monthList);
     },
     onError: (failure) => {
       if (failure instanceof ApiError) {
@@ -174,9 +187,16 @@ export function TransactionFormPage() {
             <Button type="submit" disabled={submit.isPending}>
               保存
             </Button>
+            {/* 从列表点进来就回原来那一屏（筛选、limit 都在），锚点也还认得；
+                只有直接打开这一页时才退回到这一笔现在待的那个月。 */}
             <Link
               className="inline-flex h-9 items-center rounded-md px-3 text-sm text-muted hover:text-text"
-              to={editing && data.back_month ? `/transactions?start=${data.back_month}-01&end=` : "/transactions"}
+              to={
+                returnTo ??
+                (editing && data.back_month
+                  ? `/transactions?start=${data.back_month}-01&end=`
+                  : "/transactions")
+              }
             >
               取消
             </Link>

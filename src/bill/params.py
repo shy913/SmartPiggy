@@ -178,6 +178,7 @@ def active_filter_labels(
     direction="",
     account_id=None,
     search="",
+    category="",
     hidden="",
 ) -> list[str]:
     """当前生效的筛选条件，写成几个短标签。
@@ -206,6 +207,8 @@ def active_filter_labels(
         )
     if word := _DIRECTION_WORDS.get(direction):
         labels.append(word)
+    if category:
+        labels.append(f"分类「{category}」")
     if word := _HIDDEN_WORDS.get(hidden):
         labels.append(word)
     if search:
@@ -239,6 +242,9 @@ def list_query(source) -> dict:
         "direction": (source.get("direction") or "").strip(),
         "account_id": as_int(source.get("account") or ""),
         "search": (source.get("q") or "").strip(),
+        # 分类名是自由文本，不重写、不清理空白以外的任何东西——去掉首尾空白
+        # 就够了，中间的空格是名字的一部分（「Eating Out」）。
+        "category": (source.get("category") or "").strip(),
         "hidden": hidden,
         # limit 是「这一段给到哪」，不是页大小，所以只往上加：链接里手改出来的
         # 小数不至于把列表缩成一条。

@@ -9,6 +9,7 @@
 //    跨站的 `<form>` 发不出这个类型。忘了带，接口会回 415。
 
 import type {
+  Dashboard,
   FormPayload,
   GroupsPayload,
   HideResult,
@@ -110,6 +111,9 @@ export const getMeta = () => request<Meta>("/api/meta");
 export const getSummary = (params: Query = {}) =>
   request<Summary>(`/api/summary${queryString(params)}`);
 
+export const getDashboard = (params: Query = {}) =>
+  request<Dashboard>(`/api/dashboard${queryString(params)}`);
+
 // --------------------------------------------------------------------------
 // 交易
 // --------------------------------------------------------------------------
@@ -123,12 +127,16 @@ export const getTransaction = (id: number) =>
 export const newTransactionForm = () =>
   request<FormPayload>("/api/transactions/new");
 
+/** 记一笔 / 改一笔回的东西：落在哪个月，以及（改一笔才有）还在不在组里。
+ *  记一笔不回组号，所以这里标成可空。 */
+export type SaveResult = { id: number; month: string; group_id?: number | null };
+
 /** 记一笔。校验没过时服务端会回 400，错误体里带着填过的内容。 */
 export const createTransaction = (values: Record<string, string>) =>
-  request<{ id: number; month: string }>("/api/transactions", json({ ...values }));
+  request<SaveResult>("/api/transactions", json({ ...values }));
 
 export const updateTransaction = (id: number, values: Record<string, string>) =>
-  request<{ id: number; month: string }>(`/api/transactions/${id}`, {
+  request<SaveResult>(`/api/transactions/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...values }),

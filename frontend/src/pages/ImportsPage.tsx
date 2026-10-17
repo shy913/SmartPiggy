@@ -151,7 +151,7 @@ export function ImportDetailPage() {
                     data-flash={highlighted ? "1" : undefined}
                     className={cn(
                       "transition-colors duration-700",
-                      highlighted && "bg-accent/10",
+                      highlighted && "bg-warn/20",
                     )}
                   >
                     <TD className="whitespace-nowrap">{String(value.occurred_at).slice(0, 16)}</TD>
