@@ -2,6 +2,7 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ApiError, deleteTransaction, getTransaction, hideTransaction, unhideTransaction } from "../api/client";
+import { BackLink } from "../components/BackLink";
 import { Button } from "../components/ui/button";
 import { Card, Section } from "../components/ui/card";
 import { ErrorText, Tag } from "../components/ui/bits";
@@ -63,17 +64,13 @@ export function TransactionDetailPage() {
 
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        {/* 从列表点进来时回到逐字相同的地址（筛选、limit 都在），位置和行由
-            sessionStorage 里的锚点接上。直接打开这一页才落到这一笔**现在待的
-            那个月**——它可能已经被并进别个月的组了。 */}
-        <Link
-          className="text-accent underline"
-          to={nav?.from ?? `/transactions?start=${data.back_month}-01&end=`}
-        >
-          ← {nav?.backLabel ?? "交易记录"}
-        </Link>
-      </div>
+      {/* 从列表点进来时回到逐字相同的地址（筛选、limit 都在），位置和行由
+          sessionStorage 里的锚点接上。直接打开这一页才落到这一笔**现在待的
+          那个月**——它可能已经被并进别个月的组了。 */}
+      <BackLink
+        to={nav?.from ?? `/transactions?start=${data.back_month}-01&end=`}
+        label={nav?.backLabel ?? "交易记录"}
+      />
 
       <h1 className="mb-4 text-xl font-semibold">这一笔</h1>
 
