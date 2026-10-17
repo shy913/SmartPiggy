@@ -53,7 +53,22 @@ if [ "${1:-}" = "--restart" ]; then
     kill "$pid"
     sleep 1
   fi
-  (cd "$ROOT" && setsid nohup .venv/bin/bill >> "$HOME/.local/share/bill/bill.log" 2>&1 < /dev/null &)
-  sleep 2
-  curl -s -o /dev/null -w 'healthz %{http_code}\n' http://127.0.0.1:8001/healthz
+
+  # `setsid --fork` 里的 `--fork` **不能省**。少了它，setsid 常常直接 exec 成
+  # 那个服务进程——于是服务成了本脚本的子进程，脚本走到末尾就挂在 wait() 上
+  # 不退（踩过：产物早换好了、页面也好了，但脚本一直不返回，管到 tail 的输出
+  # 再也不吐）。--fork 保证中间隔一层，setsid 立刻退出，服务被 init 收养。
+  setsid --fork "$ROOT/.venv/bin/bill" >> "$HOME/.local/share/bill/bill.log" 2>&1 < /dev/null &
+
+  # 起来要一小会儿：轮询几次再下结论，别 sleep 两秒就断言。
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8001/healthz || true)"
+    [ "$code" = "200" ] && break
+    sleep 1
+  done
+  echo "healthz ${code:-连不上}"
+  if [ "${code:-}" != "200" ]; then
+    echo "服务没起来，看看 $HOME/.local/share/bill/bill.log" >&2
+    exit 1
+  fi
 fi

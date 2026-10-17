@@ -481,6 +481,48 @@ def test_groups_come_back_with_their_members(client, conn, book):
     assert len(body["members"][str(group["id"])]) == 2
 
 
+def test_group_members_say_which_currency_their_amount_is_in(client, conn, book, tmp_path):
+    """组员行要带 ``display_currency``。
+
+    界面拿它分辨「这个数是换算来的」和「这个数本来就是原币」：前者后面该跟一份
+    原币金额（跨币种的组里，朋友从微信还的钱得对得上那条转账），后者再跟一份
+    就是把同一个数印两遍。少这一个字段，界面就只能拿「币种跟显示币种不一样」
+    去猜，而没配汇率的币种恰恰就是那样——猜错的后果是一个数印两遍。
+    """
+    (tmp_path / "settings.toml").write_text(
+        'timezone = "Asia/Shanghai"\n\n[currency]\ndisplay = "GBP"\nrates = { CNY = 8.9 }\n',
+        encoding="utf-8",
+    )
+    ids = book(
+        [
+            {
+                "occurred_at": "2026-01-05 12:00:00",
+                "direction": "out",
+                "amount_cents": 69000,
+                "currency": "CNY",
+            },
+            {
+                "occurred_at": "2026-01-05 12:30:00",
+                "direction": "out",
+                "amount_cents": 792,
+                "currency": "GBP",
+            },
+        ]
+    )
+    with conn:
+        repo.create_group(conn, origin="manual", transaction_ids=ids)
+
+    body = payload(client.get("/api/transactions"))
+    assert len(body["rows"]) == 1, "两笔合成一行"
+    group_id = body["rows"][0]["group_id"]
+    members = {row["currency"]: row for row in body["members"][str(group_id)]}
+
+    assert members["CNY"]["display_currency"] == "GBP", "配了汇率的币种算成了显示币种"
+    assert members["CNY"]["display_cents"] == 7753, "¥690 换算成 £77.53"
+    assert members["CNY"]["amount_cents"] == 69000, "原币金额一个字不动"
+    assert members["GBP"]["display_currency"] == "GBP"
+
+
 def test_settings_come_back_as_the_form_shaped_them(client):
     body = payload(client.get("/api/settings"))
     values = body["values"]

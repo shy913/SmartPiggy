@@ -37,6 +37,7 @@ function member(overrides: Partial<MemberRow> = {}): MemberRow {
     description: "",
     effective_category: "转账",
     display_cents: 12000,
+    display_currency: "CNY",
     emoji: "💸",
     ...overrides,
   };

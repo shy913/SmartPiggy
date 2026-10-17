@@ -1511,7 +1511,13 @@ def list_groups(connection: sqlite3.Connection) -> list[sqlite3.Row]:
 def group_members(
     connection: sqlite3.Connection, group_ids: Sequence[int] | None = None
 ) -> list[sqlite3.Row]:
-    """组成员（原始记录，不是合成行），按时间先后。不传 group_ids 就全给。"""
+    """组成员（原始记录，不是合成行），按时间先后。不传 group_ids 就全给。
+
+    ``display_cents`` 旁边一定跟着 ``display_currency``：换过币种的那几笔，
+    界面上要在换算后的金额旁边再标一份原币金额。判断「换没换过」不能拿
+    「币种跟显示币种不一样」去猜——没配汇率的币种金额是原样返回的，那时候
+    它本来就等于原币金额，再标一份就是把同一个数印两遍。
+    """
     conf = settings.load()
     conv = _amount_in_display(conf, "s.")
     where = ""
@@ -1524,7 +1530,8 @@ def group_members(
         params = list(ids)
     return connection.execute(
         f"""
-        SELECT m.group_id, s.*, {conv} AS display_cents
+        SELECT m.group_id, s.*, {conv} AS display_cents,
+               {_group_by_display(conf, "s.")} AS display_currency
         FROM tx_group_members m JOIN tx_signed s ON s.id = m.transaction_id
         {where}
         ORDER BY s.occurred_at, s.id

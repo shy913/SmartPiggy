@@ -10,6 +10,7 @@ import {
   updateGroup,
 } from "../api/client";
 import type { GroupRow, MemberRow } from "../api/types";
+import { MemberAmount } from "../components/MemberAmount";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { Empty, ErrorText, Field, Hint, Input, Tag } from "../components/ui/bits";
@@ -238,10 +239,7 @@ function GroupCard({
               >
                 {member.counterparty || member.description}
               </Link>
-              <span className="tabular">
-                {formatAmount(member.direction === "out" ? -member.display_cents : member.display_cents)}
-                {member.currency !== displayCurrency ? ` ${member.currency}` : ""}
-              </span>
+              <MemberAmount member={member} displayCurrency={displayCurrency} />
             </li>
           ))}
         </ul>

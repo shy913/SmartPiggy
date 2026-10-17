@@ -18,6 +18,15 @@ export function formatAmount(cents: number): string {
   return `${sign}${whole.toLocaleString("en-US")}.${String(fraction).padStart(2, "0")}`;
 }
 
+/**
+ * 带正号的金额。列表上没有单独的「收支」列，`. 符号 + 颜色` 就说清了方向；
+ * 只写 `12.30` 的话，进账和出账长得一样。
+ */
+export function formatSigned(cents: number): string {
+  const text = formatAmount(cents);
+  return cents > 0 ? `+${text}` : text;
+}
+
 /** `'2026-10-14 18:40:07'` → `'2026-10-14 18:40'`：掐到分钟。跟 `dates.minute` 同口径。 */
 export function minute(moment: string | null | undefined): string {
   const text = (moment ?? "").trim();
