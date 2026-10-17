@@ -208,6 +208,37 @@ export function SettingsPage() {
           </Field>
         </Section>
 
+        <Section title="利息按月汇总">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={current.merge_rollup}
+              onChange={(event) => set({ merge_rollup: event.target.checked })}
+            />
+            把按日发放的利息按月合并成一条收入
+          </label>
+          <Field label="说明里包含哪些词算利息" className="mt-3">
+            <Input
+              value={current.merge_rollup_keywords}
+              onChange={(event) =>
+                set({ merge_rollup_keywords: event.target.value })
+              }
+            />
+          </Field>
+          <Hint>用顿号或逗号隔开；自动转入不算利息。</Hint>
+        </Section>
+
+        <Section title="导入提醒">
+          <Field label="超过多少天没导入账单就提醒" className="max-w-xs">
+            <Input
+              className="w-32"
+              value={current.stale_days}
+              onChange={(event) => set({ stale_days: event.target.value })}
+            />
+          </Field>
+          <Hint>填 0 表示不提醒；账户区仍会显示上次导入的时间。</Hint>
+        </Section>
+
         {errors.length ? (
           <ul className="m-0 list-none rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
             {errors.map((message) => (

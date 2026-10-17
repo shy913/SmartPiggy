@@ -3,8 +3,14 @@ import { useQuery } from "@tanstack/react-query";
 import { Fragment, type ReactNode } from "react";
 
 import { getSummary } from "../api/client";
-import type { LedgerRow, Summary, TotalsRow } from "../api/types";
-import { CategoryChart, MonthlyChart } from "../components/charts";
+import type { AccountOverview, LedgerRow, Summary, TotalsRow } from "../api/types";
+import { CategoryMark } from "../components/CategoryMark";
+import {
+  AccountExpensePie,
+  CategoryChart,
+  MonthlyBalanceChart,
+  MonthlyChart,
+} from "../components/charts";
 import { RangePicker } from "../components/RangePicker";
 import { Card, Section } from "../components/ui/card";
 import { useMeta } from "../App";
@@ -34,17 +40,138 @@ export function SummaryPage() {
       <h1 className="mb-4 text-xl font-semibold">汇总</h1>
       <RangePicker range={data.range} />
 
-      {data.overall.length === 0 ? (
-        <EmptyState summary={data} />
-      ) : (
+      {/* 提醒放在区间判断之外：账户多久没导入跟这个区间里有没有记录无关。
+          放在里面的话，当月没记账的人反而看不到「该导账单了」。 */}
+      <StaleImports accounts={data.accounts} />
+
+      {data.overall.length === 0 ? <EmptyState summary={data} /> : <Totals summary={data} />}
+
+      {/* 账户区也放在空数据分支之外，理由同上。 */}
+      <Accounts summary={data} />
+
+      {data.overall.length === 0 ? null : (
         <>
-          <Totals summary={data} />
           <Charts summary={data} />
           <Months summary={data} />
           <Categories summary={data} />
           <RankingAndLarge summary={data} />
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * 久未导入提醒。
+ *
+ * 只用一句灰字加一个链接：这是「该做的一件事」，不是错误，不该用红色警报
+ * 把整页压住。没有任何账户超期时整块不出现。
+ */
+function StaleImports({ accounts }: { accounts: AccountOverview[] }) {
+  const stale = accounts.filter((account) => account.stale);
+  if (!stale.length) return null;
+  const parts = stale.map((account) =>
+    account.never_imported
+      ? `${account.name} 从未导入`
+      : `${account.name} 已 ${account.days_since_import} 天没导入`,
+  );
+  return (
+    <Hint className="mt-0 mb-4">
+      {parts.join("，")}。
+      <Link className="ml-1 text-accent underline" to="/import">
+        去导入 →
+      </Link>
+    </Hint>
+  );
+}
+
+/**
+ * 账户区。
+ *
+ * 金额跟随当前区间，走的是和总计同一份合并净额；**每个账户内部按显示币种
+ * 分行**，不把人民币和英镑加成一条。上次导入时间是账户自己的属性，不随区间变。
+ */
+function Accounts({ summary }: { summary: Summary }) {
+  if (!summary.accounts.length) return null;
+  return (
+    <Section title="账户">
+      <TableScroll>
+        <Table>
+          <THead>
+            <TR>
+              <TH>账户</TH>
+              <TH>上次导入</TH>
+              <TH>区间内收支</TH>
+              <NumTH>条数</NumTH>
+            </TR>
+          </THead>
+          <TBody>
+            {summary.accounts.map((account) => {
+              const count = account.totals.reduce((sum, row) => sum + row.total, 0);
+              return (
+                <TR key={account.id}>
+                  <TD>
+                    <Link
+                      className="text-accent underline"
+                      to={`/transactions?account=${account.id}`}
+                    >
+                      {account.name}
+                    </Link>
+                  </TD>
+                  <TD>
+                    <LastImport account={account} />
+                  </TD>
+                  <TD>
+                    <AccountMoney totals={account.totals} multi={summary.multi_currency} />
+                  </TD>
+                  <NumTD className="text-muted">{count}</NumTD>
+                </TR>
+              );
+            })}
+          </TBody>
+        </Table>
+      </TableScroll>
+    </Section>
+  );
+}
+
+function LastImport({ account }: { account: AccountOverview }) {
+  if (account.never_imported) {
+    return <Tag tone="out">从未导入</Tag>;
+  }
+  const days = account.days_since_import ?? 0;
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      <span className="tabular whitespace-nowrap text-muted">{day(account.last_import_at)}</span>
+      {account.stale ? (
+        <Tag tone="out">{days} 天前</Tag>
+      ) : (
+        <Tag>{days === 0 ? "今天" : `${days} 天前`}</Tag>
+      )}
+    </span>
+  );
+}
+
+/** 一个账户的区间内收支。多币种时按币种分行——绝不跨币种相加。 */
+function AccountMoney({
+  totals,
+  multi,
+}: {
+  totals: AccountOverview["totals"];
+  multi: boolean;
+}) {
+  const rows = totals.filter((row) => row.income || row.expense || row.neutral_count);
+  if (!rows.length) return <span className="text-muted">—</span>;
+  return (
+    <div className="flex flex-col gap-0.5">
+      {rows.map((row) => (
+        <span key={row.display_currency} className="tabular whitespace-nowrap text-sm">
+          {multi ? <span className="mr-1 text-xs text-muted">{row.display_currency}</span> : null}
+          <span className="text-out">支出 {formatAmount(row.expense)}</span>
+          <span className="mx-1 text-muted">·</span>
+          <span className="text-in">收入 {formatAmount(row.income)}</span>
+        </span>
+      ))}
     </div>
   );
 }
@@ -75,7 +202,7 @@ function Totals({ summary }: { summary: Summary }) {
     <Section title="总计">
       {summary.overall.map((totals) => (
         <CurrencyBlock key={totals.display_currency} summary={summary} currency={totals.display_currency}>
-          <TotalsGrid totals={totals} />
+          <TotalsGrid summary={summary} totals={totals} />
         </CurrencyBlock>
       ))}
       <NeutralHint summary={summary} />
@@ -110,7 +237,7 @@ function LargeHint({ summary }: { summary: Summary }) {
   );
 }
 
-function TotalsGrid({ totals }: { totals: TotalsRow }) {
+function TotalsGrid({ summary, totals }: { summary: Summary; totals: TotalsRow }) {
   const stats = [
     { label: "收入", value: formatAmount(totals.income), tone: "text-in" },
     { label: "支出", value: formatAmount(totals.expense), tone: "text-out" },
@@ -121,8 +248,31 @@ function TotalsGrid({ totals }: { totals: TotalsRow }) {
     },
     { label: "记录条数", value: String(totals.total), tone: "text-muted" },
   ];
+
+  // 「全部记录」没有起止日期，算不出日均；那一格直接不出现，而不是写一个 0
+  // 让人以为这个月一分没花。
+  const days = rangeDays(summary);
+  if (days) {
+    stats.push({
+      label: "日均支出",
+      value: formatAmount(Math.round(totals.expense / days)),
+      tone: "text-muted",
+    });
+  }
+
+  // 排行里同一币种的第一条就是计入合计的最大一笔；它和「支出」合计是同一口径
+  // （都排除了大额），不会出现「最大单笔比支出合计还大」。
+  const largest = summary.ranking.find(
+    (row) => row.display_currency === totals.display_currency && row.display_cents > 0,
+  );
+  stats.push({
+    label: "单笔最大",
+    value: largest ? formatAmount(largest.display_cents) : "—",
+    tone: "text-muted",
+  });
+
   return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
       {stats.map((stat) => (
         <Card key={stat.label} className="p-3">
           <div className={`tabular text-lg ${stat.tone}`}>{stat.value}</div>
@@ -131,6 +281,17 @@ function TotalsGrid({ totals }: { totals: TotalsRow }) {
       ))}
     </div>
   );
+}
+
+/** 区间一共几天（两端都算）。「全部记录」或算不出正数时返回 null。 */
+function rangeDays(summary: Summary): number | null {
+  const { start, end } = summary.range;
+  if (!start || !end) return null;
+  const first = Date.parse(`${start}T00:00:00Z`);
+  const last = Date.parse(`${end}T00:00:00Z`);
+  if (Number.isNaN(first) || Number.isNaN(last)) return null;
+  const days = Math.round((last - first) / 86_400_000) + 1;
+  return days > 0 ? days : null;
 }
 
 /**
@@ -211,11 +372,27 @@ function Charts({ summary }: { summary: Summary }) {
             </h4>
             <MonthlyChart rows={group.months} currency={group.currency} theme={theme} />
           </Card>
-          <Card>
+          <Card className="mb-4">
+            <h4 className="mb-2 text-sm font-medium">
+              每月结余 <span className="text-muted">{group.currency}</span>
+            </h4>
+            <MonthlyBalanceChart rows={group.months} currency={group.currency} theme={theme} />
+          </Card>
+          <Card className="mb-4">
             <h4 className="mb-2 text-sm font-medium">
               支出构成 <span className="text-muted">按分类 · {group.currency}</span>
             </h4>
             <CategoryChart rows={group.categories} theme={theme} />
+          </Card>
+          <Card>
+            <h4 className="mb-2 text-sm font-medium">
+              账户支出构成 <span className="text-muted">按账户 · {group.currency}</span>
+            </h4>
+            <AccountExpensePie
+              accounts={summary.accounts}
+              currency={group.currency}
+              theme={theme}
+            />
           </Card>
         </div>
       ))}
@@ -381,7 +558,7 @@ function Large({ summary }: { summary: Summary }) {
   );
 }
 
-/** 合并后的账本里的一行：日期、金额、对方 / 说明。 */
+/** 合并后的账本里的一行：日期、金额、对方、说明。 */
 function LedgerTable({
   summary,
   currency,
@@ -399,12 +576,13 @@ function LedgerTable({
         <h4 className="mb-1 text-xs font-medium text-muted">{currency}</h4>
       ) : null}
       <TableScroll>
-        <Table>
+        <Table className="table-fixed">
           <THead>
             <TR>
-              <TH>日期</TH>
-              <NumTH>金额（{currency}）</NumTH>
-              <TH>对方 / 说明</TH>
+              <TH className="w-[5.5rem]">日期</TH>
+              <NumTH className="w-24 whitespace-normal">金额（{currency}）</NumTH>
+              <TH>对方</TH>
+              <TH>说明</TH>
             </TR>
           </THead>
           <TBody>
@@ -415,7 +593,10 @@ function LedgerTable({
                   {formatAmount(row.display_signed_cents)}
                 </NumTD>
                 <TD>
-                  <LedgerLabel row={row} />
+                  <LedgerParty row={row} />
+                </TD>
+                <TD>
+                  <LedgerDescription row={row} />
                 </TD>
               </TR>
             ))}
@@ -427,30 +608,45 @@ function LedgerTable({
 }
 
 /**
- * 一行叫什么。
+ * 对方那一格。
  *
  * 合并组只有 `group_id`、没有 `id`——那一行不是一条记录，是几笔折成的净额，
  * 所以它点不进详情页，只能去合并组页看。服务端特意没给负数哨兵 id，
  * 就是为了让这里的判断是个**字段在不在**的问题，而不是「id 是不是小于零」。
  */
-function LedgerLabel({ row }: { row: LedgerRow }) {
-  const text = row.counterparty || row.description;
+function LedgerParty({ row }: { row: LedgerRow }) {
   if (row.group_id) {
     return (
-      <span className="flex flex-wrap items-center gap-2">
-        <Tag>合</Tag>
+      <span
+        className="line-clamp-2 [overflow-wrap:anywhere]"
+        title={row.counterparty || row.description}
+      >
+        <CategoryMark category={row.effective_category} emoji={row.emoji} />{" "}
+        <Tag>合</Tag>{" "}
         <Link className="text-accent underline" to="/groups">
-          {text}
+          {row.counterparty || row.description}
         </Link>
       </span>
     );
   }
   return (
-    <span className="flex flex-wrap items-center gap-2">
-      <span>{text}</span>
-      {row.effective_category ? (
-        <span className="text-xs text-muted">{row.effective_category}</span>
-      ) : null}
+    <span
+      className="line-clamp-2 [overflow-wrap:anywhere]"
+      title={row.counterparty}
+    >
+      <CategoryMark category={row.effective_category} emoji={row.emoji} />{" "}
+      {row.counterparty}
+    </span>
+  );
+}
+
+/** 说明那一格。合并行若已经用说明做了组链接，就别把同一句话印两遍。 */
+function LedgerDescription({ row }: { row: LedgerRow }) {
+  const text = row.group_id ? (row.counterparty ? row.description : "") : row.description;
+  if (!text) return null;
+  return (
+    <span className="line-clamp-3 [overflow-wrap:anywhere]" title={text}>
+      {text}
     </span>
   );
 }

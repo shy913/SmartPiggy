@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -41,7 +41,11 @@ export function TransactionFormPage() {
   const editing = id !== undefined;
   const txnId = editing ? Number(id) : null;
   const navigate = useNavigate();
+  const location = useLocation();
   const client = useQueryClient();
+  // 从交易记录点进来时带着原列表地址（「记一笔」是列表传的，改一笔由详情页
+  // 转交），取消或改完都回那一屏，筛选还在、锚点也认得。
+  const returnTo = (location.state as { from?: string } | null)?.from;
 
   // 两个接口回的是**同一个形状**（改一笔那个也带 errors / accounts /
   // currencies / categories / back_month），所以这一份表单能同时喂两种用途。
@@ -181,10 +185,10 @@ export function TransactionFormPage() {
             <Button type="submit" disabled={submit.isPending}>
               保存
             </Button>
+            {/* 从列表点进来就回原来那一屏（筛选、limit 都在），锚点也还认得；
+                只有直接打开这一页时才退回到这一笔现在待的那个月。 */}
             <Link
               className="inline-flex h-9 items-center rounded-md px-3 text-sm text-muted hover:text-text"
-              // 从列表点进来就回原来那一屏（筛选、limit 都在），锚点也还认得；
-              // 只有直接打开这一页时才退回到这一笔现在待的那个月。
               to={
                 returnTo ??
                 (editing && data.back_month
