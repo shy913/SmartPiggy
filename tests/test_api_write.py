@@ -262,13 +262,15 @@ def test_a_group_that_is_already_gone_is_404(client):
 
 def test_settings_round_trip(client):
     values = payload(client.get("/api/settings"))["values"]
-    values["theme"] = "light"
+    values["theme_style"] = "cyberpunk"
+    values["theme_mode"] = "dark"
     values["large_out"] = "123"
     saved = client.put("/api/settings", json=values)
     assert saved.status_code == 200
 
     again = payload(client.get("/api/settings"))["values"]
-    assert again["theme"] == "light"
+    assert again["theme_style"] == "cyberpunk"
+    assert again["theme_mode"] == "dark"
     assert again["large_out"] == "123"
 
 

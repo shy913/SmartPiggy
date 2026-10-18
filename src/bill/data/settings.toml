@@ -6,10 +6,12 @@
 # 改完刷新页面就生效，不用重启——应用每次请求都会重新读这个文件。
 
 [ui]
-# 界面配色：dark（深色）、light（浅色）、dark-teal（深色 · 青橙）、
-# light-teal（浅色 · 青橙）。每套的收入 / 支出色都跑过色盲校验，
+# 界面风格：standard（标准）、teal（青橙）、cyberpunk（赛博朋克）。
+# 深浅：auto（跟随系统）、dark（深色）、light（浅色）。
+# 每套风格都有深、浅两版，收入 / 支出色都跑过色差与对比度校验；
 # 取值都在 src/bill/themes.py 里。
-theme = "dark"
+style = "standard"
+mode = "auto"
 
 # 所有时间都换算成这个时区显示（IANA 名字）。
 # 各来源自己声明它用的是哪个时区（见 data/profiles/*.toml 的 [profile].timezone），

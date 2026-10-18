@@ -51,8 +51,9 @@ def test_meta_carries_what_the_forms_need(client, book):
     info = meta(client)
     assert info["display_currency"] == "CNY"
     assert info["timezone"] == "Asia/Shanghai"
-    assert [theme["name"] for theme in info["themes"]]
-    assert all("label" in theme for theme in info["themes"])
+    assert [style["name"] for style in info["styles"]]
+    assert all("label" in style for style in info["styles"])
+    assert [mode["name"] for mode in info["modes"]] == ["auto", "dark", "light"]
     assert info["categories"] == ["餐饮美食"]
     assert [account["name"] for account in info["accounts"]] == ["支付宝"]
     # 默认区间是「当月 1 号到今天」，按显示时区算——跟交易记录页同一个落点。

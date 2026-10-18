@@ -19,7 +19,7 @@ import type {
   DashboardCategory,
   TrendPoint,
 } from "../api/types";
-import { THEMES, DEFAULT_THEME, type Theme } from "../theme/themes";
+import { THEMES, type Theme, type ThemeName } from "../theme/themes";
 import { formatAmount } from "../lib/format";
 
 /** 轴上的刻度用短写法：`1.2M`、`34k`。长数字会把轴挤没。 */
@@ -34,9 +34,12 @@ export function compact(cents: number): string {
   return major.toFixed(0);
 }
 
-/** 拿当前主题的颜色。图表组件从同一份 theme.json 读，跟 CSS 变量同源。 */
-function paletteOf(theme: string): Theme {
-  return THEMES[theme as keyof typeof THEMES] ?? THEMES[DEFAULT_THEME];
+/**
+ * 拿当前主题的颜色。图表组件从同一份 theme.json 读，跟 CSS 变量同源。
+ * 传进来的是**解析后**的名字（如 "cyberpunk-dark"），不是设置里的风格名。
+ */
+function paletteOf(theme: ThemeName): Theme {
+  return THEMES[theme];
 }
 
 const AXIS_FONT = 11;
@@ -79,7 +82,7 @@ export function SpendTrendChart({
   points: TrendPoint[];
   bucket: "day" | "month";
   currency: string;
-  theme: string;
+  theme: ThemeName;
   kind: "bar" | "line";
 }) {
   const palette = paletteOf(theme);
@@ -190,7 +193,7 @@ export function Sparkline({
   points: TrendPoint[];
   series?: "expense" | "income";
   average: number;
-  theme: string;
+  theme: ThemeName;
   /** 卡片背景里留一层很淡的填充；两条线叠在一起时关掉。 */
   area?: boolean;
   /** 画不画那条日均虚线。日期栏的背景只留走势，不需要第二条虚线。 */
@@ -265,7 +268,7 @@ export function CategoryPie({
 }: {
   rows: DashboardCategory[];
   currency: string;
-  theme: string;
+  theme: ThemeName;
   onOpen: (category: string) => void;
 }) {
   const palette = paletteOf(theme);
@@ -399,7 +402,7 @@ export function AccountExpensePie({
 }: {
   accounts: AccountOverview[];
   currency: string;
-  theme: string;
+  theme: ThemeName;
 }) {
   const palette = paletteOf(theme);
   const position = new Map(accounts.map((account, index) => [account.id, index]));

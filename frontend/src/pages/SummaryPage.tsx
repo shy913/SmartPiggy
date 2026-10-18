@@ -21,6 +21,7 @@ import {
 } from "../components/charts";
 import { Card } from "../components/ui/card";
 import { useResolvedTheme } from "../App";
+import type { ThemeName } from "../theme/themes";
 import { Button } from "../components/ui/button";
 import { Empty, ErrorText, Hint } from "../components/ui/bits";
 import { day, formatAmount, formatSigned } from "../lib/format";
@@ -402,7 +403,7 @@ function Kpis({
 }: {
   data: Dashboard;
   back: string;
-  theme: string;
+  theme: ThemeName;
 }) {
   const stats = data.stats;
   const filtered = (direction: "in" | "out") => {
@@ -653,7 +654,7 @@ function Ranking({
 }: {
   data: Dashboard;
   back: string;
-  theme: string;
+  theme: ThemeName;
 }) {
   const [tab, setTab] = useState<"category" | "single">("category");
   const [categoryView, setCategoryView] = useState<"list" | "pie">("list");
@@ -867,7 +868,7 @@ function Insights({
   data: Dashboard;
   summary?: Summary;
   back: string;
-  theme: string;
+  theme: ThemeName;
 }) {
   if (!summary) return null;
   const large = summary.large.filter(

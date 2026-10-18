@@ -10,7 +10,8 @@ import type { SettingsPayload, SettingsValues } from "../api/types";
 function settingsBody(overrides: Partial<SettingsPayload> = {}): SettingsPayload {
   return {
     values: {
-      theme: "light",
+      theme_style: "standard",
+      theme_mode: "light",
       display: "GBP",
       timezone: "Europe/London",
       rates: [
