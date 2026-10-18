@@ -1682,8 +1682,8 @@ def create_group(
             """,
             ids,
         ).fetchall()
-        if any(item["direction"] != "neutral" for item in members):
-            raise BillError("月度收益汇总只能合并中性记录。")
+        if any(item["direction"] not in ("neutral", "in") for item in members):
+            raise BillError("月度收益汇总只能合并中性或收入记录。")
         if len({
             (
                 item["account_id"],
@@ -1768,7 +1768,7 @@ def append_rollup_members(
             FROM transactions t
             WHERE t.id IN ({marks})
               AND (t.hidden = 0 OR t.auto_hidden = 1)
-              AND t.direction = 'neutral'
+              AND t.direction IN ('neutral', 'in')
               AND NOT EXISTS (
                 SELECT 1 FROM tx_group_members m WHERE m.transaction_id = t.id
               )
@@ -2097,7 +2097,7 @@ def _rollup_rows(connection: sqlite3.Connection) -> list[groups.RollupRow]:
                (m.transaction_id IS NOT NULL) AS grouped
         FROM transactions t
         LEFT JOIN tx_group_members m ON m.transaction_id = t.id
-        WHERE t.direction = 'neutral'
+        WHERE t.direction IN ('neutral', 'in')
           AND (t.hidden = 0 OR t.auto_hidden = 1)
           AND t.amount_cents > 0
         ORDER BY t.occurred_date, t.id
