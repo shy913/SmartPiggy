@@ -53,7 +53,15 @@ function tooltipBox(palette: Theme) {
     border: `1px solid ${palette.border}`,
     borderRadius: 8,
     fontSize: 12,
+    // recharts 的每一项文字默认取 `entry.color || "#000"`，饼图的 payload 没有
+    // color，深色模式下就落到纯黑。文字一律用主题的正文色，不跟扇区颜色走。
+    color: palette.text,
   };
+}
+
+/** tooltip 里每一行的颜色会被 recharts 单独写死，容器色传不下去。 */
+function tooltipText(palette: Theme) {
+  return { color: palette.text };
 }
 
 /** 折线/柱状两种画法共用的那个「一天」或「一个月」怎么念。 */
@@ -103,6 +111,8 @@ export function SpendTrendChart({
       labelFormatter={(value: string) => trendLabel(value, bucket)}
       formatter={(value: number) => [`${formatAmount(value)} ${currency}`, "支出"]}
       contentStyle={tooltipBox(palette)}
+      itemStyle={tooltipText(palette)}
+      labelStyle={tooltipText(palette)}
     />
   );
 
@@ -334,6 +344,8 @@ export function CategoryPie({
               name,
             ]}
             contentStyle={tooltipBox(palette)}
+            itemStyle={tooltipText(palette)}
+            labelStyle={tooltipText(palette)}
           />
         </PieChart>
       </ResponsiveContainer>
@@ -466,6 +478,8 @@ export function AccountExpensePie({
               name,
             ]}
             contentStyle={tooltipBox(palette)}
+            itemStyle={tooltipText(palette)}
+            labelStyle={tooltipText(palette)}
           />
           {/* 图例必须有：只靠扇区颜色区分，色觉障碍的人读到的是同一块。 */}
           <Legend wrapperStyle={{ fontSize: 12 }} />
