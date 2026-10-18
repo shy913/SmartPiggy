@@ -428,6 +428,28 @@ describe("交易记录页", () => {
     ).toMatchObject({ target: "group-12" });
   });
 
+  it("窄屏收起说明列时，合并组的展开行只跨 5 列，不再把多出的一列算进表宽", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({
+        matches: true,
+        media: "(max-width: 639px)",
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
+    draw(
+      listBody({
+        total: 1,
+        group_count: 1,
+        rows: [row({ id: null, group_id: 12, member_count: 2, display_cents: 8000 })],
+        members: { "12": [member()] },
+      }),
+    );
+    await waitFor(() => expect(screen.getByText("展开这 2 笔")).toBeInTheDocument());
+    expect(screen.getByText("展开这 2 笔").closest("td")).toHaveAttribute("colspan", "5");
+  });
+
   it("按月汇总的收入合并行用收入色，不是支出色", async () => {
     draw(
       listBody({

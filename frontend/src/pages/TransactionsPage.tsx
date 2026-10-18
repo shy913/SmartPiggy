@@ -39,6 +39,37 @@ const STEP = 200;
 const STICKY = "sticky right-0 bg-bg";
 
 /**
+ * 说明列在 `sm` 以下整列收起，合并组下面那条展开行也得跟着少跨一列。
+ *
+ * 只把格子 `display:none` 还不够：展开行的 `colSpan` 仍是 6 的话，浏览器
+ * 照样按 6 列算表格宽度，多出来的一列会从「对方」那里分走一半空间——屏幕
+ * 看着是 5 列，实际还是挤的。
+ *
+ * jsdom 里没有 matchMedia，测试环境退回宽屏（6 列），跟不应用断点时的
+ * 结构一致。
+ */
+const NARROW_QUERY = "(max-width: 639px)";
+
+function useNarrow(): boolean {
+  const read = () =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia(NARROW_QUERY)
+      : null;
+  const [narrow, setNarrow] = useState(() => read()?.matches ?? false);
+
+  useEffect(() => {
+    const media = read();
+    if (!media) return;
+    setNarrow(media.matches);
+    const update = () => setNarrow(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+
+  return narrow;
+}
+
+/**
  * 合并记录的底色。
  *
  * 用实色而不是 `bg-accent/5`：那层半透明要是一格叠在行的同一层半透明底上，
@@ -83,6 +114,7 @@ export function TransactionsPage() {
   const [selected, setSelected] = useState<number[]>([]);
   const [category, setCategory] = useState("");
   const [error, setError] = useState("");
+  const narrow = useNarrow();
 
   // 换筛选是 push 一条新列表：前一条历史是旧筛选，不是 `from`，回程按钮
   // 不能再退历史，否则「← 汇总」会退回上一个筛选。
@@ -254,6 +286,7 @@ export function TransactionsPage() {
                     members={data.members[String(row.group_id)] ?? []}
                     displayCurrency={data.display_currency}
                     highlighted={flashed && flashTarget === `group-${row.group_id}`}
+                    narrow={narrow}
                   />
                 ) : (
                   <Row
@@ -619,11 +652,13 @@ function GroupRow({
   members,
   displayCurrency,
   highlighted,
+  narrow,
 }: {
   row: TransactionRow;
   members: MemberRow[];
   displayCurrency: string;
   highlighted: boolean;
+  narrow: boolean;
 }) {
   const location = useLocation();
   const nav = location.state as BackState;
@@ -700,7 +735,7 @@ function GroupRow({
       </TR>
       <tr className="border-b border-border last:border-0">
         <td
-          colSpan={6}
+          colSpan={narrow ? 5 : 6}
           className={cn(
             "px-0 py-0 transition-colors duration-700",
             highlighted ? GROUP_TINT_WARN : GROUP_TINT,
