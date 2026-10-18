@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_MODE,
   DEFAULT_STYLE,
+  FIXED_MODES,
   MODE_NAMES,
   STYLE_NAMES,
   THEMES,
@@ -155,5 +156,13 @@ describe("配色", () => {
     expect(resolveThemeName("cyberpunk", "auto", false)).toBe("cyberpunk-light");
     expect(resolveThemeName("cyberpunk", "dark", false)).toBe("cyberpunk-dark");
     expect(resolveThemeName("teal", "light", true)).toBe("teal-light");
+  });
+
+  it("固定深色的风格无视深浅设置", () => {
+    // 黑客绿离开黑底就不成立了。服务端也会把 mode 归一化成 dark。
+    expect(FIXED_MODES.hacker).toBe("dark");
+    expect(resolveThemeName("hacker", "light", false)).toBe("hacker-dark");
+    expect(resolveThemeName("hacker", "auto", false)).toBe("hacker-dark");
+    expect(resolveThemeName("hacker", "dark", true)).toBe("hacker-dark");
   });
 });

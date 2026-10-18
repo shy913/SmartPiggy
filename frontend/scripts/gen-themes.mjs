@@ -114,6 +114,12 @@ ${VARIABLES.map(([key]) => `  ${key}: string;`).join("\n")}
   mode: "dark" | "light";
 };
 
+// 有些风格天生只有一种深浅（黑客绿要黑掉才像终端）。声明在这里之后，
+// 服务端与前端都按它归一化：选了浅色也仍然是深色。
+export const FIXED_MODES: Partial<Record<ThemeStyle, ThemeMode>> = ${JSON.stringify(
+  data.fixed_modes ?? {},
+)};
+
 export const DEFAULT_STYLE: ThemeStyle = ${JSON.stringify(data.default_style)};
 export const DEFAULT_MODE: ThemeMode = ${JSON.stringify(data.default_mode)};
 export const STYLE_NAMES: ThemeStyle[] = ${JSON.stringify(styles)};
@@ -142,7 +148,8 @@ export function resolveThemeName(
   mode: ThemeMode,
   prefersDark: boolean,
 ): ThemeName {
-  const half = mode === "auto" ? (prefersDark ? "dark" : "light") : mode;
+  const fixed = FIXED_MODES[style];
+  const half = fixed ?? (mode === "auto" ? (prefersDark ? "dark" : "light") : mode);
   return \`\${style}-\${half}\` as ThemeName;
 }
 `;

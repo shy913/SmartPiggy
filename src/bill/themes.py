@@ -23,11 +23,13 @@ from .errors import BillError
 __all__ = [
     "DEFAULT_MODE",
     "DEFAULT_STYLE",
+    "FIXED_MODES",
     "LEGACY",
     "MODES",
     "STYLES",
     "Mode",
     "Style",
+    "effective_mode",
     "get_mode",
     "get_style",
     "mode_names",
@@ -67,6 +69,13 @@ MODES: dict[str, Mode] = {
     "auto": Mode(name="auto", label="跟随系统"),
     "dark": Mode(name="dark", label="深色"),
     "light": Mode(name="light", label="浅色"),
+}
+
+# 有些风格天生只有一种深浅：黑客绿离开黑底就不成立了。声明在这里之后，
+# 读取配置、保存配置和渲染外壳都先归一化，**存进去的值和实际用的是同一个**，
+# 不会出现「设置里写着浅色、屏幕上是深色」这种对不上的状态。
+FIXED_MODES: dict[str, str] = {
+    "hacker": "dark",
 }
 
 # 旧版配置只有 `[ui] theme = "dark-teal"` 这一个键。读到旧键时映射成新的一对，
@@ -109,3 +118,12 @@ def get_mode(name: str) -> Mode:
     except KeyError:
         known = "、".join(mode_names())
         raise BillError(f"深浅模式「{name}」没有，可选的只有：{known}。") from None
+
+
+def effective_mode(style: str, mode: str) -> str:
+    """这套风格实际会用哪种深浅。
+
+    固定深色的风格不报错、也不拒绝用户的选择，只是把它归一化为固定的那一种：
+    `settings.toml` 里可能还留着以前的 `mode = "light"`，升级后不该因此起不来。
+    """
+    return FIXED_MODES.get(style, mode)

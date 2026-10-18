@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import date, datetime
 
 from flask import Blueprint, current_app, g, jsonify, request, session
@@ -951,6 +952,34 @@ def _rates_to_form(values: dict) -> dict:
             str(item.get("rate", "")) for item in entries if isinstance(item, dict)
         ]
     return data
+
+
+@blueprint.put("/settings/theme")
+def settings_theme():
+    """只改配色，点一下立刻落盘。
+
+    单独一条路由，而不是让前端把整张表单再提交一遍：配色是「看一眼就想换」
+    的东西，而表单里可能还留着填了一半的汇率。为了换颜色去提交那些半成品，
+    用户会被一个跟配色毫无关系的校验错误挡住。
+
+    读的是**磁盘上当前的设置**再替换两个字段，所以它不会顺手把别的设置改回
+    表单里的旧值；表单底部那个「保存」仍然是整张表单的语义，两边互不影响。
+    """
+    body = _body()
+    conf = settings.load()
+    style = str(body.get("style") or conf.theme_style)
+    mode = str(body.get("mode") or conf.theme_mode)
+    try:
+        themes.get_style(style)
+        themes.get_mode(mode)
+    except BillError as error:
+        return _error("validation", str(error), 400)
+    mode = themes.effective_mode(style, mode)
+    try:
+        settings.save(replace(conf, theme_style=style, theme_mode=mode))
+    except BillError as error:
+        return _error("validation", str(error), 400)
+    return jsonify(saved=True, theme=style, theme_mode=mode)
 
 
 @blueprint.put("/settings")

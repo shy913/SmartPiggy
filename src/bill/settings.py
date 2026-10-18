@@ -190,6 +190,8 @@ def load() -> Settings:
         # 同上：认不出的名字当场报，别悄悄换个样子。
         themes.get_style(style)
         themes.get_mode(mode)
+        # 固定深色的风格（黑客绿）把 mode 归一化，存下来的就是实际生效的那个。
+        mode = themes.effective_mode(style, mode)
 
         # 逐键回落到默认值。**不能**写成「段缺失就关闭」：用户文件是**整体覆盖**
         # 内置文件的，而 `load()` 读到第一个能读的文件就 return——官方文档教的
@@ -322,6 +324,8 @@ def read_form(data) -> tuple[Settings | None, dict[str, Any], list[str]]:
         themes.get_mode(theme_mode)
     except BillError as error:
         errors.append(str(error))
+    # 固定深色的风格按固定值存；用户选了浅色也只是点击顺序不同，不算错误。
+    theme_mode = themes.effective_mode(theme_style, theme_mode)
 
     display = (data.get("display") or "").strip().upper()
     if not is_currency_code(display):

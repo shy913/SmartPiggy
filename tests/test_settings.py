@@ -146,6 +146,73 @@ def test_saving_a_theme_writes_it_into_the_user_config(client, isolated_data_dir
     assert (conf.theme_style, conf.theme_mode) == ("cyberpunk", "light")
 
 
+def test_saving_only_the_theme_leaves_the_rest_alone(client, isolated_data_dir):
+    """配色点一下就落盘：只改这两个字段，不碰表单里其他值。
+
+    设置页上那些输入框可能还留着填了一半的内容；换颜色不该把它们带上，
+    更不该因为其中一个没填对而失败。
+    """
+    assert save(client, large_out="900").status_code == 200
+
+    response = client.put(
+        "/api/settings/theme", json={"style": "cyberpunk", "mode": "light"}
+    )
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "saved": True,
+        "theme": "cyberpunk",
+        "theme_mode": "light",
+    }
+
+    conf = settings.load()
+    assert (conf.theme_style, conf.theme_mode) == ("cyberpunk", "light")
+    assert conf.large_out_cents == 90_000
+    written = (isolated_data_dir / "settings.toml").read_text(encoding="utf-8")
+    assert 'style = "cyberpunk"' in written
+    assert 'mode = "light"' in written
+
+
+def test_only_the_named_half_of_the_theme_changes(client):
+    """只传深浅（或只传风格）时，另一半保持原样。"""
+    save(client, theme_style="cyberpunk", theme_mode="dark")
+
+    assert client.put("/api/settings/theme", json={"mode": "light"}).status_code == 200
+    conf = settings.load()
+    assert (conf.theme_style, conf.theme_mode) == ("cyberpunk", "light")
+
+
+def test_a_fixed_mode_style_is_normalized_to_dark(client):
+    """黑客绿固定深色：选浅色也存成深色，屏幕和配置文件一致。"""
+    response = client.put(
+        "/api/settings/theme", json={"style": "hacker", "mode": "light"}
+    )
+    assert response.status_code == 200
+    assert response.get_json()["theme_mode"] == "dark"
+    assert settings.load().theme_mode == "dark"
+
+    # 整张表单那条路也一样。
+    assert save(client, theme_style="hacker", theme_mode="light").status_code == 200
+    conf = settings.load()
+    assert (conf.theme_style, conf.theme_mode) == ("hacker", "dark")
+
+
+@pytest.mark.parametrize(
+    "body, fragment",
+    [
+        ({"style": "彩虹"}, "配色风格"),
+        ({"mode": "半深不浅"}, "深浅模式"),
+    ],
+)
+def test_a_bad_theme_is_rejected_without_touching_the_file(
+    client, isolated_data_dir, body, fragment
+):
+    before = (isolated_data_dir / "settings.toml").read_text(encoding="utf-8")
+    response = client.put("/api/settings/theme", json=body)
+    assert response.status_code == 400
+    assert fragment in payload(response)["error"]["message"]
+    assert (isolated_data_dir / "settings.toml").read_text(encoding="utf-8") == before
+
+
 def test_an_empty_rate_list_is_written_as_an_empty_table(client, isolated_data_dir):
     """一行都没填时写 `{}`——`{  }` 读得回来，但看着像漏填了什么。"""
     save(client, rates=[{"code": "", "rate": ""}])

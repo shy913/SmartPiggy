@@ -258,4 +258,12 @@ export const saveSettings = (values: SettingsPayload["values"]) =>
     body: JSON.stringify(values),
   });
 
+/** 只保存配色。设置页点一下配色就调它，不牵动表单里其他没保存的字段。 */
+export const saveTheme = (style: string, mode: string) =>
+  request<{ saved: boolean; theme: string; theme_mode: string }>("/api/settings/theme", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ style, mode }),
+  });
+
 export const getProfiles = () => request<ProfilesPayload>("/api/profiles");

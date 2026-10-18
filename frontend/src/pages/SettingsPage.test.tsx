@@ -42,16 +42,46 @@ function settingsBody(overrides: Partial<SettingsPayload> = {}): SettingsPayload
   };
 }
 
+const meta = {
+  theme: "standard",
+  theme_mode: "light",
+  styles: [
+    { name: "standard", label: "标准" },
+    { name: "teal", label: "青橙" },
+    { name: "cyberpunk", label: "赛博朋克" },
+    { name: "hacker", label: "黑客绿" },
+  ],
+  modes: [
+    { name: "auto", label: "跟随系统" },
+    { name: "dark", label: "深色" },
+    { name: "light", label: "浅色" },
+  ],
+};
+
+const reply = (body: unknown) => ({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify(body),
+});
+
 function draw() {
   const puts: SettingsValues[] = [];
+  const themePuts: { style: string; mode: string }[] = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (_input: string, init?: RequestInit) => {
+    vi.fn(async (input: string, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/meta")) return reply(meta);
+      if (init?.method === "PUT" && url.endsWith("/api/settings/theme")) {
+        const body = JSON.parse(String(init.body)) as { style: string; mode: string };
+        themePuts.push(body);
+        return reply({ saved: true, theme: body.style, theme_mode: body.mode });
+      }
       if (init?.method === "PUT") {
         puts.push(JSON.parse(String(init.body)) as SettingsValues);
-        return { ok: true, status: 200, text: async () => JSON.stringify({ saved: true }) };
+        return reply({ saved: true });
       }
-      return { ok: true, status: 200, text: async () => JSON.stringify(settingsBody()) };
+      return reply(settingsBody());
     }),
   );
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -62,10 +92,14 @@ function draw() {
       </MemoryRouter>
     </QueryClientProvider>,
   );
-  return puts;
+  return { puts, themePuts };
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  delete document.documentElement.dataset.style;
+  delete document.documentElement.dataset.mode;
+});
 
 describe("设置页的币种", () => {
   it("账本里出现过的币种自动列出来，没配汇率的标出来", async () => {
@@ -82,7 +116,7 @@ describe("设置页的币种", () => {
 
   it("留空的检测行不提交，填了汇率才提交", async () => {
     const user = userEvent.setup();
-    const puts = draw();
+    const { puts } = draw();
     await waitFor(() => expect(screen.getByText("USD")).toBeInTheDocument());
 
     await user.click(screen.getByRole("button", { name: "保存" }));
@@ -97,5 +131,52 @@ describe("设置页的币种", () => {
       { code: "CNY", rate: "8.9" },
       { code: "USD", rate: "1.32" },
     ]);
+  });
+});
+
+describe("设置页的配色", () => {
+  it("点一下风格就生效并落盘，不用按保存", async () => {
+    const user = userEvent.setup();
+    const { puts, themePuts } = draw();
+
+    const button = await screen.findByRole("button", { name: "赛博朋克" });
+    await user.click(button);
+
+    await waitFor(() =>
+      expect(themePuts).toEqual([{ style: "cyberpunk", mode: "light" }]),
+    );
+    // 走的不是整张表单那条路：配色单独提交，别的字段一个都不带。
+    expect(puts).toEqual([]);
+    expect(document.documentElement.dataset.style).toBe("cyberpunk");
+    expect(document.documentElement.dataset.mode).toBe("light");
+    await waitFor(() => expect(button).toHaveAttribute("aria-pressed", "true"));
+  });
+
+  it("点深浅同样立即生效", async () => {
+    const user = userEvent.setup();
+    const { themePuts } = draw();
+
+    await user.click(await screen.findByRole("button", { name: "深色" }));
+
+    await waitFor(() =>
+      expect(themePuts).toEqual([{ style: "standard", mode: "dark" }]),
+    );
+    expect(document.documentElement.dataset.mode).toBe("dark");
+  });
+
+  it("固定深色的风格会把深浅锁定", async () => {
+    const user = userEvent.setup();
+    const { themePuts } = draw();
+
+    await user.click(await screen.findByRole("button", { name: "黑客绿" }));
+
+    // 原来选的是浅色，切到黑客绿之后发出去的、存进来的都是深色。
+    await waitFor(() =>
+      expect(themePuts).toEqual([{ style: "hacker", mode: "dark" }]),
+    );
+    expect(document.documentElement.dataset.style).toBe("hacker");
+    expect(document.documentElement.dataset.mode).toBe("dark");
+    expect(screen.getByRole("button", { name: "浅色" })).toBeDisabled();
+    expect(screen.getByText("这套风格固定深色")).toBeInTheDocument();
   });
 });

@@ -48,6 +48,18 @@ def test_the_defaults_exist_on_both_sides():
     assert data["default_mode"] in themes.mode_names()
 
 
+def test_fixed_modes_match_on_both_sides():
+    """固定深浅的风格（黑客绿）两边都得知道。
+
+    只在一边写的话，会出现「设置页还让你选浅色，屏幕却始终是深的」，或者
+    反过来——存进去的值和实际用的值对不上，而界面上没有任何提示。
+    """
+    assert theme_json().get("fixed_modes", {}) == themes.FIXED_MODES
+    for style, mode in themes.FIXED_MODES.items():
+        assert style in theme_json()["styles"], f"{style} 固定了深浅却没有配色"
+        assert mode in themes.MODES, f"{style} 固定成了不存在的深浅 {mode}"
+
+
 def test_labels_live_in_python_only():
     """标签（「标准」这种话）只写在一个地方，别在 JSON 里再来一份。"""
     for name, halves in theme_json()["styles"].items():

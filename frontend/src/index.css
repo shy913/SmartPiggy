@@ -64,10 +64,11 @@ body {
    background-image 铺在内容下面（扫描线盖在上面但 pointer-events: none，
    不挡点击）。颜色一律从当前主题的变量混出来，深浅两版自动跟着变。
    ------------------------------------------------------------------------- */
+/* 网格是电蓝、扫描线是荧光黄——这一对撞色不跟着深浅走，两种模式下都同时出现。 */
 [data-style="cyberpunk"] body {
   background-image:
-    linear-gradient(color-mix(in srgb, var(--accent) 7%, transparent) 1px, transparent 1px),
-    linear-gradient(90deg, color-mix(in srgb, var(--accent) 7%, transparent) 1px, transparent 1px);
+    linear-gradient(color-mix(in srgb, #2a6bff 16%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, #2a6bff 16%, transparent) 1px, transparent 1px);
   background-size: 44px 44px;
 }
 
@@ -80,7 +81,7 @@ body {
   pointer-events: none;
   background: repeating-linear-gradient(
     0deg,
-    color-mix(in srgb, var(--accent) 10%, transparent) 0 1px,
+    color-mix(in srgb, #fcee0a 13%, transparent) 0 1px,
     transparent 1px 4px
   );
   opacity: 0.5;
@@ -125,11 +126,11 @@ body {
   }
 }
 
-/* 顶栏下沿一条霓虹细线，边框本身也掺一点强调色。 */
+/* 顶栏下沿一条电蓝细线，跟黄色的品牌名撞在一起。 */
 [data-style="cyberpunk"] header {
   box-shadow:
-    0 1px 0 var(--accent),
-    0 6px 24px color-mix(in srgb, var(--accent) 16%, transparent);
+    0 1px 0 #2a6bff,
+    0 6px 24px color-mix(in srgb, #2a6bff 24%, transparent);
 }
 
 [data-style="cyberpunk"] .border-border {
