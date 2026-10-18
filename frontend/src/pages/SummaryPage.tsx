@@ -416,7 +416,7 @@ function Kpis({
   };
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3">
       <MetricCard
         label="支出"
         value={stats.expense}
@@ -449,25 +449,6 @@ function Kpis({
           />
         }
       />
-      <MetricCard
-        label="结余"
-        value={stats.net}
-        tone={stats.net < 0 ? "text-out" : "text-text"}
-      />
-      <MetricCard
-        label="日均支出"
-        value={stats.daily_average}
-        tone="text-text"
-        spark={
-          <Sparkline
-            points={data.trend.points}
-            average={data.trend.average}
-            theme={theme}
-          />
-        }
-      >
-        已过 {stats.elapsed_days} 天
-      </MetricCard>
     </div>
   );
 }
@@ -592,8 +573,16 @@ function Forecast({ data }: { data: Dashboard }) {
         <span className="text-xs text-muted">{data.currency}</span>
       </div>
       <div className="mt-3 grid gap-4 sm:grid-cols-2">
-        <ForecastItem label="预计本月支出" window={data.forecast.month} />
-        <ForecastItem label="预计本年支出" window={data.forecast.year} />
+        {/* 两个预测都是拿「今天所在的月 / 年」外推的。翻到已经过完的区间时，
+            它们跟屏幕上这段日期没有关系，换成这段区间自己的支出和它跟平均的差距。 */}
+        {data.range.current ? (
+          <>
+            <ForecastItem label="预计本月支出" window={data.forecast.month} />
+            <ForecastItem label="预计本年支出" window={data.forecast.year} />
+          </>
+        ) : (
+          <RangeTotal data={data} />
+        )}
       </div>
       {averages ? (
         <div className="mt-4 grid grid-cols-2 gap-3 border-t border-border pt-3">
@@ -610,6 +599,60 @@ function Forecast({ data }: { data: Dashboard }) {
         </div>
       ) : null}
     </Card>
+  );
+}
+
+/**
+ * 历史区间的读数：这段日期实际花了多少，跟最近的平均比高还是低。
+ *
+ * 用 `stats.expense` 而不是预测里的 `spent`——后者只认「今天所在的月 / 年」，
+ * 跟地址栏里的区间无关。`days` / `all` 这类自定义区间没有可比的月均，就只报
+ * 这段区间自己的日均。
+ */
+function RangeTotal({ data }: { data: Dashboard }) {
+  const { mode } = data.range;
+  const label = mode === "month" ? "该月支出" : mode === "year" ? "该年支出" : "区间支出";
+  const averageLabel = mode === "year" ? "年均" : "月均";
+  const average =
+    mode === "month" || mode === "year"
+      ? data.averages
+        ? mode === "year"
+          ? data.averages.yearly
+          : data.averages.monthly
+        : null
+      : null;
+  const delta =
+    average && average > 0
+      ? Math.round(((data.stats.expense - average) / average) * 100)
+      : null;
+
+  return (
+    <div className="sm:col-span-2">
+      <div className="text-xs text-muted">{label}</div>
+      <div className="tabular mt-0.5 text-2xl font-semibold">
+        {formatAmount(data.stats.expense)}
+      </div>
+      <div className="mt-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-muted">
+        <span className="flex flex-wrap items-center gap-x-2">
+          {average !== null ? (
+            <span>
+              {averageLabel} {formatAmount(average)}
+            </span>
+          ) : null}
+          {delta !== null ? (
+            <span className={delta > 0 ? "text-out" : delta < 0 ? "text-in" : ""}>
+              {delta === 0
+                ? `与${averageLabel}持平`
+                : `较${averageLabel}${delta > 0 ? "高" : "低"} ${Math.abs(delta)}%`}
+            </span>
+          ) : null}
+          {average === null ? (
+            <span>日均 {formatAmount(data.stats.daily_average)}</span>
+          ) : null}
+        </span>
+        <span className="tabular">共 {data.stats.elapsed_days} 天</span>
+      </div>
+    </div>
   );
 }
 

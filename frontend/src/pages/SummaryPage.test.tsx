@@ -226,6 +226,65 @@ describe("汇总页", () => {
     );
   });
 
+  it("首页只留支出和收入两格，不再摆结余与日均支出", async () => {
+    draw(summaryBody());
+    await waitFor(() => expect(screen.getByRole("link", { name: /^支出/ })).toBeInTheDocument());
+    expect(screen.getByRole("link", { name: /^收入/ })).toBeInTheDocument();
+    expect(screen.queryByText("结余")).toBeNull();
+    expect(screen.queryByText("日均支出")).toBeNull();
+  });
+
+  it("翻到已经过完的月份，预测换成该月支出与月均的对比", async () => {
+    draw(
+      summaryBody({ range: { ...rangeBody(), month: "2026-09", start: "2026-09-01", end: "2026-09-30", label: "2026-09" } }),
+      dashboardBody({
+        range: {
+          ...rangeBody(),
+          month: "2026-09",
+          start: "2026-09-01",
+          end: "2026-09-30",
+          label: "2026-09",
+          natural_end: "2026-09-30",
+          partial: false,
+          current: false,
+          can_prev: true,
+          can_next: true,
+        },
+      }),
+    );
+    expect(await screen.findByText("该月支出")).toBeInTheDocument();
+    // 预测说的是「今天所在的月」，跟这段历史区间无关，不该再出现。
+    expect(screen.queryByText("预计本月支出")).toBeNull();
+    expect(screen.queryByText("预计本年支出")).toBeNull();
+    expect(screen.getByText("较月均高 16%")).toBeInTheDocument();
+  });
+
+  it("翻到已经过完的年份，预测换成该年支出与年均的对比", async () => {
+    draw(
+      summaryBody({ range: { ...rangeBody(), mode: "year", month: "2025-10", year: "2025", start: "2025-01-01", end: "2025-12-31", label: "2025" } }),
+      dashboardBody({
+        range: {
+          ...rangeBody(),
+          mode: "year",
+          month: "2025-10",
+          year: "2025",
+          start: "2025-01-01",
+          end: "2025-12-31",
+          label: "2025",
+          natural_end: "2025-12-31",
+          partial: false,
+          current: false,
+          can_prev: true,
+          can_next: true,
+        },
+      }),
+    );
+    expect(await screen.findByText("该年支出")).toBeInTheDocument();
+    expect(screen.queryByText("预计本月支出")).toBeNull();
+    expect(screen.queryByText("预计本年支出")).toBeNull();
+    expect(screen.getByText("较年均低 90%")).toBeInTheDocument();
+  });
+
   it("当前区间不显示「回到本月」，翻到上个月才出现", async () => {
     const first = draw(summaryBody());
     await waitFor(() => expect(screen.getByText("预计本月支出")).toBeInTheDocument());
