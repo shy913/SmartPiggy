@@ -22,7 +22,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory, session
 
-from . import api, auth, config, settings, themes
+from . import api, auth, compression, config, settings, themes
 from .errors import BillError
 
 __all__ = ["create_app", "main"]
@@ -195,6 +195,11 @@ def create_app() -> Flask:
     def harden(response):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         return response
+
+    @app.after_request
+    def gzip_response(response):
+        """接口 JSON 和前端产物都从这里过一遍（见 compression.py）。"""
+        return compression.compress(response, request.headers.get("Accept-Encoding", ""))
 
     @app.errorhandler(404)
     def not_found(_error):
