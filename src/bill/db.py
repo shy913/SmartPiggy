@@ -202,6 +202,63 @@ MIGRATIONS: list[list[str]] = [
         FROM transactions t
         """,
     ],
+    [
+        # v5：按月汇总收益。它跟 AA / 收支平衡的「净额」不是一回事：中性行
+        # 带方向相加恒为 0，而这里要的是「一个月里所有收益加起来」。所以组多
+        # 一个 kind，账本按 kind 决定合成行的金额与方向。老组一律是 net。
+        "ALTER TABLE tx_groups ADD COLUMN kind TEXT NOT NULL DEFAULT 'net'"
+        " CHECK (kind IN ('net','rollup'))",
+        # rollup 组的身份是「账户 + 对方 + 月份 + 币种」。拿它做唯一约束，
+        # 重复扫描或并发建组都不会冒出两个同月份的收益组。
+        "ALTER TABLE tx_groups ADD COLUMN rollup_key TEXT",
+        "CREATE UNIQUE INDEX ux_tx_groups_rollup_key"
+        " ON tx_groups(rollup_key) WHERE rollup_key IS NOT NULL",
+        # 取消一个 rollup 组时按 key 记住，而不是按「锚点那一笔」：以后补导入
+        # 一笔更早的收益，锚点会变，旧的 veto 就失效了。
+        """
+        CREATE TABLE tx_rollup_vetoes (
+          rollup_key TEXT PRIMARY KEY,
+          created_at TEXT NOT NULL
+        )
+        """,
+    ],
+    [
+        # v6：支付宝的「不计收支」导入后直接是隐藏状态，不再只是中性。
+        #
+        # 隐藏不改变任何原始数据：金额、币种、方向、去重键、内容指纹都没动，
+        # 只是这一行默认不进合计（中性本来也不进），并且默认视图里灰着。
+        # 方向仍是 neutral——按月收益汇总靠它取数，改成别的会让余额宝收益
+        # 那几百笔从月度收入里悄悄消失。
+        #
+        # auto_hidden 把「账单配置自动藏的」和「用户手点的」分开：收益汇总
+        # 要把自动隐藏的余额宝收益照常合进来，但手动藏掉的一笔不能被下次扫描
+        # 又悄悄合回去（见 tests/test_rollup.py）。
+        "ALTER TABLE transactions ADD COLUMN auto_hidden INTEGER NOT NULL DEFAULT 0",
+        # v1 的视图同样在 `t.*` 里展开了当时的列清单，新列要重建一次才看得见。
+        "DROP VIEW tx_signed",
+        """
+        CREATE VIEW tx_signed AS
+        SELECT t.*,
+               CASE t.direction
+                 WHEN 'out' THEN -t.amount_cents
+                 WHEN 'in'  THEN  t.amount_cents
+                 ELSE 0
+               END AS signed_cents
+        FROM transactions t
+        """,
+        # 只补已经入库的历史数据。新导入的行由支付宝配置里的
+        # [values].hidden 在解析时标记，规则只写在一处（profile），不散在代码里。
+        #
+        # json_valid 兜一下：raw_json 一直是本程序写的合法 JSON，但这条迁移
+        # 失败会让服务起不来，不值得赌。
+        """
+        UPDATE transactions SET hidden = 1, auto_hidden = 1
+        WHERE profile_name = 'alipay'
+          AND direction = 'neutral'
+          AND json_valid(raw_json)
+          AND json_extract(raw_json, '$."收/支"') = '不计收支'
+        """,
+    ],
 ]
 
 

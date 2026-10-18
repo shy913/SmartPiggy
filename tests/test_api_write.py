@@ -90,6 +90,39 @@ def test_changing_a_row(client):
     assert detail["transaction"]["effective_category"] == "餐饮美食"
 
 
+def test_changing_a_row_says_which_group_it_is_in(client):
+    """改完这一笔在列表上落在哪一行：还在组里就回组号。
+
+    列表把合并后的几笔画成一行，前端拿不到组号就只能去找一条根本不存在的
+    交易行——回去既不定位也不高亮。
+    """
+    first = payload(record(client))["id"]
+    second = payload(record(client, amount="1.00"))["id"]
+    group_id = payload(
+        client.post("/api/groups", json={"transaction_ids": [first, second]})
+    )["group_id"]
+
+    changed = payload(
+        client.patch(
+            f"/api/transactions/{first}",
+            json={
+                "occurred_at": f"{today()}T12:30",
+                "direction": "out",
+                "amount": "32.50",
+                "currency": "CNY",
+                "account_name": "支付宝",
+                "category": "餐饮美食",
+                "counterparty": "美团平台商户",
+                "description": "",
+                "memo": "",
+                "payment_method": "",
+                "counterparty_account": "",
+            },
+        )
+    )
+    assert changed["group_id"] == group_id
+
+
 def test_deleting_a_row(client):
     txn_id = payload(record(client))["id"]
     assert client.delete(f"/api/transactions/{txn_id}").status_code == 204
@@ -276,8 +309,9 @@ def test_upload_preview_confirm(client):
     assert preview["counts"]["new"] == 3
     assert preview["counts"]["duplicate"] == 0
     assert preview["counts"]["neutral"] == 1, "¥100 那笔是「不计收支」，要有交代"
-    assert preview["totals"]["income"] == 1200000
-    assert preview["totals"]["expense"] == 3250
+    assert preview["totals"] == [
+        {"currency": "CNY", "income": 1200000, "expense": 3250}
+    ]
     assert preview["token"] == token
 
     import_id = confirm(client, token)
