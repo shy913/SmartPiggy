@@ -43,6 +43,9 @@ html {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-sans);
+  /* 顶栏还没挂载/还没量出来时，页面内吸顶元素的兜底偏移。挂载后由
+     App.tsx 用 ResizeObserver 改成实测高度。 */
+  --bill-header-height: 57px;
 }
 
 body {

@@ -102,13 +102,15 @@ afterEach(() => {
 });
 
 describe("这一笔", () => {
-  it("回程链接和合并组页同一套：吸在视口顶上", async () => {
+  it("回程链接和合并组页同一套：吸在顶栏下沿，不被常驻顶栏盖住", async () => {
     draw({ from: "/transactions?start=2026-10-01&end=" });
     await waitFor(() => expect(screen.getByRole("link", { name: "交易记录" })).toBeInTheDocument());
 
     const link = screen.getByRole("link", { name: "交易记录" }).closest("a");
     expect(link).toHaveAttribute("href", "/transactions?start=2026-10-01&end=");
-    expect(link?.closest("div")).toHaveClass("sticky", "top-0");
+    const sticky = link?.closest("div");
+    expect(sticky).toHaveClass("sticky");
+    expect(sticky?.style.top).toBe("var(--bill-header-height, 57px)");
   });
 
   it("直接打开时回这一笔现在待的那个月", async () => {

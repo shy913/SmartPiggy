@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -104,6 +104,24 @@ export function App() {
     if (mode) document.documentElement.dataset.mode = mode;
   }, [style, mode]);
 
+  // 页面里的吸顶元素（回程链接）要贴在顶栏下沿。顶栏在窄屏会折成两行，
+  // 高度不是个常数，所以量出来写进 CSS 变量，别让两边各猜一个数。
+  const headerRef = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+    const publish = () => {
+      document.documentElement.style.setProperty(
+        "--bill-header-height",
+        `${header.getBoundingClientRect().height}px`,
+      );
+    };
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, [session.data]);
+
   if (session.isPending) return <Splash />;
 
   // 外壳是免登录的（里面没有账目数据），数据全在 /api/*。所以登录这一步在
@@ -115,9 +133,20 @@ export function App() {
   return (
     <div className="min-h-screen">
       {/* 常驻：翻长列表时导航和退出始终够得着。背景必须是实色，
-          否则内容从底下透过来。 */}
-      <header className="sticky top-0 z-40 border-b border-border bg-panel">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
+          否则内容从底下透过来。顶部的安全区（灵动岛 / 状态栏）也铺同一块
+          底色，不然那一截会露出页面背景。 */}
+      <header
+        ref={headerRef}
+        className="sticky top-0 z-40 border-b border-border bg-panel"
+        style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
+      >
+        <div
+          className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3"
+          style={{
+            paddingLeft: "max(1rem, env(safe-area-inset-left, 0px))",
+            paddingRight: "max(1rem, env(safe-area-inset-right, 0px))",
+          }}
+        >
           <span className="brand font-semibold">记账</span>
           <nav className="flex flex-wrap items-center gap-1 text-sm">
             {NAV.map((item) => (

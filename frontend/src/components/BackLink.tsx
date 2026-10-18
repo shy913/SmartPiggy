@@ -66,7 +66,12 @@ export function BackPill({ to, label, back = false, state }: BackProps) {
  */
 export function BackLink(props: BackProps) {
   return (
-    <div className="sticky top-0 z-10 -mx-4 mb-3 bg-bg/90 px-4 py-2 backdrop-blur">
+    // top 用顶栏量出来的高度：顶栏常驻之后，贴在 top:0 会被它整个盖住，
+    // 「回去」就点不到了。高度随折行/安全区变，所以只能读变量。
+    <div
+      className="sticky z-10 -mx-4 mb-3 bg-bg/90 px-4 py-2 backdrop-blur"
+      style={{ top: "var(--bill-header-height, 57px)" }}
+    >
       <BackPill {...props} />
     </div>
   );

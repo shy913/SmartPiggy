@@ -6,7 +6,9 @@
 <html lang="zh-CN" data-style="%BILL_THEME_STYLE%" data-mode="%BILL_THEME_MODE%">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover：让顶栏的底色一直铺到灵动岛后面，安全区的留白由
+         顶栏自己用 env(safe-area-inset-*) 补。 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>记账</title>
   </head>
   <body>
