@@ -1,0 +1,56 @@
+# 中国银行「信用卡电子合并账单」（文字版 PDF）。
+#
+# 跟储蓄卡那份「交易流水明细」不是一回事：这里没有币别列，币种写在每个小节的
+# 标题里——「人民币交易明细/RMB Transaction Detailed List」和
+# 「(GBP)外币交易明细/FCY Transaction Detailed List」。读取层会按标题位置给
+# 每行补一列「币别」，所以下面的 currency 映射的是这一列，不是账单上真的有一列。
+#
+# 金额分成「存入 / 支出」两列，而不是带正负号的单列。
+# 日期只有「交易日」和「银行记账日」两个纯日期，取交易日。
+#
+# 转账用 BOCNET 这个写法出现（网银转出 / 还款），是自己账户之间的移动，
+# 记中性；存款利息和 1% 返现照常记收入。
+
+[profile]
+name     = "boc_credit"
+title    = "中国银行信用卡"
+kind     = "bank"
+timezone = "Asia/Shanghai"
+format   = "pdf"
+# 万一某一行没落在任何币种小节里，按账单的默认记账币种算。
+currency = "CNY"
+
+[match]
+filename_globs    = ["*信用卡*", "*电子合并账单*"]
+required_headers  = ["交易日", "银行记账日", "交易描述"]
+preferred_headers = ["存入", "支出", "卡号后四位"]
+
+[headers]
+scan_first_rows = 20
+match_any       = ["交易日", "银行记账日", "交易描述"]
+
+[columns]
+date                 = ["交易日"]
+amount_in            = ["存入"]
+amount_out           = ["支出"]
+description          = ["交易描述"]
+currency             = ["币别"]
+# 卡号后四位是**自己的卡**，不是对方账号，所以不映射到 counterparty_account；
+# 它仍然留在 raw_json 里。
+
+[parse]
+date_formats = ["%Y-%m-%d"]
+# 账单只有日期。用中午而不是午夜，是为了换算到别的时区时不把日期挪到前一天：
+# 北京时间 00:00 在伦敦还是前一天 16:00，而中午在常见时区都还是同一天。
+default_time = "12:00:00"
+# 网银转账（包括给这张卡还款、把溢缴款转出去）不是收支。
+neutral_descriptions = ["BOCNET"]
+
+[dedup]
+# 信用卡账单没有流水号，走「时间 + 方向 + 金额 + 对方」的内容指纹。
+id_null_values = ["", "/", "--", "-------------------"]
+
+[cleanup]
+footer_patterns = ['^第\s*\d+\s*页', '^温馨提示']
+# 列少、末尾常常为空，别往上调——汇总行由 footer_patterns 拦。
+min_columns     = 2

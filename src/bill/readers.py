@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 import zipfile
 from collections import Counter
 from dataclasses import dataclass, field
@@ -395,8 +396,18 @@ def _read_zip(
 def _read_pdf(filename: str, data: bytes, probes: tuple[str, ...]) -> RawTable:
     """把文字版 PDF 的表格摊成「表头 + 数据行」。
 
-    只做抽取，不做列映射：每页的表格交给 ``extract_tables``，重复的表头丢掉，
-    单元格里的排版折行拼回去，剩下的跟 CSV 一样交给 ``find_header``。
+    只做抽取，不做列映射：每页的表格交给 pdfplumber，重复的表头丢掉，单元格
+    里的排版折行拼回去，剩下的跟 CSV 一样交给 ``find_header``。
+
+    两个跟普通流水不同的地方：
+
+    - **一页可能有多张表。** 信用卡合并账单把人民币和每种外币分成不同小节，
+      一节一张表，页眉汇总表也长得像表。这里靠「第一行有没有命中配置里的
+      列名」区分交易表和汇总表，而不是每页只挑一张。
+    - **币种写在标题里，不在列里。** 比如「人民币交易明细」和
+      「(GBP)外币交易明细」，一张表属于哪个小节由标题在页面上的纵向位置决定。
+      识别到这种小节时，读取层给每行补一列「币别」，配置里把它映射到
+      ``[columns].currency`` 就行。
 
     密码按中国银行导出的习惯，先试文件名去掉扩展名，再试完整文件名。改过名的
     文件解不开时明确说清楚——静默跳过会让用户以为文件是空的。
@@ -434,38 +445,88 @@ def _read_pdf(filename: str, data: bytes, probes: tuple[str, ...]) -> RawTable:
 
     rows: list[list[str]] = []
     header: list[str] | None = None
+    base_width = 0
+    add_currency_column = False
+    current_currency = ""
     skipped_pages: list[int] = []
     truncated = False
     total_pages = 0
 
     try:
         total_pages = len(pdf.pages)
-        for page_number, page in enumerate(pdf.pages[:MAX_PDF_PAGES], 1):
+        pages = pdf.pages[:MAX_PDF_PAGES]
+        # 先看整份文件有没有「××交易明细」小节。有才补币别列——普通流水本来就
+        # 有币别列，多补一列会让同一份文件里出现两个「币别」。
+        marks_by_page = [_pdf_currency_marks(page) for page in pages]
+        has_sections = any(marks for marks in marks_by_page)
+
+        for page_number, (page, marks) in enumerate(zip(pages, marks_by_page), 1):
             try:
-                tables = page.extract_tables() or []
+                entries = _pdf_table_entries(page)
             except Exception:
                 skipped_pages.append(page_number)
                 continue
-            table = _pick_pdf_table(tables, probes)
-            if not table:
+
+            used = False
+            for top, table in entries:
+                # 小节标题在表格上方，纵向位置最近的标题决定这张表的币种。
+                for mark_top, code in marks:
+                    if mark_top <= top:
+                        current_currency = code
+
+                cleaned = [
+                    [_pdf_cell(cell) for cell in row] for row in table
+                ]
+                cleaned = [row for row in cleaned if any(cell for cell in row)]
+                if not cleaned:
+                    continue
+
+                labels = [_pdf_header_label(cell) for cell in cleaned[0]]
+                # 没有列名可参考时（直接调用读取层的场景），第一张表的第一行
+                # 就按表头处理——跟 CSV 的默认约定一致；之后只认跟它一样的行。
+                if probes:
+                    looks_like_header = _header_hits(labels, probes) >= 2
+                else:
+                    looks_like_header = header is None or _clean_header(labels) == header
+                if looks_like_header:
+                    if header is None:
+                        header = _clean_header(labels)
+                        base_width = len(header)
+                        add_currency_column = (
+                            has_sections and _CURRENCY_COLUMN not in header
+                        )
+                        rows.append(
+                            [*header, _CURRENCY_COLUMN]
+                            if add_currency_column
+                            else list(header)
+                        )
+                    # 后一个小节的重复表头只丢这一行，数据行照常留着。
+                    rows.extend(
+                        _pdf_emit(row, current_currency, add_currency_column)
+                        for row in cleaned[1:]
+                    )
+                    used = True
+                elif header is not None and _pdf_same_width(cleaned[0], base_width):
+                    # 跨页续表没有表头，列数和规范表头一致就算它的数据。
+                    rows.extend(
+                        _pdf_emit(row, current_currency, add_currency_column)
+                        for row in cleaned
+                    )
+                    used = True
+
+                if len(rows) >= MAX_ROWS:
+                    truncated = True
+                    break
+
+            # 小节标题可能出现在这一页最后一张表的下方（人民币那一节的表格
+            # 从下一页才开始），也可能这一页根本没有交易表。把标题记下来，
+            # 下一页继续用它，否则第二页开头那几行会丢掉币种。
+            for _mark_top, code in marks:
+                current_currency = code
+
+            if not used:
                 skipped_pages.append(page_number)
-                continue
-
-            cleaned = [[_pdf_cell(cell) for cell in row] for row in table]
-            if not cleaned:
-                continue
-
-            if header is None:
-                # 表格开头可能还有标题行；用命中最多的那一行当规范表头。
-                header = _pdf_header(cleaned, probes)
-                rows.extend(cleaned)
-            else:
-                # 只丢与规范表头完全相同的行，不合并「看起来一样」的数据行：
-                # 同一份文件里两笔真实相同的消费必须都留下来。
-                rows.extend(row for row in cleaned if row != header)
-
-            if len(rows) >= MAX_ROWS:
-                truncated = True
+            if truncated:
                 break
     finally:
         pdf.close()
@@ -481,7 +542,7 @@ def _read_pdf(filename: str, data: bytes, probes: tuple[str, ...]) -> RawTable:
         truncated = True
     if skipped_pages:
         listed = "、".join(str(number) for number in skipped_pages[:5])
-        notes.append(f"第 {listed} 页没有可抽取的表格，已跳过。")
+        notes.append(f"第 {listed} 页没有交易表，已跳过。")
     if truncated:
         notes.append(f"文件超过 {MAX_ROWS:,} 行，只读了前面这些。")
 
@@ -494,39 +555,92 @@ def _read_pdf(filename: str, data: bytes, probes: tuple[str, ...]) -> RawTable:
     )
 
 
-def _pick_pdf_table(
-    tables: list[list[list[str | None]]], probes: tuple[str, ...]
-) -> list[list[str | None]] | None:
-    """一页里有多张表时，选最像交易明细的那张。
+_CURRENCY_COLUMN = "币别"
 
-    只看前几行命中了多少列名，再比宽度和行数。银行 PDF 末尾常有汇总表，
-    宽度可能一样，但列名对不上。
-    """
-    wanted = {probe.strip() for probe in probes if probe.strip()}
-    best = None
-    best_key: tuple[int, int, int] | None = None
-    for table in tables:
-        if not table:
+# 合并账单的币种小节标题。外币那一节写成「(GBP)外币交易明细」，币种就在
+# 括号里；人民币一节不写代码。顺序很重要：先认外币，它的标题里也带「交易明细」。
+_SECTION_FCY = re.compile(r"[（(]\s*([A-Za-z]{3})\s*[)）]\s*外币\s*交易明细")
+_SECTION_NAMED = (
+    ("人民币", "CNY"),
+    ("美元", "USD"),
+    ("英镑", "GBP"),
+    ("欧元", "EUR"),
+    ("日元", "JPY"),
+)
+
+
+def _section_currency(text: str) -> str:
+    """从一行标题里认出它开启的是哪个币种的小节。"""
+    match = _SECTION_FCY.search(text)
+    if match:
+        return match.group(1).upper()
+    if "交易明细" not in text:
+        return ""
+    for label, code in _SECTION_NAMED:
+        if label in text:
+            return code
+    return ""
+
+
+def _pdf_currency_marks(page) -> list[tuple[float, str]]:
+    """这一页上每个币种小节标题的纵向位置。读不到文字就当作没有。"""
+    try:
+        lines = page.extract_text_lines() or []
+    except Exception:
+        return []
+    marks: list[tuple[float, str]] = []
+    for line in lines:
+        code = _section_currency(str(line.get("text") or ""))
+        if code:
+            marks.append((float(line.get("top") or 0), code))
+    return marks
+
+
+def _pdf_table_entries(page) -> list[tuple[float, list[list[str | None]]]]:
+    """一页里的所有表格，按从上到下的顺序。"""
+    entries: list[tuple[float, list[list[str | None]]]] = []
+    for found in page.find_tables() or []:
+        try:
+            table = found.extract()
+        except Exception:
             continue
-        head = [cell for row in table[:3] for cell in row if cell]
-        hits = len(wanted & {cell.strip() for cell in head})
-        width = max((len(row) for row in table), default=0)
-        key = (hits, width, len(table))
-        if best_key is None or key > best_key:
-            best, best_key = table, key
-    return best
+        if table:
+            entries.append((float(found.bbox[1]), table))
+    entries.sort(key=lambda item: item[0])
+    return entries
 
 
-def _pdf_header(rows: list[list[str]], probes: tuple[str, ...]) -> list[str]:
-    """在前几行里挑最像表头的那一行。"""
+def _pdf_emit(
+    row: list[str], currency: str, add_currency_column: bool
+) -> list[str]:
+    return [*row, currency] if add_currency_column else list(row)
+
+
+def _pdf_same_width(row: list[str], width: int) -> bool:
+    return len(row) == width
+
+
+def _header_hits(labels: list[str], probes: tuple[str, ...]) -> int:
+    """这一行里有多少格正好是配置认得的列名。"""
     wanted = {probe.strip() for probe in probes if probe.strip()}
-    best = rows[0]
-    best_hits = -1
-    for row in rows[:3]:
-        hits = len(wanted & {cell.strip() for cell in row})
-        if hits > best_hits:
-            best, best_hits = row, hits
-    return best
+    return len(wanted & {label.strip() for label in labels})
+
+
+def _pdf_header_label(cell: str) -> str:
+    """双语表头只留中文部分。
+
+    中行的表头是一个格子里「中文\\nEnglish」，拼回一行后变成
+    「交易日Transaction Date」，跟配置里的「交易日」对不上。这里在第一个
+    ASCII 字母前截断——只有截出来的部分含中文才截，避免误伤纯英文表头。
+    """
+    text = cell.strip()
+    if not any("一" <= char <= "鿿" for char in text):
+        return text
+    for index, char in enumerate(text):
+        if char in _ASCII_LETTERS:
+            prefix = text[:index].strip()
+            return prefix or text
+    return text
 
 
 _ASCII_LETTERS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")

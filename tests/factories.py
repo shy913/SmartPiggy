@@ -21,6 +21,7 @@ __all__ = [
     "alipay_csv",
     "alipay_zip",
     "bank_csv",
+    "boc_credit_pdf",
     "boc_pdf",
     "boc_text_pdf",
     "monzo_csv",
@@ -288,6 +289,110 @@ def boc_pdf(
         encrypt=pdfencrypt.StandardEncryption(password, canPrint=0),
     )
     document.build([table])
+    return buffer.getvalue()
+
+
+BOC_CREDIT_HEADER = [
+    "交易日\nTransaction Date",
+    "银行记账日\nPosting Date",
+    "卡号后四位\nLast Four\nDigits\nof Card Number",
+    "交易描述\nDescription",
+    "存入\nDeposit",
+    "支出\nExpenditure",
+]
+
+BOC_CREDIT_RMB_ROWS = [
+    # 网银还款：卡片和人民币/外币两个小节各出现一次，都应该判中性。
+    ["2026-07-28", "2026-07-28", "5805", "BOCNET", "100.00", ""],
+    ["2026-07-28", "2026-07-29", "5805", "支付宝-中国联通 CHN", "", "40.00"],
+    ["2026-08-02", "2026-08-03", "5805", "微信-肯德基 CHN", "", "4.00"],
+]
+
+BOC_CREDIT_GBP_ROWS = [
+    # 返现：收入。
+    ["2026-09-15", "2026-09-17", "5805", "MCBOC1percentrebate CHN", "0.10", ""],
+    # 人民币小节之后紧跟着外币小节，同一天同样金额也不能串币种。
+    ["2026-09-16", "2026-09-17", "5805", "支付宝-China Mobile", "", "8.92"],
+    # 存款利息：收入。
+    ["2026-09-20", "2026-09-20", "", "存款利息", "0.03", ""],
+]
+
+BOC_CREDIT_CONTINUATION_ROWS = [
+    # 溢缴款转出：中性。
+    ["2026-09-26", "2026-09-26", "5805", "BOCNET", "", "800.00"],
+    ["2026-09-30", "2026-10-02", "5805", "UBER *TRIPGBR", "", "6.96"],
+    # 退款：收入，但不算消费。
+    ["2026-10-07", "2026-10-10", "5805", "UBER *EATSGBR", "2.69", ""],
+    # 还款：中性。
+    ["2026-10-11", "2026-10-11", "5805", "BOCNET", "100.00", ""],
+]
+
+
+def boc_credit_pdf() -> bytes:
+    """中国银行「信用卡电子合并账单」形态的 PDF。
+
+    跟储蓄卡流水的区别都用这份样本覆盖：一页两张表、币种写在标题里、
+    下一节跨页后不再重复表头、页眉还有几张不像交易表的汇总表。
+    """
+    import pathlib
+
+    if not pathlib.Path(_BOC_FONT_PATH).exists():
+        pytest.skip("没有可用的中文字体，跳过 PDF 用例")
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Table, TableStyle
+
+    font = _boc_font()
+    style = ParagraphStyle("heading", fontName=font, fontSize=9, leading=12)
+
+    def grid(rows):
+        table = Table(rows)
+        table.setStyle(
+            TableStyle(
+                [
+                    ("GRID", (0, 0), (-1, -1), 0.4, colors.black),
+                    ("FONTNAME", (0, 0), (-1, -1), font),
+                    ("FONTSIZE", (0, 0), (-1, -1), 7),
+                    ("LEADING", (0, 0), (-1, -1), 8),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                ]
+            )
+        )
+        return table
+
+    # 页眉汇总表：列名对不上，读取层应该跳过而不是当交易表。
+    summary = grid(
+        [
+            ["到期还款日\nPayment Due Date", "账单日\nStatement Closing Date"],
+            ["", "2026-09-16"],
+        ]
+    )
+
+    buffer = io.BytesIO()
+    document = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=18,
+        rightMargin=18,
+        topMargin=18,
+        bottomMargin=18,
+    )
+    document.build(
+        [
+            summary,
+            Paragraph("人民币交易明细/RMB Transaction Detailed List", style),
+            grid([BOC_CREDIT_HEADER, *BOC_CREDIT_RMB_ROWS]),
+            Paragraph("(GBP)外币交易明细/FCY Transaction Detailed List", style),
+            grid([BOC_CREDIT_HEADER, *BOC_CREDIT_GBP_ROWS]),
+            PageBreak(),
+            # 跨页的续表：没有表头，靠列数接上上一节（外币）。
+            grid(BOC_CREDIT_CONTINUATION_ROWS),
+        ]
+    )
     return buffer.getvalue()
 
 
