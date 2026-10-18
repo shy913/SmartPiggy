@@ -7,7 +7,7 @@ import type { LedgerRow, Summary, TotalsRow } from "../api/types";
 import { CategoryChart, MonthlyChart } from "../components/charts";
 import { RangePicker } from "../components/RangePicker";
 import { Card, Section } from "../components/ui/card";
-import { useMeta } from "../App";
+import { useResolvedTheme } from "../App";
 import { Empty, ErrorText, Hint, Tag } from "../components/ui/bits";
 import { NumTD, NumTH, Table, TableScroll, TBody, TD, TH, THead, TR } from "../components/ui/table";
 import { day, formatAmount } from "../lib/format";
@@ -182,8 +182,8 @@ function CurrencyBlock({
  * 在避免的错。月份表是倒序的（最近的在上面），画时间轴要正过来。
  */
 function Charts({ summary }: { summary: Summary }) {
-  const meta = useMeta();
-  const theme = meta.data?.theme ?? "dark";
+  // 图表要具体颜色，读不了 CSS 变量；auto 时由这个 hook 看浏览器偏好。
+  const theme = useResolvedTheme();
 
   const groups = summary.currencies
     .map((currency) => ({

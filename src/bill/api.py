@@ -244,8 +244,16 @@ def meta():
         logged_in=logged_in(),
         display_currency=conf.display_currency,
         timezone=conf.timezone,
-        theme=conf.theme,
-        themes=[{"name": name, "label": themes.get(name).label} for name in themes.names()],
+        theme=conf.theme_style,
+        theme_mode=conf.theme_mode,
+        styles=[
+            {"name": name, "label": themes.get_style(name).label}
+            for name in themes.style_names()
+        ],
+        modes=[
+            {"name": name, "label": themes.get_mode(name).label}
+            for name in themes.mode_names()
+        ],
         currencies=repo.currencies(connection),
         categories=repo.transaction_categories(connection),
         accounts=_account_rows(connection),

@@ -89,8 +89,12 @@ export type Meta = {
   logged_in: boolean;
   display_currency: string;
   timezone: string;
+  /** 当前风格名（standard / teal / cyberpunk…）。 */
   theme: string;
-  themes: { name: string; label: string }[];
+  /** 当前深浅设置：auto / dark / light。 */
+  theme_mode: string;
+  styles: { name: string; label: string }[];
+  modes: { name: string; label: string }[];
   currencies: string[];
   categories: string[];
   accounts: Account[];
@@ -348,7 +352,8 @@ export type Preview = {
 // --------------------------------------------------------------------------
 
 export type SettingsValues = {
-  theme: string;
+  theme_style: string;
+  theme_mode: string;
   display: string;
   timezone: string;
   rates: { code: string; rate: string }[];

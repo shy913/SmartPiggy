@@ -4,8 +4,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ApiError, getSettings, saveSettings } from "../api/client";
 import type { SettingsValues } from "../api/types";
-import { useMeta } from "../App";
-import { THEMES, THEME_NAMES } from "../theme/themes";
+import { useMeta, usePrefersDark } from "../App";
+import {
+  DEFAULT_MODE,
+  THEMES,
+  resolveThemeName,
+  type ThemeMode,
+  type ThemeStyle,
+} from "../theme/themes";
 import { Button } from "../components/ui/button";
 import { Section } from "../components/ui/card";
 import { ErrorText, Field, Hint, Input } from "../components/ui/bits";
@@ -14,6 +20,7 @@ import { cn } from "../lib/utils";
 export function SettingsPage() {
   const client = useQueryClient();
   const meta = useMeta();
+  const prefersDark = usePrefersDark();
   const [values, setValues] = useState<SettingsValues | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
@@ -63,30 +70,61 @@ export function SettingsPage() {
         }}
       >
         <Section title="配色">
-          <div className="flex flex-wrap gap-2">
-            {/* 名字与标签由服务端给（/api/meta）——「深色」这种话只写在一个地方。 */}
-            {(meta.data?.themes ?? []).map(({ name, label }) => {
-              const theme = THEMES[name as keyof typeof THEMES] ?? THEMES[THEME_NAMES[0]];
-              return (
-                <button
-                  key={name}
-                  type="button"
-                  onClick={() => set({ theme: name })}
-                  className={cn(
-                    "flex items-center gap-3 rounded-lg border px-3 py-2 text-sm",
-                    current.theme === name ? "border-accent" : "border-border",
-                  )}
-                  style={{ background: theme.bg, color: theme.text }}
-                >
-                  {/* 色块直接用那一套主题自己的取值，所见即所得。 */}
-                  <span className="flex gap-1">
-                    <i className="block h-4 w-4 rounded-full" style={{ background: theme.income }} />
-                    <i className="block h-4 w-4 rounded-full" style={{ background: theme.expense }} />
-                  </span>
-                  {label}
-                </button>
-              );
-            })}
+          <div className="flex flex-col gap-4">
+            <div>
+              <div className="mb-2 text-sm text-muted">深浅</div>
+              <div className="flex flex-wrap gap-2">
+                {/* 名字与标签由服务端给（/api/meta）——「跟随系统」这种话只写在一个地方。 */}
+                {(meta.data?.modes ?? []).map(({ name, label }) => (
+                  <button
+                    key={name}
+                    type="button"
+                    onClick={() => set({ theme_mode: name })}
+                    className={cn(
+                      "rounded-lg border px-3 py-2 text-sm",
+                      current.theme_mode === name ? "border-accent" : "border-border",
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-2 text-sm text-muted">风格</div>
+              <div className="flex flex-wrap gap-2">
+                {(meta.data?.styles ?? []).map(({ name, label }) => {
+                  // 预览跟当前选的深浅走；auto 时跟浏览器走，所见即所得。
+                  const theme = THEMES[
+                    resolveThemeName(
+                      name as ThemeStyle,
+                      (current.theme_mode || DEFAULT_MODE) as ThemeMode,
+                      prefersDark,
+                    )
+                  ];
+                  return (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => set({ theme_style: name })}
+                      className={cn(
+                        "flex items-center gap-3 rounded-lg border px-3 py-2 text-sm",
+                        current.theme_style === name ? "border-accent" : "border-border",
+                      )}
+                      style={{ background: theme.bg, color: theme.text }}
+                    >
+                      {/* 色块直接用那一套主题自己的取值，所见即所得。 */}
+                      <span className="flex gap-1">
+                        <i className="block h-4 w-4 rounded-full" style={{ background: theme.income }} />
+                        <i className="block h-4 w-4 rounded-full" style={{ background: theme.expense }} />
+                      </span>
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </Section>
 

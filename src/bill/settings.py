@@ -69,8 +69,9 @@ def _threshold(value: object, label: str) -> int:
 
 @dataclass(frozen=True)
 class Settings:
-    # 界面配色，取值见 themes.py。
-    theme: str = themes.DEFAULT_THEME
+    # 界面配色分两维：风格与深浅，取值见 themes.py。
+    theme_style: str = themes.DEFAULT_STYLE
+    theme_mode: str = themes.DEFAULT_MODE
     display_currency: str = DEFAULT_DISPLAY
     # 「1 单位显示币种 = 多少该币种」，例如 {"CNY": 8.9} 表示 1 GBP = 8.9 CNY。
     rates: dict[str, float] = field(default_factory=dict)
@@ -160,8 +161,22 @@ def load() -> Settings:
         dates.zone(timezone)  # 名字写错就当场报，别等导入时才发现
 
         ui = parsed.get("ui") or {}
-        theme = str(ui.get("theme") or themes.DEFAULT_THEME)
-        themes.get(theme)  # 同上：认不出的配色名当场报，别悄悄换个样子
+        # 新配置写 style + mode；旧配置只有 theme（"dark-teal" 这种）。
+        # 旧键仍然认，并按 LEGACY 映射成同一套观感——不因为改了配置结构就把
+        # 用户原来的深浅悄悄换掉。
+        legacy = str(ui.get("theme") or "")
+        if legacy and "style" not in ui and "mode" not in ui:
+            try:
+                style, mode = themes.LEGACY[legacy]
+            except KeyError:
+                themes.get_style(legacy)  # 只会抛错，消息里列出可选风格
+                raise  # pragma: no cover —— 上面那行必然抛错
+        else:
+            style = str(ui.get("style") or themes.DEFAULT_STYLE)
+            mode = str(ui.get("mode") or themes.DEFAULT_MODE)
+        # 同上：认不出的名字当场报，别悄悄换个样子。
+        themes.get_style(style)
+        themes.get_mode(mode)
 
         # 逐键回落到默认值。**不能**写成「段缺失就关闭」：用户文件是**整体覆盖**
         # 内置文件的，而 `load()` 读到第一个能读的文件就 return——官方文档教的
@@ -192,7 +207,8 @@ def load() -> Settings:
             )
 
         return Settings(
-            theme=theme,
+            theme_style=style,
+            theme_mode=mode,
             display_currency=display,
             rates=rates,
             timezone=timezone,
@@ -222,7 +238,8 @@ def as_form(conf: Settings) -> dict[str, Any]:
     rates = [{"code": code, "rate": f"{rate:g}"} for code, rate in sorted(conf.rates.items())]
     rates += [{"code": "", "rate": ""} for _ in range(max(0, 3 - len(rates)))]
     return {
-        "theme": conf.theme,
+        "theme_style": conf.theme_style,
+        "theme_mode": conf.theme_mode,
         "display": conf.display_currency,
         "timezone": conf.timezone,
         "rates": rates,
@@ -247,9 +264,15 @@ def read_form(data) -> tuple[Settings | None, dict[str, Any], list[str]]:
     values = _echo(data)
     errors: list[str] = []
 
-    theme = (data.get("theme") or "").strip() or themes.DEFAULT_THEME
+    theme_style = (data.get("theme_style") or "").strip() or themes.DEFAULT_STYLE
     try:
-        themes.get(theme)
+        themes.get_style(theme_style)
+    except BillError as error:
+        errors.append(str(error))
+
+    theme_mode = (data.get("theme_mode") or "").strip() or themes.DEFAULT_MODE
+    try:
+        themes.get_mode(theme_mode)
     except BillError as error:
         errors.append(str(error))
 
@@ -321,7 +344,8 @@ def read_form(data) -> tuple[Settings | None, dict[str, Any], list[str]]:
 
     return (
         Settings(
-            theme=theme,
+            theme_style=theme_style,
+            theme_mode=theme_mode,
             display_currency=display,
             rates=rates,
             timezone=timezone,
@@ -349,7 +373,8 @@ def _echo(data) -> dict[str, Any]:
     while len(rows) < 3:
         rows.append({"code": "", "rate": ""})
     return {
-        "theme": (data.get("theme") or "").strip(),
+        "theme_style": (data.get("theme_style") or "").strip(),
+        "theme_mode": (data.get("theme_mode") or "").strip(),
         "display": (data.get("display") or "").strip(),
         "timezone": (data.get("timezone") or "").strip(),
         "rates": rows,
@@ -421,8 +446,9 @@ tolerance = {merge_tolerance}
 keywords = [{merge_keywords}]
 
 [ui]
-# 界面配色：{theme_names}
-theme = "{theme}"
+# 界面风格：{style_names}；深浅：{mode_names}。
+style = "{theme_style}"
+mode = "{theme_mode}"
 '''
 
 
@@ -442,8 +468,10 @@ def render_toml(conf: Settings) -> str:
         merge_window=f"{conf.merge_window_hours:g}",
         merge_tolerance=f"{conf.merge_tolerance:g}",
         merge_keywords=keywords,
-        theme=conf.theme,
-        theme_names="、".join(themes.names()),
+        theme_style=conf.theme_style,
+        theme_mode=conf.theme_mode,
+        style_names="、".join(themes.style_names()),
+        mode_names="、".join(themes.mode_names()),
     )
 
 
