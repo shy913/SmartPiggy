@@ -28,7 +28,7 @@ function listBody(overrides: Partial<TransactionList> = {}): TransactionList {
       account: null,
       q: "",
       category: "",
-      hidden: "",
+      hidden: "0",
     },
     accounts: [{ id: 1, name: "支付宝" }],
     categories: [],
@@ -176,7 +176,22 @@ describe("交易记录页", () => {
     );
   });
 
-  it("大额的标记挂在金额旁边那一格里", async () => {
+  it("隐藏默认不露脸；想看它们得自己选「连隐藏一起」", async () => {
+    const user = userEvent.setup();
+    draw(listBody());
+
+    await waitFor(() => expect(screen.getByText("共 0 条。")).toBeInTheDocument());
+    await user.click(screen.getByText("筛选"));
+    expect(screen.getByLabelText("隐藏")).toHaveValue("0");
+
+    await user.selectOptions(screen.getByLabelText("隐藏"), "连隐藏一起");
+    await user.click(screen.getByRole("button", { name: "查看" }));
+
+    await waitFor(() => expect(calls.length).toBeGreaterThan(1));
+    expect(calls[calls.length - 1]).toContain("hidden=all");
+  });
+
+  it("大额的标记跟着对方那一格走，不会因为说明列没了就丢掉", async () => {
     draw(
       listBody({
         rows: [
@@ -247,15 +262,15 @@ describe("交易记录页", () => {
     expect(screen.queryByRole("checkbox")).toBeNull();
   });
 
-  it("列的次序是 日期 / 金额 / 对方 / 说明——先看什么时候、多少钱，再读是谁、买什么", async () => {
+  it("列的次序是 日期 / 金额 / 对方——先看什么时候、多少钱，再读是花在哪儿的", async () => {
     draw(listBody({ total: 1, rows: [row()] }));
     await waitFor(() => expect(screen.getByText("美团平台商户")).toBeInTheDocument());
 
     const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
-    expect(headers).toEqual(["", "日期", "金额", "对方", "说明", "操作"]);
+    expect(headers).toEqual(["", "日期", "金额", "对方", "操作"]);
   });
 
-  it("对方和说明各占一列，谁都不吞掉谁", async () => {
+  it("说明不再单独占一列，那点宽度留给对方；全文在详情页里看", async () => {
     draw(
       listBody({
         total: 1,
@@ -263,7 +278,17 @@ describe("交易记录页", () => {
       }),
     );
     await waitFor(() => expect(screen.getByText("苹果店")).toBeInTheDocument());
-    expect(screen.getByText("iPad 保护壳")).toBeInTheDocument();
+    expect(screen.queryByText("iPad 保护壳")).toBeNull();
+  });
+
+  it("窄屏上日期去掉年份，宽屏上照旧写全", async () => {
+    draw(listBody({ total: 1, rows: [row({ occurred_at: "2026-10-05 12:30:45" })] }));
+    await waitFor(() => expect(screen.getByText("美团平台商户")).toBeInTheDocument());
+
+    // 两个都在 DOM 里，由断点决定露哪一个——这样不用在渲染时读视口宽度。
+    expect(screen.getByText("10-05")).toHaveClass("sm:hidden");
+    expect(screen.getByText("2026-10-05")).toHaveClass("hidden", "sm:inline");
+    expect(screen.getByText("12:30")).toBeInTheDocument();
   });
 
   it("分类是个 emoji，名字挂在 tooltip 上", async () => {

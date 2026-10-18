@@ -132,12 +132,25 @@ def test_deleting_a_row(client):
 def test_hiding_and_unhiding(client):
     txn_id = payload(record(client))["id"]
 
+    # 默认那一档不含隐藏：点一下「隐藏」，它就从这一屏撤掉，不用等重载。
     hidden = payload(client.post(f"/api/transactions/{txn_id}/hide", query_string={}))
     assert hidden["hidden"] is True
-    assert hidden["total"] == 1, "隐藏的行还在账本里，条数照算"
-    assert hidden["hidden_total"] == 1
-    assert hidden["keep"] is True
-    assert hidden["hint"] == "共 1 条，其中 1 条已隐藏。"
+    assert hidden["total"] == 0
+    assert hidden["hidden_total"] == 0
+    assert hidden["keep"] is False
+    assert hidden["hint"] == "共 0 条。"
+
+    # 「连隐藏一起」那一档里它照旧列着，条数也把它算进去。
+    kept = payload(
+        client.post(
+            f"/api/transactions/{txn_id}/hide", query_string={"hidden": "all"}
+        )
+    )
+    assert kept["hidden"] is True
+    assert kept["total"] == 1, "隐藏的行还在账本里，条数照算"
+    assert kept["hidden_total"] == 1
+    assert kept["keep"] is True
+    assert kept["hint"] == "共 1 条，其中 1 条已隐藏。"
 
     # 「只看隐藏」那一档里还原一笔，它就该从这一屏撤掉。
     dropped = payload(
@@ -319,7 +332,8 @@ def test_upload_preview_confirm(client):
     import_id = confirm(client, token)
     detail = payload(client.get(f"/api/imports/{import_id}"))
     assert detail["import_"]["filename"] == "支付宝账单.csv"
-    assert txns(client, start="", end="")["total"] == 3
+    # 条数要算上自动隐藏的那笔，所以把「连隐藏一起」那一档打开。
+    assert txns(client, start="", end="", hidden="all")["total"] == 3
 
 
 def test_switching_profile_reparses_without_reuploading(client):
@@ -369,7 +383,7 @@ def test_cancelling_drops_the_preview(client):
 
 def test_deleting_an_import_takes_its_rows_with_it(client):
     import_id = confirm(client, upload(client, alipay_csv(), "支付宝账单.csv"))
-    assert txns(client, start="", end="")["total"] == 3
+    assert txns(client, start="", end="", hidden="all")["total"] == 3
     assert client.delete(f"/api/imports/{import_id}").status_code == 204
     assert txns(client, start="", end="")["total"] == 0
 

@@ -24,7 +24,9 @@ SUMMARY_MODES = ("month", "year", "days", "all")
 DEFAULT_DAYS = 30
 
 _DIRECTION_WORDS = {"in": "收入", "out": "支出", "neutral": "中性"}
-_HIDDEN_WORDS = {"0": "不含隐藏", "1": "只看隐藏"}
+# 「不含隐藏」是默认视图，不写进筛选标签——它没有改变任何东西，写出来只会让
+# 筛选栏在每次打开时都以为有生效条件。
+_HIDDEN_WORDS = {"all": "连隐藏一起", "1": "只看隐藏"}
 
 
 def as_int(value) -> int | None:
@@ -217,14 +219,17 @@ def active_filter_labels(
 
 
 def list_query(source) -> dict:
-    """从查询串里取交易列表那几个筛选字段。认不出的 hidden 落回「照常列出」。
+    """从查询串里取交易列表那几个筛选字段。认不出的 hidden 落回「不含隐藏」。
+
+    隐藏的行默认不露脸：这一页是拿来翻自己的花销的，导入时自动藏起来的
+    「不计收支」混在里面只会碍事。想看它们有单独一档，不是把默认口径放宽。
 
     不读设置：这一页的落点已经跟显示时区无关了（默认不限，不是「当月」），
     再传一份 conf 进来只会让人以为它有用。
     """
     hidden = (source.get("hidden") or "").strip()
-    if hidden not in ("0", "1"):
-        hidden = ""
+    if hidden not in ("all", "1"):
+        hidden = "0"
     # 起止日期就是原来那个「月份」筛选，只是把一头拆成两头。
     #
     # **默认看全部**：打开交易记录就是整本账，想看某一段再自己筛。区间默认缩在

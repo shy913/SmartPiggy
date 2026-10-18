@@ -41,11 +41,17 @@ def test_the_whole_chain_lines_up(client):
     assert totals["neutral_count"] == 0, "支付宝「不计收支」已经藏起来了，不再单独交代"
 
     # 列表页的条数只有把区间放开才是整本——默认是当月，而夹具在 2026 年 1 月。
-    # 默认「连隐藏一起」看得见那笔，但会标明它是隐藏的。
+    # 默认不露隐藏的那笔：自动藏起来的「不计收支」不该混在平时翻的账里。
     listing = txns(client, start="", end="")
-    assert listing["total"] == 3
-    assert listing["hidden_total"] == 1
-    assert listing["hint"] == "共 3 条，其中 1 条已隐藏。"
+    assert listing["total"] == 2
+    assert listing["hidden_total"] == 0
+    assert listing["hint"] == "共 2 条。"
+
+    # 想看那笔得自己选「连隐藏一起」，这一档里它仍然标明是隐藏的。
+    with_hidden = txns(client, start="", end="", hidden="all")
+    assert with_hidden["total"] == 3
+    assert with_hidden["hidden_total"] == 1
+    assert with_hidden["hint"] == "共 3 条，其中 1 条已隐藏。"
 
     # 详情页上那一笔的数，跟它在汇总里贡献的数是同一个。
     expense = next(row for row in listing["rows"] if row["direction"] == "out")
@@ -84,7 +90,7 @@ def test_a_zip_bundle_is_read_through_to_the_detail(client):
     preview = payload(client.get(f"/api/imports/previews/{token}"))["preview"]
     assert preview["counts"]["new"] == 3
     confirm(client, token)
-    assert txns(client, start="", end="")["total"] == 3
+    assert txns(client, start="", end="", hidden="all")["total"] == 3
 
 
 def test_every_step_of_the_chain_stays_float_free(client):

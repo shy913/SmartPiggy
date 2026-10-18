@@ -54,12 +54,19 @@ function signed(row: { direction: string; display_cents: number }) {
   return row.direction === "out" ? -value : value;
 }
 
-/** 日期分两行：日子在上、钟点在下。并排的话这一列要宽出一截，挤的正是正文。 */
+/** 日期分两行：日子在上、钟点在下。并排的话这一列要宽出一截，挤的正是正文。
+ *
+ *  窄屏上再把年份去掉：这一列固定 5rem，`2026-10-14` 在 12px 下会顶到格子
+ *  边上，`10-14` 才留得出空白。年份在这一页上没有分辨作用——账本是连续翻的，
+ *  真要看年份，详情页上写全。 */
 function When({ value }: { value: string }) {
   const text = minute(value);
   return (
     <span className="block text-xs leading-tight">
-      <span className="block">{text.slice(0, 10)}</span>
+      <span className="block">
+        <span className="sm:hidden">{text.slice(5, 10)}</span>
+        <span className="hidden sm:inline">{text.slice(0, 10)}</span>
+      </span>
       <span className="block text-muted">{text.slice(11)}</span>
     </span>
   );
@@ -233,7 +240,6 @@ export function TransactionsPage() {
                 <TH className="w-20">日期</TH>
                 <NumTH className="w-20">金额</NumTH>
                 <TH>对方</TH>
-                <TH>说明</TH>
                 <TH className={cn("w-[3.75rem] text-right", STICKY)}>操作</TH>
               </TR>
             </THead>
@@ -419,8 +425,10 @@ function FilterBar({
             value={draft.hidden}
             onChange={(event) => setDraft({ ...draft, hidden: event.target.value })}
           >
-            <option value="">连隐藏一起</option>
+            {/* 默认就是「不含隐藏」：服务端没收到这个参数时也按这一档算，
+                所以它得是这里的第一项，而不是靠地址栏里多带一个 0。 */}
             <option value="0">不含隐藏</option>
+            <option value="all">连隐藏一起</option>
             <option value="1">只看隐藏</option>
           </select>
         </Field>
@@ -452,7 +460,7 @@ function FilterBar({
               account: "",
               q: "",
               category: "",
-              hidden: "",
+              hidden: "0",
             });
             const next = new URLSearchParams();
             next.set("start", "");
@@ -553,35 +561,23 @@ function Row({
       <TD>
         {/* 日期和这里**两处都是链接**：手机上点哪一下都进得去，不用瞄准。
             emoji 跟正文排在同一行里：单独占一格的话，窄屏上正文就只剩一两个字
-            的宽度了。 */}
-        {row.counterparty ? (
-          <Link
-            className="line-clamp-2 min-w-0 text-accent underline [overflow-wrap:anywhere]"
-            title={row.counterparty}
-            to={`/transactions/${row.id}`}
-            state={{ from: back, backLabel: "交易记录", up: nav }}
-            onClick={remember}
-          >
-            <CategoryMark category={row.effective_category} emoji={row.emoji} />{" "}
-            {row.counterparty}
-          </Link>
-        ) : (
-          <CategoryMark category={row.effective_category} emoji={row.emoji} />
-        )}
-      </TD>
-      <TD>
+            的宽度了。说明不再单独占一列，那点宽度留给对方；标记也跟着挤在这里，
+            列表上仍然一眼分得清哪些是大额、哪些是隐藏的。 */}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          {row.description ? (
+          {row.counterparty ? (
             <Link
-              className="line-clamp-3 min-w-0 text-accent underline [overflow-wrap:anywhere]"
-              title={row.description}
+              className="line-clamp-2 min-w-0 text-accent underline [overflow-wrap:anywhere]"
+              title={row.counterparty}
               to={`/transactions/${row.id}`}
               state={{ from: back, backLabel: "交易记录", up: nav }}
               onClick={remember}
             >
-              {row.description}
+              <CategoryMark category={row.effective_category} emoji={row.emoji} />{" "}
+              {row.counterparty}
             </Link>
-          ) : null}
+          ) : (
+            <CategoryMark category={row.effective_category} emoji={row.emoji} />
+          )}
           {row.is_large ? <Tag>大额</Tag> : null}
           {hidden ? <Tag>已隐藏</Tag> : null}
         </div>
@@ -647,19 +643,12 @@ function GroupRow({
           {formatSigned(signed(row))}
         </NumTD>
         <TD>
-          <span className="line-clamp-2 min-w-0 [overflow-wrap:anywhere]">
-            <CategoryMark category={row.effective_category} emoji={row.emoji} />
-            {row.counterparty ? ` ${row.counterparty}` : null}
-          </span>
-        </TD>
-        <TD>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="line-clamp-2 min-w-0 [overflow-wrap:anywhere]">
+              <CategoryMark category={row.effective_category} emoji={row.emoji} />
+              {row.counterparty ? ` ${row.counterparty}` : null}
+            </span>
             <Tag tone="accent">合</Tag>
-            {row.description ? (
-              <span className="line-clamp-3 min-w-0 [overflow-wrap:anywhere]">
-                {row.description}
-              </span>
-            ) : null}
             <span className="text-xs text-muted">{row.member_count} 笔合计</span>
           </div>
         </TD>
@@ -688,7 +677,7 @@ function GroupRow({
       </TR>
       <tr className="border-b border-border last:border-0">
         <td
-          colSpan={6}
+          colSpan={5}
           className={cn(
             "px-0 py-0 transition-colors duration-700",
             highlighted ? GROUP_TINT_WARN : GROUP_TINT,
