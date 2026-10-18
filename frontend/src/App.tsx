@@ -60,7 +60,9 @@ export function App() {
 
   return (
     <div className="min-h-screen">
-      <header className="border-b border-border bg-panel">
+      {/* 常驻：翻长列表时导航和退出始终够得着。背景必须是实色，
+          否则内容从底下透过来。 */}
+      <header className="sticky top-0 z-40 border-b border-border bg-panel">
         <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
           <span className="font-semibold">记账</span>
           <nav className="flex flex-wrap items-center gap-1 text-sm">
