@@ -240,6 +240,8 @@ export function TransactionsPage() {
                 <TH className="w-20">日期</TH>
                 <NumTH className="w-20">金额</NumTH>
                 <TH>对方</TH>
+                {/* 窄屏上整列收起，把宽度让给「对方」；宽屏再露出来。 */}
+                <TH className="hidden sm:table-cell">说明</TH>
                 <TH className={cn("w-[3.75rem] text-right", STICKY)}>操作</TH>
               </TR>
             </THead>
@@ -561,8 +563,8 @@ function Row({
       <TD>
         {/* 日期和这里**两处都是链接**：手机上点哪一下都进得去，不用瞄准。
             emoji 跟正文排在同一行里：单独占一格的话，窄屏上正文就只剩一两个字
-            的宽度了。说明不再单独占一列，那点宽度留给对方；标记也跟着挤在这里，
-            列表上仍然一眼分得清哪些是大额、哪些是隐藏的。 */}
+            的宽度了。「大额」「已隐藏」也跟着挤在这里，窄屏收起说明列时它们
+            不会一起消失。 */}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           {row.counterparty ? (
             <Link
@@ -581,6 +583,20 @@ function Row({
           {row.is_large ? <Tag>大额</Tag> : null}
           {hidden ? <Tag>已隐藏</Tag> : null}
         </div>
+      </TD>
+      {/* 空间不够时整列收起：手机上两列平分剩下的宽度，谁都读不完整。 */}
+      <TD className="hidden sm:table-cell">
+        {row.description ? (
+          <Link
+            className="line-clamp-3 min-w-0 text-accent underline [overflow-wrap:anywhere]"
+            title={row.description}
+            to={`/transactions/${row.id}`}
+            state={{ from: back, backLabel: "交易记录", up: nav }}
+            onClick={remember}
+          >
+            {row.description}
+          </Link>
+        ) : null}
       </TD>
       <TD className={cn("text-right", STICKY, highlighted && "bg-warn/20")}>
         <Button variant="ghost" size="sm" onClick={onHide}>
@@ -652,6 +668,13 @@ function GroupRow({
             <span className="text-xs text-muted">{row.member_count} 笔合计</span>
           </div>
         </TD>
+        <TD className="hidden sm:table-cell">
+          {row.description ? (
+            <span className="line-clamp-3 min-w-0 [overflow-wrap:anywhere]">
+              {row.description}
+            </span>
+          ) : null}
+        </TD>
         <TD
           className={cn(
             "text-right",
@@ -677,7 +700,7 @@ function GroupRow({
       </TR>
       <tr className="border-b border-border last:border-0">
         <td
-          colSpan={5}
+          colSpan={6}
           className={cn(
             "px-0 py-0 transition-colors duration-700",
             highlighted ? GROUP_TINT_WARN : GROUP_TINT,

@@ -191,7 +191,7 @@ describe("交易记录页", () => {
     expect(calls[calls.length - 1]).toContain("hidden=all");
   });
 
-  it("大额的标记跟着对方那一格走，不会因为说明列没了就丢掉", async () => {
+  it("大额的标记在对方那一格里，说明列收起时也不会跟着消失", async () => {
     draw(
       listBody({
         rows: [
@@ -262,15 +262,20 @@ describe("交易记录页", () => {
     expect(screen.queryByRole("checkbox")).toBeNull();
   });
 
-  it("列的次序是 日期 / 金额 / 对方——先看什么时候、多少钱，再读是花在哪儿的", async () => {
+  it("列的次序是 日期 / 金额 / 对方 / 说明——先看什么时候、多少钱，再读是谁、买什么", async () => {
     draw(listBody({ total: 1, rows: [row()] }));
     await waitFor(() => expect(screen.getByText("美团平台商户")).toBeInTheDocument());
 
     const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
-    expect(headers).toEqual(["", "日期", "金额", "对方", "操作"]);
+    expect(headers).toEqual(["", "日期", "金额", "对方", "说明", "操作"]);
+    // 窄屏收起的是这一列，不是把它从结构里删掉。
+    expect(screen.getByRole("columnheader", { name: "说明" })).toHaveClass(
+      "hidden",
+      "sm:table-cell",
+    );
   });
 
-  it("说明不再单独占一列，那点宽度留给对方；全文在详情页里看", async () => {
+  it("说明列在窄屏收起、宽屏露出来", async () => {
     draw(
       listBody({
         total: 1,
@@ -278,7 +283,10 @@ describe("交易记录页", () => {
       }),
     );
     await waitFor(() => expect(screen.getByText("苹果店")).toBeInTheDocument());
-    expect(screen.queryByText("iPad 保护壳")).toBeNull();
+    expect(screen.getByText("iPad 保护壳").closest("td")).toHaveClass(
+      "hidden",
+      "sm:table-cell",
+    );
   });
 
   it("窄屏上日期去掉年份，宽屏上照旧写全", async () => {
