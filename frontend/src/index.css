@@ -55,3 +55,91 @@ body {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* -------------------------------------------------------------------------
+   赛博朋克风格的装饰层。
+
+   全部是**画在背景和阴影里**的：不改字号、间距、表格线，也不动图表的取色，
+   所以别的风格和「读得清」那条底线都不受影响。扫描线和网格用伪元素 /
+   background-image 铺在内容下面（扫描线盖在上面但 pointer-events: none，
+   不挡点击）。颜色一律从当前主题的变量混出来，深浅两版自动跟着变。
+   ------------------------------------------------------------------------- */
+[data-style="cyberpunk"] body {
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--accent) 7%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 7%, transparent) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+/* 扫描线：一条 4px 周期、1px 亮线的纹理缓慢下移。位移正好等于周期，接缝看不出来。 */
+[data-style="cyberpunk"] body::after {
+  content: "";
+  position: fixed;
+  inset: -10vh 0;
+  z-index: 60;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    color-mix(in srgb, var(--accent) 10%, transparent) 0 1px,
+    transparent 1px 4px
+  );
+  opacity: 0.5;
+  animation: cyber-scan 9s linear infinite;
+}
+
+@keyframes cyber-scan {
+  from { transform: translateY(0); }
+  to { transform: translateY(4px); }
+}
+
+/* 品牌名：霓虹灯管。 */
+[data-style="cyberpunk"] .brand {
+  color: var(--accent);
+  letter-spacing: 0.06em;
+  text-shadow:
+    0 0 6px color-mix(in srgb, var(--accent) 80%, transparent),
+    0 0 22px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+/* 页面标题只借一点点光，保证长标题也读得清。 */
+[data-style="cyberpunk"] h1,
+[data-style="cyberpunk"] h2 {
+  text-shadow: 0 0 14px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/* 主按钮（底色是强调色的那些）带呼吸的辉光。 */
+[data-style="cyberpunk"] .bg-accent {
+  animation: cyber-glow 3.2s ease-in-out infinite alternate;
+}
+
+@keyframes cyber-glow {
+  from {
+    box-shadow:
+      0 0 8px color-mix(in srgb, var(--accent) 45%, transparent),
+      0 0 20px color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+  to {
+    box-shadow:
+      0 0 14px color-mix(in srgb, var(--accent) 70%, transparent),
+      0 0 34px color-mix(in srgb, var(--accent) 32%, transparent);
+  }
+}
+
+/* 顶栏下沿一条霓虹细线，边框本身也掺一点强调色。 */
+[data-style="cyberpunk"] header {
+  box-shadow:
+    0 1px 0 var(--accent),
+    0 6px 24px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+[data-style="cyberpunk"] .border-border {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
+}
+
+/* 动效是装饰，不是信息。系统要求减少动态时全部停掉，静态的网格与辉光留着。 */
+@media (prefers-reduced-motion: reduce) {
+  [data-style="cyberpunk"] body::after,
+  [data-style="cyberpunk"] .bg-accent {
+    animation: none;
+  }
+}

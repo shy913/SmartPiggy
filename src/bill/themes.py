@@ -58,6 +58,9 @@ STYLES: dict[str, Style] = {
     "standard": Style(name="standard", label="标准"),
     "teal": Style(name="teal", label="青橙"),
     "cyberpunk": Style(name="cyberpunk", label="赛博朋克"),
+    "claude": Style(name="claude", label="Claude"),
+    "hacker": Style(name="hacker", label="黑客绿"),
+    "fresh": Style(name="fresh", label="清新"),
 }
 
 MODES: dict[str, Mode] = {

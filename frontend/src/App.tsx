@@ -116,7 +116,7 @@ export function App() {
     <div className="min-h-screen">
       <header className="border-b border-border bg-panel">
         <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
-          <span className="font-semibold">记账</span>
+          <span className="brand font-semibold">记账</span>
           <nav className="flex flex-wrap items-center gap-1 text-sm">
             {NAV.map((item) => (
               <NavLink

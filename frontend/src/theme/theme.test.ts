@@ -126,7 +126,14 @@ describe("配色", () => {
   });
 
   it("每套风格都有深、浅两版，而且 mode 对得上", () => {
-    expect(STYLE_NAMES).toEqual(["standard", "teal", "cyberpunk"]);
+    expect(STYLE_NAMES).toEqual([
+      "standard",
+      "teal",
+      "cyberpunk",
+      "claude",
+      "hacker",
+      "fresh",
+    ]);
     for (const style of STYLE_NAMES) {
       for (const [mode, expected] of [["dark", "dark"], ["light", "light"]] as const) {
         const theme = THEMES[`${style}-${mode}`];

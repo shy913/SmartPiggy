@@ -82,7 +82,10 @@ echo '……' | uv run bill --set-password --user 账本主人  # 脚本 / 管�
 | --- | --- |
 | `standard` | 标准（默认） |
 | `teal` | 青橙 |
-| `cyberpunk` | 赛博朋克 |
+| `cyberpunk` | 赛博朋克（带霓虹、网格与扫描线特效） |
+| `claude` | Claude（暖橙 / 米白） |
+| `hacker` | 黑客绿（终端黑绿） |
+| `fresh` | 清新（薄荷与青蓝） |
 
 | 深浅 | 说明 |
 | --- | --- |
@@ -112,6 +115,13 @@ echo '……' | uv run bill --set-password --user 账本主人  # 脚本 / 管�
 
 旧配置里的 `[ui] theme = "dark-teal"` 仍然能读：会映射成「青橙 · 深色」，
 保存一次之后改写成新的 `style` / `mode` 两个键。
+
+赛博朋克那套的**特效**写在 `frontend/src/index.css`，以
+`[data-style="cyberpunk"]` 限定：网格背景、缓慢下移的扫描线、品牌名与标题的
+霓虹辉光、主按钮的呼吸光、顶栏的霓虹线。它们只改背景、`box-shadow` 和
+`text-shadow`，不改字号、间距、表格线，也不碰图表取色——所以「读得清」那条
+底线不受影响。扫描线盖在最上层但 `pointer-events: none`，不挡点击；系统开启
+「减少动态」时所有动画停掉，静态的辉光与网格保留。
 
 ### 界面里不写实现说明
 
