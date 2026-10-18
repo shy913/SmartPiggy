@@ -354,7 +354,7 @@ def summary():
         range=span,
         # 账本本身是不是空的，跟「这个区间里没有记录」是两回事：共用一句话会让人
         # 跑去看导入页，而问题在区间上。
-        has_data=repo.coverage(connection)["total"] > 0,
+        has_data=repo.has_data(connection),
         currencies=codes,
         multi_currency=len(codes) > 1,
         display_currency=conf.display_currency,

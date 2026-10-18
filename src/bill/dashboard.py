@@ -153,13 +153,15 @@ def _forecast(total: dict, today: date) -> dict:
     }
 
 
-def _averages(connection, code: str, today: date) -> dict | None:
+def _averages(connection, code: str, today: date, cover) -> dict | None:
     """最近 12 个完整月的月均，以及按它折出来的年均。
 
     窗口会被账本的第一笔截短：账本只有 3 个月，就拿 3 个月平均，而不是拿
     12 个月去除——后者会把月均凭空压到四分之一，屏幕上还是一个像模像样的数。
+
+    ``cover`` 由调用方传进来：它已经为了别的字段取过一遍 coverage 了。
+    重复取一次在十万行的账本上要多花上百毫秒，而这两个数不可能不同。
     """
-    cover = repo.coverage(connection)
     first_day = _parse(cover["first_day"])
     if first_day is None:
         return None
@@ -400,7 +402,7 @@ def build(connection, conf, source) -> dict:
             else None
         ),
         "forecast": _forecast(forecast_input, today),
-        "averages": _averages(connection, code, today),
+        "averages": _averages(connection, code, today, cover),
         "trend": _trend(connection, code, mode, trend_start, trend_end, today),
         "categories": ranked_categories,
         "singles": ranked,
