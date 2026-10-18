@@ -159,44 +159,63 @@ def rollup_key(account_id: int, counterparty: str, month: str, currency: str) ->
     )
 
 
-def rollups(rows: Iterable[RollupRow], *, keywords: Sequence[str] = ()) -> list[Rollup]:
-    """把说明命中关键词的中性收益按自然月分桶。
+def _meaningful_name(text: str) -> bool:
+    """对方名是不是真有个名字。
 
-    **不设「至少两笔」的门槛**：调用方需要看到只有一笔的桶，才能把它们追加到
-    已经存在的同月组里。要不要建新组由调用方决定。
+    银行流水里不少记录把「对方」那一列填成一串横线（``-------------------``）。
+    拿它当组标题会得到「------------------- · 2026-09」，所以这种就退回用命中的
+    关键词（「结息」）当标签。
+    """
+    return any(char.isalnum() for char in (text or ""))
+
+
+def rollups(rows: Iterable[RollupRow], *, keywords: Sequence[str] = ()) -> list[Rollup]:
+    """把说明命中关键词的利息按自然月分桶。
+
+    中性收益和已经记成收入的利息（银行「结息」常见）都走这里；方向由调用方的
+    SQL 先筛好。**不设「至少两笔」的门槛**：调用方需要看到只有一笔的桶，才能把
+    它们追加到已经存在的同月组里。要不要建新组由调用方决定。
 
     ``keywords`` 为空时一条都不匹配——月度汇总不是猜出来的，必须由设置里那几个
-    词明确点名。分组按账户、对方、月份、币种四项，跨账户/跨币种不混。
+    词明确点名。分组按账户、对方（没有像样的对方名时用关键词）、月份、币种四项，
+    跨账户/跨币种不混。
     """
-    wanted = tuple(str(word).strip().lower() for word in keywords if str(word).strip())
+    wanted = tuple(
+        (str(word).strip(), str(word).strip().lower())
+        for word in keywords
+        if str(word).strip()
+    )
     if not wanted:
         return []
 
-    buckets: dict[str, list[RollupRow]] = {}
+    buckets: dict[str, tuple[str, list[RollupRow]]] = {}
     for row in rows:
         if row.grouped:
             continue
         month = (row.occurred_date or "")[:7]
-        name = (row.counterparty or "").strip()
-        if len(month) != 7 or not name:
+        if len(month) != 7:
             continue
         text = (row.description or "").lower()
-        if not any(word in text for word in wanted):
+        matched = next((word for word, lowered in wanted if lowered in text), None)
+        if matched is None:
             continue
         if any(word in text for word in ROLLUP_EXCLUDE_KEYWORDS):
             continue
-        key = rollup_key(row.account_id, name, month, row.currency)
-        buckets.setdefault(key, []).append(row)
+        name = (row.counterparty or "").strip()
+        label = name if _meaningful_name(name) else matched
+        key = rollup_key(row.account_id, label, month, row.currency)
+        bucket = buckets.setdefault(key, (label, []))
+        bucket[1].append(row)
 
     found: list[Rollup] = []
-    for key, members in buckets.items():
+    for key, (label, members) in buckets.items():
         members.sort(key=lambda row: (row.occurred_date, row.id))
         first = members[0]
         month = first.occurred_date[:7]
         found.append(
             Rollup(
                 key=key,
-                title=f"{first.counterparty.strip()} · {month}",
+                title=f"{label} · {month}",
                 month=month,
                 anchor_id=first.id,
                 member_ids=tuple(row.id for row in members[1:]),

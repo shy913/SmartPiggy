@@ -66,14 +66,35 @@ def test_rollups_need_keywords_and_never_touch_transfers():
     assert [item.ids for item in found] == [(1,)], "自动转入被硬排除"
 
 
-def test_rollups_skip_already_grouped_and_empty_counterparty():
+def test_rollups_use_the_keyword_when_the_counterparty_is_only_dashes():
+    """银行流水常把「对方」填成一串横线，标题不能跟着变成横线。"""
+    rows = [
+        groups.RollupRow(1, "2026-09-20", 4, "GBP", "-------------------", "结息"),
+        groups.RollupRow(2, "2026-09-21", 4, "GBP", "-------------------", "结息"),
+        groups.RollupRow(
+            3, "2026-09-22", 4, "GBP", "-------------------", "余额宝-收益发放"
+        ),
+    ]
+    found = groups.rollups(rows, keywords=("收益发放", "结息"))
+    assert {item.title for item in found} == {
+        "结息 · 2026-09",
+        "收益发放 · 2026-09",
+    }
+    assert len({item.key for item in found}) == 2, "不同关键词不能混成一个组"
+
+
+def test_rollups_skip_already_grouped_rows_and_label_empty_counterparties():
     rows = [
         groups.RollupRow(1, "2026-01-05", 1, "CNY", COUNTERPARTY, "收益发放", grouped=True),
         groups.RollupRow(2, "2026-01-06", 1, "CNY", "", "收益发放"),
         groups.RollupRow(3, "2026-01-07", 1, "CNY", COUNTERPARTY, "收益发放"),
     ]
     found = groups.rollups(rows, keywords=("收益发放",))
-    assert [item.ids for item in found] == [(3,)]
+    assert sorted(item.ids for item in found) == [(2,), (3,)]
+    assert {item.title for item in found} == {
+        "收益发放 · 2026-01",
+        f"{COUNTERPARTY} · 2026-01",
+    }
 
 
 # --------------------------------------------------------------------------
@@ -128,6 +149,61 @@ def test_rollup_becomes_one_monthly_income_row(conn, book):
         for row in repo.by_source_category(conn)
     }
     assert category[("投资理财", "CNY")]["income"] == 1_000
+
+
+def test_income_interest_rows_are_rolled_up_too(conn, book, isolated_data_dir):
+    """银行「结息」本来就是收入，也要能按月合成一条；支出行绝不进来。"""
+    write_settings(
+        isolated_data_dir,
+        'timezone = "Asia/Shanghai"\n\n[currency]\ndisplay = "CNY"\nrates = {}\n'
+        '\n[large]\nout = 0\nin = 0\n\n[merge]\nrollup_keywords = ["收益发放", "结息"]\n',
+    )
+    book(
+        [
+            {
+                "direction": Direction.IN,
+                "amount_cents": 100,
+                "counterparty": "-------------------",
+                "description": "结息",
+                "occurred_at": "2026-09-20 18:58:04",
+            },
+            {
+                "direction": Direction.IN,
+                "amount_cents": 300,
+                "counterparty": "-------------------",
+                "description": "结息",
+                "occurred_at": "2026-09-20 18:59:07",
+            },
+            {
+                "direction": Direction.IN,
+                "amount_cents": 200,
+                "counterparty": "-------------------",
+                "description": "结息",
+                "occurred_at": "2026-09-20 18:59:20",
+            },
+            {
+                "direction": Direction.OUT,
+                "amount_cents": 500,
+                "counterparty": "-------------------",
+                "description": "结息手续费",
+                "occurred_at": "2026-09-21 09:00:00",
+            },
+        ]
+    )
+    with conn:
+        assert repo.autodetect(conn) == 1
+
+    group = rolls(conn)[0]
+    assert group["title"] == "结息 · 2026-09"
+    assert group["member_count"] == 3
+    assert group["net_cents"] == 600
+
+    totals = repo.overall_totals(conn)[0]
+    assert totals["income"] == 600, "合成前后收入合计不变"
+    assert totals["expense"] == 500, "支出行没有被并进收益组"
+    row = [item for item in repo.list_transactions(conn) if item["group_id"]][0]
+    assert row["direction"] == "in"
+    assert row["display_cents"] == 600
 
 
 def test_rollups_do_not_show_as_large(conn, book, isolated_data_dir):
