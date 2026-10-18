@@ -259,6 +259,20 @@ MIGRATIONS: list[list[str]] = [
           AND json_extract(raw_json, '$."收/支"') = '不计收支'
         """,
     ],
+    [
+        # v7：分类候选与币种候选的索引。
+        #
+        # 这两列都只做「去重后列出来」这一件事（表单下拉、设置页），但每一次
+        # 页面加载都会问一遍。没有索引时是两次全表扫描加一个临时 B 树，十万行的
+        # 账本上一次要两三百毫秒——比页面里真正的统计还贵。DISTINCT 借索引
+        # 扫描只碰这一列，不再把每一行整行读出来。
+        "CREATE INDEX ix_transactions_category ON transactions(category)",
+        "CREATE INDEX ix_transactions_source_category ON transactions(source_category)",
+        # 币种清单只看没隐藏的行。部分索引把「隐藏」这个条件也写进去，
+        # 查询里带着 hidden = 0 时就能整条走索引，不必回表逐行判断。
+        "CREATE INDEX ix_transactions_visible_currency"
+        " ON transactions(currency) WHERE hidden = 0",
+    ],
 ]
 
 

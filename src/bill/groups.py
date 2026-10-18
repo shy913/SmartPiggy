@@ -36,6 +36,7 @@
 from __future__ import annotations
 
 import json
+from bisect import bisect_left, bisect_right
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -65,9 +66,6 @@ MAX_SPLIT = 10
 # 一份 £40 的份额，25% 是 £10，远大于绝对容差，这个比例等于不起作用。
 # 两头各管一段，正是「按消费大小」该有的样子。
 MAX_DEVIATION_RATIO = 0.25
-
-_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
-
 
 @dataclass(frozen=True)
 class Row:
@@ -215,35 +213,44 @@ def candidates(
     tolerance_cents: int = 50,
     keywords: Sequence[str] = (),
     max_split: int = MAX_SPLIT,
+    parsed: dict[int, datetime] | None = None,
 ) -> list[Candidate]:
     """找出所有像 AA 的组合，按时间先后返回。
 
     ``keywords`` 非空时，转入的文字要命中其中之一才参与——这道过滤挡的是形状巧合
     （薪水入账和一笔两倍于它的消费恰好构成「两人 AA」的形状）。传空序列就只看数学。
+
+    ``parsed`` 是调用方已经算好的 ``{id: 时间}``。``detect`` 两条规则一起跑时传进来，
+    省得同一批时间戳解析三遍。不传就自己算。
     """
     usable = [row for row in rows if _usable(row)]
     expenses = [row for row in usable if row.direction == "out"]
     incomes = [row for row in usable if row.direction == "in"]
 
-    parsed: dict[int, datetime] = {}
-    for row in usable:
-        moment = _parse(row.occurred_at)
-        if moment is not None:
-            parsed[row.id] = moment
+    if parsed is None:
+        parsed = _parsed(usable)
     expenses = [row for row in expenses if row.id in parsed]
     incomes = [row for row in incomes if row.id in parsed]
 
     loud = _matches_keyword(keywords)
     pool = [row for row in incomes if loud(row.text)]
+    # 按时间排好，窗口就能用二分切出来。逐笔扫全池在十万行账本上是 O(支出×收入)
+    # ——全库扫描要一分钟。窗口内的候选本来只有几条，排一次序是值得的。
+    pool.sort(key=lambda row: (parsed[row.id], row.id))
+    pool_times = [parsed[row.id] for row in pool]
 
+    window = timedelta(hours=window_hours)
     found: list[Candidate] = []
     for expense in sorted(expenses, key=lambda row: (parsed[row.id], row.id)):
+        at = parsed[expense.id]
+        nearby = pool[
+            bisect_left(pool_times, at) : bisect_right(pool_times, at + window)
+        ]
         best = _best_split(
             expense,
-            at=parsed[expense.id],
-            pool=pool,
+            at=at,
+            pool=nearby,
             parsed=parsed,
-            window=timedelta(hours=window_hours),
             tolerance_cents=tolerance_cents,
             max_split=max_split,
         )
@@ -259,6 +266,7 @@ def balanced(
     window_hours: float = 12.0,
     tolerance_cents: int = 50,
     keywords: Sequence[str] = (),
+    parsed: dict[int, datetime] | None = None,
 ) -> list[Candidate]:
     """找出所有「收支平衡」的组合：一笔支出 + 之后一笔跟它等额的收入。
 
@@ -267,11 +275,8 @@ def balanced(
     几笔凑成一笔支出的那种，跟几个人平摊在数学上分不开，交给手动合并。
     """
     usable = [row for row in rows if _usable(row)]
-    parsed: dict[int, datetime] = {}
-    for row in usable:
-        moment = _parse(row.occurred_at)
-        if moment is not None:
-            parsed[row.id] = moment
+    if parsed is None:
+        parsed = _parsed(usable)
 
     expenses = [row for row in usable if row.direction == "out" and row.id in parsed]
     loud = _matches_keyword(keywords)
@@ -280,6 +285,8 @@ def balanced(
         for row in usable
         if row.direction == "in" and row.id in parsed and loud(row.text)
     ]
+    pool.sort(key=lambda row: (parsed[row.id], row.id))
+    pool_times = [parsed[row.id] for row in pool]
 
     window = timedelta(hours=window_hours)
     found: list[Candidate] = []
@@ -287,7 +294,9 @@ def balanced(
         at = parsed[expense.id]
         # 「不早于」而不是「严格晚于」，跟 AA 一样：银行流水大多只有日期，
         # 同一天的几笔时间戳本来就一模一样。
-        nearby = [row for row in pool if at <= parsed[row.id] <= at + window]
+        nearby = pool[
+            bisect_left(pool_times, at) : bisect_right(pool_times, at + window)
+        ]
         if not nearby:
             continue
         # 差得最少的那个收款就是它在等的钱。都不够近就是没有。
@@ -337,12 +346,14 @@ def detect(
     被静默跳过，于是这一轮少建一组、下一轮扫描又补上，账本在两次刷新之间会变。
     """
     rows = list(rows)
+    parsed = _parsed(row for row in rows if _usable(row))
     found = candidates(
         rows,
         window_hours=window_hours,
         tolerance_cents=tolerance_cents,
         keywords=keywords,
         max_split=max_split,
+        parsed=parsed,
     )
     if balanced_merge:
         found += balanced(
@@ -350,13 +361,9 @@ def detect(
             window_hours=window_hours,
             tolerance_cents=tolerance_cents,
             keywords=keywords,
+            parsed=parsed,
         )
 
-    parsed: dict[int, datetime] = {}
-    for row in rows:
-        moment = _parse(row.occurred_at)
-        if moment is not None:
-            parsed[row.id] = moment
     return _claim(found, parsed)
 
 
@@ -366,11 +373,13 @@ def _best_split(
     at: datetime,
     pool: Sequence[Row],
     parsed: dict[int, datetime],
-    window: timedelta,
     tolerance_cents: int,
     max_split: int,
 ) -> Candidate | None:
     """给这一笔支出找最合适的人数。找不到返回 None。
+
+    ``pool`` 已经按时间排好、且只含 ``at`` 到 ``at + 窗口`` 这一段（调用方用二分
+    切出来的）。这里只做金额上的挑选。
 
     人头数从 1 试到 ``max_split``：转几笔就暗示着几个人分（你 + 转来的那几笔）。
     取**误差总和最小**的那一个人头数；误差一样时取人多的，因为「三个人各转一份」
@@ -381,7 +390,7 @@ def _best_split(
 
     # 「不早于」而不是「严格晚于」：不少银行流水只有日期，同一天的几笔时间戳
     # 一模一样，按严格晚于算的话，当天的还款永远也匹配不上。
-    nearby = [row for row in pool if at <= parsed[row.id] <= at + window]
+    nearby = pool
     if not nearby:
         return None
 
@@ -476,8 +485,23 @@ def _usable(row: Row) -> bool:
     )
 
 
+def _parsed(rows: Iterable[Row]) -> dict[int, datetime]:
+    """把能用的一批行的发生时间解析出来，一次算好、多处共用。
+
+    ``datetime.fromisoformat`` 比 ``strptime`` 快一个数量级，而库里那列本来就是
+    定长的 ``YYYY-MM-DD HH:MM:SS``。格式不对的行照旧跳过（不进 ``parsed``），
+    跟以前「解析失败就不参与」的行为一致。
+    """
+    parsed: dict[int, datetime] = {}
+    for row in rows:
+        moment = _parse(row.occurred_at)
+        if moment is not None:
+            parsed[row.id] = moment
+    return parsed
+
+
 def _parse(text: str) -> datetime | None:
     try:
-        return datetime.strptime(text, _TIME_FORMAT)
+        return datetime.fromisoformat(text)
     except (TypeError, ValueError):
         return None
