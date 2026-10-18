@@ -540,6 +540,28 @@ def test_summary_marks_an_account_that_has_never_imported(client, book):
     assert account["stale"] is True
 
 
+def test_summary_does_not_remind_about_the_manual_account(client, conn, book):
+    """手动记账账户没有账单文件可导，不该被催「从未导入」。"""
+    repo.ensure_account(conn, "手动记账", "manual")
+    book(
+        [
+            {
+                "account": "手动记账",
+                "occurred_at": f"{today()} 12:00:00",
+                "direction": "out",
+                "amount_cents": 1000,
+            }
+        ]
+    )
+
+    by_name = {row["name"]: row for row in summary(client)["accounts"]}
+    manual = by_name["手动记账"]
+    assert manual["never_imported"] is True
+    assert manual["stale"] is False
+    # 提醒归提醒，账户构成照常算它。
+    assert manual["totals"][0]["expense"] == 1000
+
+
 def test_account_totals_follow_the_range(client, book):
     book(
         [

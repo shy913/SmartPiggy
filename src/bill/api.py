@@ -296,7 +296,8 @@ def _account_overview(connection, conf, *, start, end) -> list[dict]:
     时差出一天——而屏幕上什么都不说。
 
     从没导入过的账户 ``last_import_at`` 为空，``never_imported`` 为真；它和
-    「导入过但太久没导」都算提醒对象，但界面上的话不一样。
+    「导入过但太久没导」都算提醒对象，但界面上的话不一样。手动记账账户例外：
+    它本来就没有账单文件可导，催它毫无意义。
     """
     totals: dict[int, list[dict]] = {}
     for item in repo.account_totals(connection, start=start, end=end):
@@ -310,8 +311,15 @@ def _account_overview(connection, conf, *, start, end) -> list[dict]:
         last = record["last_import_at"]
         days = (today - date.fromisoformat(last[:10])).days if last else None
         never = last is None
+        # 手动记账账户本来就没有账单文件可导，「从未导入」不是待办。
+        # 它照常出现在账户构成里，只是永远不 stale。
+        manual = record["kind"] == "manual"
         # stale_days = 0 是「不提醒」的明确选择，不是「0 天没导入就提醒」。
-        stale = conf.stale_days > 0 and (never or days >= conf.stale_days)
+        stale = (
+            not manual
+            and conf.stale_days > 0
+            and (never or days >= conf.stale_days)
+        )
         overview.append(
             {
                 "id": record["id"],
