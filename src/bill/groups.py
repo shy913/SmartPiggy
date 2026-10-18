@@ -21,8 +21,10 @@
   放宽到「前后都算」会把先垫钱后消费的两个人混成一组。同一时刻是允许的——
   银行流水大多只有日期，同一天的几笔时间戳本来就一模一样。
 - **中性行不参与**。它本来就不计收支，并进来改变不了净额，只会让人以为算错了。
-- **容差是绝对额**（默认 ±0.5），不是百分比：朋友按汇率或者四舍五入多转一点很常见，
-  而按比例算的话，小额支出会宽松到把不相干的两笔凑上。
+- **容差以绝对额为主，小份额再压一道比例上限**（默认 ±0.5 且不超过份额的 25%）：
+  朋友按汇率或者四舍五入多转一点很常见，绝对额在大额上最稳；但金额很小时
+  ±0.5 可能超过份额本身（£1.12 分成两人，份额只有 £0.56），这时候比例上限
+  才挡得住把不相干的两笔凑成一组。
 - **宁可漏也不误合**。漏掉的结果是「没合并」，你看得见，手动勾一下就完事；
   误合的结果是统计被安静地改错。所以除了等额数学，还要求转入**看起来像还钱**
   （见 keywords）。
@@ -33,24 +35,37 @@
 
 from __future__ import annotations
 
+import json
+from bisect import bisect_left, bisect_right
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 __all__ = [
+    "MAX_DEVIATION_RATIO",
     "MAX_SPLIT",
+    "ROLLUP_EXCLUDE_KEYWORDS",
     "Candidate",
+    "Rollup",
+    "RollupRow",
     "Row",
     "balanced",
     "candidates",
     "detect",
+    "rollup_key",
+    "rollups",
 ]
 
 # 最多算到几个人分。再多人一起摊的账，等额关系本来也难凑巧成立。
 MAX_SPLIT = 10
 
-_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
-
+# 每笔偏差的上限还要再乘上这个比例，跟绝对容差取小。
+#
+# 绝对容差在小额上会失控：一笔 £1.12 的支出分成两人，份额只有 £0.56，而
+# ±£0.5 相当于份额的九成——一笔 £0.12 的收款也能凑成「两人 AA」。大额则相反，
+# 一份 £40 的份额，25% 是 £10，远大于绝对容差，这个比例等于不起作用。
+# 两头各管一段，正是「按消费大小」该有的样子。
+MAX_DEVIATION_RATIO = 0.25
 
 @dataclass(frozen=True)
 class Row:
@@ -61,7 +76,9 @@ class Row:
     direction: str  # in | out | neutral
     # 换算到**显示币种**的金额（分），恒为正。换算在 repo 里做。
     display_cents: int
-    # 判断「像不像别人还你钱」的文字：对方 + 说明 + 分类。
+    # 判断「像不像别人还你钱」的文字：对方 + 说明 + 分类 + 交易类型。
+    # 交易类型只有微信账单有（群收款、转账、红包），它不是分类，但比分类更
+    # 直接地说明「这是钱回来了」。
     text: str = ""
     # 已经属于某个合并组了，不再参与这一轮。
     grouped: bool = False
@@ -94,6 +111,120 @@ class Candidate:
         return len(self.member_ids) + 1
 
 
+# 无论用户把关键词放宽成什么，说明里出现这几个词的记录都不参与月度汇总。
+# 「余额宝-自动转入」跟「收益发放」在同一个交易对方名下，只按对方名或只按
+# 宽泛的关键词去合，会把几千块的转入当成利息收入——屏幕上完全看不出来。
+ROLLUP_EXCLUDE_KEYWORDS = ("自动转入",)
+
+
+@dataclass(frozen=True)
+class RollupRow:
+    """月度汇总的候选行。只带分组需要的字段。"""
+
+    id: int
+    occurred_date: str  # 'YYYY-MM-DD'，已经是显示时区的日期
+    account_id: int
+    currency: str
+    counterparty: str
+    description: str
+    grouped: bool = False
+
+
+@dataclass(frozen=True)
+class Rollup:
+    """一个「同账户 + 同对方 + 同月 + 同币种」的收益桶。"""
+
+    key: str
+    title: str
+    month: str
+    anchor_id: int
+    member_ids: tuple[int, ...]
+
+    @property
+    def ids(self) -> tuple[int, ...]:
+        return (self.anchor_id, *self.member_ids)
+
+
+def rollup_key(account_id: int, counterparty: str, month: str, currency: str) -> str:
+    """收益组的稳定身份。落库、查重和 veto 都用它。"""
+    return json.dumps(
+        [
+            int(account_id),
+            (counterparty or "").strip().casefold(),
+            month,
+            (currency or "").upper(),
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def _meaningful_name(text: str) -> bool:
+    """对方名是不是真有个名字。
+
+    银行流水里不少记录把「对方」那一列填成一串横线（``-------------------``）。
+    拿它当组标题会得到「------------------- · 2026-09」，所以这种就退回用命中的
+    关键词（「结息」）当标签。
+    """
+    return any(char.isalnum() for char in (text or ""))
+
+
+def rollups(rows: Iterable[RollupRow], *, keywords: Sequence[str] = ()) -> list[Rollup]:
+    """把说明命中关键词的利息按自然月分桶。
+
+    中性收益和已经记成收入的利息（银行「结息」常见）都走这里；方向由调用方的
+    SQL 先筛好。**不设「至少两笔」的门槛**：调用方需要看到只有一笔的桶，才能把
+    它们追加到已经存在的同月组里。要不要建新组由调用方决定。
+
+    ``keywords`` 为空时一条都不匹配——月度汇总不是猜出来的，必须由设置里那几个
+    词明确点名。分组按账户、对方（没有像样的对方名时用关键词）、月份、币种四项，
+    跨账户/跨币种不混。
+    """
+    wanted = tuple(
+        (str(word).strip(), str(word).strip().lower())
+        for word in keywords
+        if str(word).strip()
+    )
+    if not wanted:
+        return []
+
+    buckets: dict[str, tuple[str, list[RollupRow]]] = {}
+    for row in rows:
+        if row.grouped:
+            continue
+        month = (row.occurred_date or "")[:7]
+        if len(month) != 7:
+            continue
+        text = (row.description or "").lower()
+        matched = next((word for word, lowered in wanted if lowered in text), None)
+        if matched is None:
+            continue
+        if any(word in text for word in ROLLUP_EXCLUDE_KEYWORDS):
+            continue
+        name = (row.counterparty or "").strip()
+        label = name if _meaningful_name(name) else matched
+        key = rollup_key(row.account_id, label, month, row.currency)
+        bucket = buckets.setdefault(key, (label, []))
+        bucket[1].append(row)
+
+    found: list[Rollup] = []
+    for key, (label, members) in buckets.items():
+        members.sort(key=lambda row: (row.occurred_date, row.id))
+        first = members[0]
+        month = first.occurred_date[:7]
+        found.append(
+            Rollup(
+                key=key,
+                title=f"{label} · {month}",
+                month=month,
+                anchor_id=first.id,
+                member_ids=tuple(row.id for row in members[1:]),
+            )
+        )
+    found.sort(key=lambda item: (item.month, item.anchor_id))
+    return found
+
+
 def candidates(
     rows: Iterable[Row],
     *,
@@ -101,35 +232,44 @@ def candidates(
     tolerance_cents: int = 50,
     keywords: Sequence[str] = (),
     max_split: int = MAX_SPLIT,
+    parsed: dict[int, datetime] | None = None,
 ) -> list[Candidate]:
     """找出所有像 AA 的组合，按时间先后返回。
 
     ``keywords`` 非空时，转入的文字要命中其中之一才参与——这道过滤挡的是形状巧合
     （薪水入账和一笔两倍于它的消费恰好构成「两人 AA」的形状）。传空序列就只看数学。
+
+    ``parsed`` 是调用方已经算好的 ``{id: 时间}``。``detect`` 两条规则一起跑时传进来，
+    省得同一批时间戳解析三遍。不传就自己算。
     """
     usable = [row for row in rows if _usable(row)]
     expenses = [row for row in usable if row.direction == "out"]
     incomes = [row for row in usable if row.direction == "in"]
 
-    parsed: dict[int, datetime] = {}
-    for row in usable:
-        moment = _parse(row.occurred_at)
-        if moment is not None:
-            parsed[row.id] = moment
+    if parsed is None:
+        parsed = _parsed(usable)
     expenses = [row for row in expenses if row.id in parsed]
     incomes = [row for row in incomes if row.id in parsed]
 
     loud = _matches_keyword(keywords)
     pool = [row for row in incomes if loud(row.text)]
+    # 按时间排好，窗口就能用二分切出来。逐笔扫全池在十万行账本上是 O(支出×收入)
+    # ——全库扫描要一分钟。窗口内的候选本来只有几条，排一次序是值得的。
+    pool.sort(key=lambda row: (parsed[row.id], row.id))
+    pool_times = [parsed[row.id] for row in pool]
 
+    window = timedelta(hours=window_hours)
     found: list[Candidate] = []
     for expense in sorted(expenses, key=lambda row: (parsed[row.id], row.id)):
+        at = parsed[expense.id]
+        nearby = pool[
+            bisect_left(pool_times, at) : bisect_right(pool_times, at + window)
+        ]
         best = _best_split(
             expense,
-            at=parsed[expense.id],
-            pool=pool,
+            at=at,
+            pool=nearby,
             parsed=parsed,
-            window=timedelta(hours=window_hours),
             tolerance_cents=tolerance_cents,
             max_split=max_split,
         )
@@ -145,6 +285,7 @@ def balanced(
     window_hours: float = 12.0,
     tolerance_cents: int = 50,
     keywords: Sequence[str] = (),
+    parsed: dict[int, datetime] | None = None,
 ) -> list[Candidate]:
     """找出所有「收支平衡」的组合：一笔支出 + 之后一笔跟它等额的收入。
 
@@ -153,11 +294,8 @@ def balanced(
     几笔凑成一笔支出的那种，跟几个人平摊在数学上分不开，交给手动合并。
     """
     usable = [row for row in rows if _usable(row)]
-    parsed: dict[int, datetime] = {}
-    for row in usable:
-        moment = _parse(row.occurred_at)
-        if moment is not None:
-            parsed[row.id] = moment
+    if parsed is None:
+        parsed = _parsed(usable)
 
     expenses = [row for row in usable if row.direction == "out" and row.id in parsed]
     loud = _matches_keyword(keywords)
@@ -166,6 +304,8 @@ def balanced(
         for row in usable
         if row.direction == "in" and row.id in parsed and loud(row.text)
     ]
+    pool.sort(key=lambda row: (parsed[row.id], row.id))
+    pool_times = [parsed[row.id] for row in pool]
 
     window = timedelta(hours=window_hours)
     found: list[Candidate] = []
@@ -173,7 +313,9 @@ def balanced(
         at = parsed[expense.id]
         # 「不早于」而不是「严格晚于」，跟 AA 一样：银行流水大多只有日期，
         # 同一天的几笔时间戳本来就一模一样。
-        nearby = [row for row in pool if at <= parsed[row.id] <= at + window]
+        nearby = pool[
+            bisect_left(pool_times, at) : bisect_right(pool_times, at + window)
+        ]
         if not nearby:
             continue
         # 差得最少的那个收款就是它在等的钱。都不够近就是没有。
@@ -186,7 +328,12 @@ def balanced(
             ),
         )
         deviation = abs(mate.display_cents - expense.display_cents)
-        if deviation > tolerance_cents:
+        # 跟 AA 一样：小额时绝对容差会显得极宽，比例上限兜底。
+        allowed = min(
+            tolerance_cents,
+            int(expense.display_cents * MAX_DEVIATION_RATIO),
+        )
+        if deviation > allowed:
             continue
         found.append(
             Candidate(
@@ -218,12 +365,14 @@ def detect(
     被静默跳过，于是这一轮少建一组、下一轮扫描又补上，账本在两次刷新之间会变。
     """
     rows = list(rows)
+    parsed = _parsed(row for row in rows if _usable(row))
     found = candidates(
         rows,
         window_hours=window_hours,
         tolerance_cents=tolerance_cents,
         keywords=keywords,
         max_split=max_split,
+        parsed=parsed,
     )
     if balanced_merge:
         found += balanced(
@@ -231,13 +380,9 @@ def detect(
             window_hours=window_hours,
             tolerance_cents=tolerance_cents,
             keywords=keywords,
+            parsed=parsed,
         )
 
-    parsed: dict[int, datetime] = {}
-    for row in rows:
-        moment = _parse(row.occurred_at)
-        if moment is not None:
-            parsed[row.id] = moment
     return _claim(found, parsed)
 
 
@@ -247,11 +392,13 @@ def _best_split(
     at: datetime,
     pool: Sequence[Row],
     parsed: dict[int, datetime],
-    window: timedelta,
     tolerance_cents: int,
     max_split: int,
 ) -> Candidate | None:
     """给这一笔支出找最合适的人数。找不到返回 None。
+
+    ``pool`` 已经按时间排好、且只含 ``at`` 到 ``at + 窗口`` 这一段（调用方用二分
+    切出来的）。这里只做金额上的挑选。
 
     人头数从 1 试到 ``max_split``：转几笔就暗示着几个人分（你 + 转来的那几笔）。
     取**误差总和最小**的那一个人头数；误差一样时取人多的，因为「三个人各转一份」
@@ -262,7 +409,7 @@ def _best_split(
 
     # 「不早于」而不是「严格晚于」：不少银行流水只有日期，同一天的几笔时间戳
     # 一模一样，按严格晚于算的话，当天的还款永远也匹配不上。
-    nearby = [row for row in pool if at <= parsed[row.id] <= at + window]
+    nearby = pool
     if not nearby:
         return None
 
@@ -279,7 +426,9 @@ def _best_split(
         if len(chosen) < size - 1:
             continue
         deviations = [abs(row.display_cents - share) for row in chosen]
-        if max(deviations) > tolerance_cents:
+        # 绝对容差管大额，比例上限管小额（见 MAX_DEVIATION_RATIO）。
+        allowed = min(tolerance_cents, int(share * MAX_DEVIATION_RATIO))
+        if max(deviations) > allowed:
             continue
 
         candidate = Candidate(
@@ -355,8 +504,23 @@ def _usable(row: Row) -> bool:
     )
 
 
+def _parsed(rows: Iterable[Row]) -> dict[int, datetime]:
+    """把能用的一批行的发生时间解析出来，一次算好、多处共用。
+
+    ``datetime.fromisoformat`` 比 ``strptime`` 快一个数量级，而库里那列本来就是
+    定长的 ``YYYY-MM-DD HH:MM:SS``。格式不对的行照旧跳过（不进 ``parsed``），
+    跟以前「解析失败就不参与」的行为一致。
+    """
+    parsed: dict[int, datetime] = {}
+    for row in rows:
+        moment = _parse(row.occurred_at)
+        if moment is not None:
+            parsed[row.id] = moment
+    return parsed
+
+
 def _parse(text: str) -> datetime | None:
     try:
-        return datetime.strptime(text, _TIME_FORMAT)
+        return datetime.fromisoformat(text)
     except (TypeError, ValueError):
         return None

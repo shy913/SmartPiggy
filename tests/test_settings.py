@@ -19,7 +19,8 @@ from .api import NEEDS_SHELL, payload
 def form(**overrides) -> dict:
     """设置表单的一份合法取值（字段与 as_form 一一对应）。"""
     values = {
-        "theme": "light",
+        "theme_style": "standard",
+        "theme_mode": "light",
         "display": "GBP",
         "timezone": "Europe/London",
         # 线上格式跟 GET 回来的一致：一串 {code, rate}，不是表单那两列。
@@ -31,6 +32,7 @@ def form(**overrides) -> dict:
         "merge_window_hours": "12",
         "merge_tolerance": "0.5",
         "merge_keywords": "转账、还款",
+        "stale_days": "30",
     }
     values.update(overrides)
     return values
@@ -45,24 +47,89 @@ def save(client, **overrides):
 # --------------------------------------------------------------------------
 
 
-def test_the_meta_lists_every_theme_with_a_label(client):
+def test_the_meta_lists_every_style_and_mode_with_a_label(client):
     body = payload(client.get("/api/meta"))
-    listed = {theme["name"]: theme["label"] for theme in body["themes"]}
-    assert set(listed) == set(themes.names())
+    styles = {item["name"]: item["label"] for item in body["styles"]}
+    modes = {item["name"]: item["label"] for item in body["modes"]}
+    assert set(styles) == set(themes.style_names())
+    assert set(modes) == set(themes.mode_names())
     # 光有名字选不出来，得有个能读的中文标签
-    assert all(label.strip() for label in listed.values())
+    assert all(label.strip() for label in styles.values())
+    assert all(label.strip() for label in modes.values())
+    assert body["theme"] == themes.DEFAULT_STYLE
+    assert body["theme_mode"] == themes.DEFAULT_MODE
 
 
 @NEEDS_SHELL
 def test_the_shell_carries_the_theme_so_the_first_frame_is_right(client, isolated_data_dir):
-    """`<html data-theme>` 由服务端填好再吐出去。
+    """`<html data-style data-mode>` 由服务端填好再吐出去。
 
     等 /api/meta 回来再设的话，第一帧永远用默认那套配色——切成浅色主题的人
-    每次打开都先闪一下深色。
+    每次打开都先闪一下深色。深浅是 auto 时不用服务端猜浏览器：CSS 媒体查询自己选。
     """
-    assert 'data-theme="dark"' in client.get("/").get_data(as_text=True)
-    save(client, theme="light")
-    assert 'data-theme="light"' in client.get("/").get_data(as_text=True)
+    html = client.get("/").get_data(as_text=True)
+    assert 'data-style="standard"' in html
+    assert 'data-mode="auto"' in html
+    save(client, theme_style="cyberpunk", theme_mode="auto")
+    html = client.get("/").get_data(as_text=True)
+    assert 'data-style="cyberpunk"' in html
+    assert 'data-mode="auto"' in html
+
+
+def test_an_old_theme_setting_is_mapped_instead_of_ignored(isolated_data_dir):
+    """旧配置只有 `[ui] theme = "dark-teal"`。
+
+    直接当成认不出的值报错，等于让升级后的应用起不来；悄悄回落到默认，又会把
+    用户原来的观感换掉。映射成「青橙 · 深色」是唯一不会丢东西的做法。
+    """
+    (isolated_data_dir / "settings.toml").write_text(
+        '[ui]\ntheme = "dark-teal"\n',
+        encoding="utf-8",
+    )
+    conf = settings.load()
+    assert (conf.theme_style, conf.theme_mode) == ("teal", "dark")
+
+
+def test_the_settings_page_lists_the_currencies_in_the_ledger(client, book):
+    """账本里出现过的币种要自己列出来，不能等人猜还有没有别的没配汇率。"""
+    book(
+        [
+            {
+                "occurred_at": "2026-10-01 09:00:00",
+                "direction": "out",
+                "amount_cents": 1000,
+                "currency": "CNY",
+            },
+            {
+                "occurred_at": "2026-10-02 09:00:00",
+                "direction": "out",
+                "amount_cents": 2000,
+                "currency": "GBP",
+            },
+            {
+                "occurred_at": "2026-10-03 09:00:00",
+                "direction": "out",
+                "amount_cents": 3000,
+                "currency": "GBP",
+            },
+        ]
+    )
+    body = payload(client.get("/api/settings"))
+    assert body["currencies"] == [
+        {"currency": "CNY", "count": 1},
+        {"currency": "GBP", "count": 2},
+    ]
+
+
+def test_as_form_hides_the_display_currencys_own_rate(isolated_data_dir):
+    """显示币种自己那一行没有意义，表单里不该出现；否则保存时会被校验拦住。"""
+    (isolated_data_dir / "settings.toml").write_text(
+        'timezone = "Europe/London"\n\n[currency]\n'
+        'display = "GBP"\nrates = { GBP = 1, CNY = 8.9 }\n',
+        encoding="utf-8",
+    )
+    values = settings.as_form(settings.load())
+    assert [row["code"] for row in values["rates"] if row["code"]] == ["CNY"]
 
 
 # --------------------------------------------------------------------------
@@ -71,10 +138,79 @@ def test_the_shell_carries_the_theme_so_the_first_frame_is_right(client, isolate
 
 
 def test_saving_a_theme_writes_it_into_the_user_config(client, isolated_data_dir):
-    assert save(client, theme="light").status_code == 200
+    assert save(client, theme_style="cyberpunk", theme_mode="light").status_code == 200
     written = (isolated_data_dir / "settings.toml").read_text(encoding="utf-8")
-    assert 'theme = "light"' in written
-    assert settings.load().theme == "light"
+    assert 'style = "cyberpunk"' in written
+    assert 'mode = "light"' in written
+    conf = settings.load()
+    assert (conf.theme_style, conf.theme_mode) == ("cyberpunk", "light")
+
+
+def test_saving_only_the_theme_leaves_the_rest_alone(client, isolated_data_dir):
+    """配色点一下就落盘：只改这两个字段，不碰表单里其他值。
+
+    设置页上那些输入框可能还留着填了一半的内容；换颜色不该把它们带上，
+    更不该因为其中一个没填对而失败。
+    """
+    assert save(client, large_out="900").status_code == 200
+
+    response = client.put(
+        "/api/settings/theme", json={"style": "cyberpunk", "mode": "light"}
+    )
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "saved": True,
+        "theme": "cyberpunk",
+        "theme_mode": "light",
+    }
+
+    conf = settings.load()
+    assert (conf.theme_style, conf.theme_mode) == ("cyberpunk", "light")
+    assert conf.large_out_cents == 90_000
+    written = (isolated_data_dir / "settings.toml").read_text(encoding="utf-8")
+    assert 'style = "cyberpunk"' in written
+    assert 'mode = "light"' in written
+
+
+def test_only_the_named_half_of_the_theme_changes(client):
+    """只传深浅（或只传风格）时，另一半保持原样。"""
+    save(client, theme_style="cyberpunk", theme_mode="dark")
+
+    assert client.put("/api/settings/theme", json={"mode": "light"}).status_code == 200
+    conf = settings.load()
+    assert (conf.theme_style, conf.theme_mode) == ("cyberpunk", "light")
+
+
+def test_a_fixed_mode_style_is_normalized_to_dark(client):
+    """黑客绿固定深色：选浅色也存成深色，屏幕和配置文件一致。"""
+    response = client.put(
+        "/api/settings/theme", json={"style": "hacker", "mode": "light"}
+    )
+    assert response.status_code == 200
+    assert response.get_json()["theme_mode"] == "dark"
+    assert settings.load().theme_mode == "dark"
+
+    # 整张表单那条路也一样。
+    assert save(client, theme_style="hacker", theme_mode="light").status_code == 200
+    conf = settings.load()
+    assert (conf.theme_style, conf.theme_mode) == ("hacker", "dark")
+
+
+@pytest.mark.parametrize(
+    "body, fragment",
+    [
+        ({"style": "彩虹"}, "配色风格"),
+        ({"mode": "半深不浅"}, "深浅模式"),
+    ],
+)
+def test_a_bad_theme_is_rejected_without_touching_the_file(
+    client, isolated_data_dir, body, fragment
+):
+    before = (isolated_data_dir / "settings.toml").read_text(encoding="utf-8")
+    response = client.put("/api/settings/theme", json=body)
+    assert response.status_code == 400
+    assert fragment in payload(response)["error"]["message"]
+    assert (isolated_data_dir / "settings.toml").read_text(encoding="utf-8") == before
 
 
 def test_an_empty_rate_list_is_written_as_an_empty_table(client, isolated_data_dir):
@@ -99,14 +235,68 @@ def test_saving_round_trips_through_the_file(client, isolated_data_dir):
     assert conf.merge_keywords == ("转账", "还款")
 
 
+def test_saving_a_second_currency_makes_it_convertible(client):
+    response = save(
+        client,
+        rates=[
+            {"code": "CNY", "rate": "8.9"},
+            {"code": "USD", "rate": "1.32"},
+        ],
+    )
+    assert response.status_code == 200
+    assert settings.load().rates == {"CNY": 8.9, "USD": 1.32}
+
+
+def test_rollup_settings_default_when_the_form_omits_them(client):
+    """旧表单不带新字段时落到默认值，不能把月度汇总静默关掉。"""
+    assert save(client).status_code == 200
+    conf = settings.load()
+    assert conf.merge_rollup is True
+    assert conf.merge_rollup_keywords == settings.DEFAULT_ROLLUP_KEYWORDS
+
+
+def test_rollup_settings_round_trip_through_the_file(client, isolated_data_dir):
+    response = save(
+        client, merge_rollup=False, merge_rollup_keywords="利息、收益发放"
+    )
+    assert response.status_code == 200
+    written = (isolated_data_dir / "settings.toml").read_text(encoding="utf-8")
+    assert "rollup = false" in written
+    assert 'rollup_keywords = ["利息", "收益发放"]' in written
+
+    conf = settings.load()
+    assert conf.merge_rollup is False
+    assert conf.merge_rollup_keywords == ("利息", "收益发放")
+
+
+def test_an_explicitly_empty_rollup_keyword_list_turns_matching_off(client):
+    assert save(client, merge_rollup_keywords="").status_code == 200
+    assert settings.load().merge_rollup_keywords == ()
+
+
+def test_stale_days_round_trips_through_the_file(client, isolated_data_dir):
+    """保存时会整份重写设置文件，模板里漏一个键就等于把这个设置静默删掉。"""
+    assert save(client, stale_days="7").status_code == 200
+    written = (isolated_data_dir / "settings.toml").read_text(encoding="utf-8")
+    assert "[imports]" in written
+    assert "stale_days = 7" in written
+    assert settings.load().stale_days == 7
+
+
+def test_a_negative_stale_days_is_rejected_with_a_readable_message(client):
+    response = save(client, stale_days="-1")
+    assert response.status_code == 400
+    assert "不小于 0" in response.get_json()["errors"][0]
+
+
 def test_the_original_file_is_kept_as_a_backup_once(client, isolated_data_dir):
     original = (isolated_data_dir / "settings.toml").read_text(encoding="utf-8")
 
-    save(client, theme="light")
+    save(client, theme_style="standard", theme_mode="light")
     assert (isolated_data_dir / "settings.toml.bak").read_text(encoding="utf-8") == original
 
     # 再存一次不会把最早那份顶掉
-    save(client, theme="dark-teal")
+    save(client, theme_style="teal")
     assert (isolated_data_dir / "settings.toml.bak").read_text(encoding="utf-8") == original
 
 
@@ -117,19 +307,20 @@ def test_a_save_writes_exactly_what_the_form_said(client, isolated_data_dir):
     是为了让后来的人别去加那种合并逻辑——它会造出「页面上显示 900、文件里却是
     500」这种对不上账的情形。
     """
-    save(client, theme="light", large_out="900")
+    save(client, theme_style="standard", large_out="900")
     assert settings.load().large_out_cents == 90_000
 
-    save(client, theme="light-teal")  # 这张表单里 large_out 填的是 500
+    save(client, theme_style="teal")  # 这张表单里 large_out 填的是 500
     conf = settings.load()
-    assert conf.theme == "light-teal"
+    assert conf.theme_style == "teal"
     assert conf.large_out_cents == 50_000
 
 
 @pytest.mark.parametrize(
     "overrides, fragment",
     [
-        ({"theme": "彩虹"}, "配色"),
+        ({"theme_style": "彩虹"}, "配色风格"),
+        ({"theme_mode": "半深不浅"}, "深浅模式"),
         ({"display": "人民币"}, "币种"),
         ({"timezone": "上海时间"}, "时区"),
         ({"rates": [{"code": "CNY", "rate": "0"}]}, "大于 0"),
@@ -208,7 +399,8 @@ def test_an_empty_rate_row_is_just_ignored(isolated_data_dir):
     """汇率那几行特意多留了空格，整行空着就是没填，不该报错。"""
     conf, _, errors = settings.read_form(
         _Multidict({
-            "theme": "dark", "display": "CNY", "timezone": "Asia/Shanghai",
+            "theme_style": "standard", "theme_mode": "dark",
+            "display": "CNY", "timezone": "Asia/Shanghai",
             "rate_code": ["", ""], "rate_value": ["", ""],
             "large_out": "0", "large_in": "0",
             "merge_window_hours": "12", "merge_tolerance": "0.5",
@@ -222,7 +414,8 @@ def test_a_rate_row_with_only_a_code_says_so(isolated_data_dir):
     """只填了币种忘了填数，不能当它没填——那样这个币种就悄悄不换算了。"""
     conf, _, errors = settings.read_form(
         _Multidict({
-            "theme": "dark", "display": "CNY", "timezone": "Asia/Shanghai",
+            "theme_style": "standard", "theme_mode": "dark",
+            "display": "CNY", "timezone": "Asia/Shanghai",
             "rate_code": ["USD"], "rate_value": [""],
             "large_out": "0", "large_in": "0",
             "merge_window_hours": "12", "merge_tolerance": "0.5",

@@ -1,14 +1,27 @@
 import { describe, expect, it } from "vitest";
 
-import { THEMES, THEME_NAMES, type Theme } from "./themes";
+import {
+  DEFAULT_MODE,
+  DEFAULT_STYLE,
+  FIXED_MODES,
+  MODE_NAMES,
+  STYLE_NAMES,
+  THEMES,
+  resolveThemeName,
+  type Theme,
+  type ThemeName,
+} from "./themes";
 
 // 这一组断言原来长在 Python 那边（tests/test_charts.py），比对的是 themes.py 与
 // style.css 两份颜色。配色收敛成 theme.json 之后「两份值不一致」不可能再发生了，
 // 那些**对照式**的断言跟着没了意义。
 //
-// 但下面这两条是**配色本身的质量**，跟「哪一层渲染」无关，必须活下来：
+// 但下面这些是**配色本身的质量**，跟「哪一层渲染」无关，必须活下来：
 // 收入/支出两色要分得开，每个颜色当正文读得清。它们是这份配色的验收标准，
 // 换一套新配色时首先要过的就是这里。
+//
+// 现在配色是「风格 × 深浅」：每一套风格的深、浅两版都要单独过一遍——深色版
+// 达标不代表浅色版也达标，反过来也一样。
 
 function channels(colour: string): [number, number, number] {
   const value = colour.replace("#", "");
@@ -50,10 +63,16 @@ export function deltaE(a: string, b: string): number {
   return 100 * Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
 }
 
+/** 所有「风格 + 实际深浅」的组合，测试就是挨个过这些。 */
+const RESOLVED = STYLE_NAMES.flatMap((style) => [
+  `${style}-dark` as ThemeName,
+  `${style}-light` as ThemeName,
+]);
+
 describe("配色", () => {
   it("收入与支出在每一套主题下都分得开", () => {
     // 一对太近的颜色等于没有颜色——图例和标签都救不回来。
-    for (const name of THEME_NAMES) {
+    for (const name of RESOLVED) {
       const theme: Theme = THEMES[name];
       expect(deltaE(theme.income, theme.expense), `${name} 的收入 / 支出色太接近`).toBeGreaterThanOrEqual(15);
     }
@@ -72,7 +91,7 @@ describe("配色", () => {
       "expense",
       "neutral",
     ];
-    for (const name of THEME_NAMES) {
+    for (const name of RESOLVED) {
       const theme = THEMES[name];
       for (const role of roles) {
         for (const surface of ["bg", "panel"] as const) {
@@ -83,12 +102,67 @@ describe("配色", () => {
     }
   });
 
-  it("四套主题都在，而且各自带一个模式", () => {
-    expect(THEME_NAMES).toEqual(["dark", "light", "dark-teal", "light-teal"]);
-    for (const name of THEME_NAMES) {
-      // 标签不在这里：它是给人看的名字，由服务端出（见 tests/test_theme_sources.py）。
-      expect(["dark", "light"]).toContain(THEMES[name].mode);
-      expect(THEMES[name].bg).toMatch(/^#[0-9a-f]{6}$/i);
+  it("分类色板相邻两色分得开，而且在面板上看得见", () => {
+    // 饼图的扇区靠颜色区分，相邻两块必须一眼能分开。这里钉的是**正常视觉**
+    // 的下限（15）；色盲模拟那一关在选色时用 dataviz 的 validator 跑过，
+    // 结果写进了 theme.json 的注释性顺序里——改了颜色就重跑一遍。
+    for (const name of RESOLVED) {
+      const theme = THEMES[name];
+      expect(theme.series.length, `${name} 的分类色板太短`).toBeGreaterThanOrEqual(6);
+      for (let index = 0; index < theme.series.length; index += 1) {
+        const colour = theme.series[index];
+        expect(colour, `${name} 的第 ${index + 1} 个分类色不是 hex`).toMatch(/^#[0-9a-f]{6}$/i);
+        // 图形元素只需要 3:1；文字才要 4.5:1。
+        const ratio = contrast(colour, theme.panel);
+        expect(ratio, `${name} 的分类色 ${colour} 在面板上只有 ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
+        const next = theme.series[index + 1];
+        if (next) {
+          expect(
+            deltaE(colour, next),
+            `${name} 的分类色 ${colour} 与 ${next} 太接近`,
+          ).toBeGreaterThanOrEqual(15);
+        }
+      }
     }
+  });
+
+  it("每套风格都有深、浅两版，而且 mode 对得上", () => {
+    expect(STYLE_NAMES).toEqual([
+      "standard",
+      "teal",
+      "cyberpunk",
+      "claude",
+      "hacker",
+      "fresh",
+    ]);
+    for (const style of STYLE_NAMES) {
+      for (const [mode, expected] of [["dark", "dark"], ["light", "light"]] as const) {
+        const theme = THEMES[`${style}-${mode}`];
+        expect(theme, `${style} 缺 ${mode} 版`).toBeTruthy();
+        expect(theme.mode).toBe(expected);
+        expect(theme.bg).toMatch(/^#[0-9a-f]{6}$/i);
+      }
+    }
+  });
+
+  it("默认是「标准 · 跟随系统」", () => {
+    expect(DEFAULT_STYLE).toBe("standard");
+    expect(DEFAULT_MODE).toBe("auto");
+    expect(MODE_NAMES).toEqual(["auto", "dark", "light"]);
+  });
+
+  it("auto 跟着浏览器的深浅走，显式的深浅不跟", () => {
+    expect(resolveThemeName("cyberpunk", "auto", true)).toBe("cyberpunk-dark");
+    expect(resolveThemeName("cyberpunk", "auto", false)).toBe("cyberpunk-light");
+    expect(resolveThemeName("cyberpunk", "dark", false)).toBe("cyberpunk-dark");
+    expect(resolveThemeName("teal", "light", true)).toBe("teal-light");
+  });
+
+  it("固定深色的风格无视深浅设置", () => {
+    // 黑客绿离开黑底就不成立了。服务端也会把 mode 归一化成 dark。
+    expect(FIXED_MODES.hacker).toBe("dark");
+    expect(resolveThemeName("hacker", "light", false)).toBe("hacker-dark");
+    expect(resolveThemeName("hacker", "auto", false)).toBe("hacker-dark");
+    expect(resolveThemeName("hacker", "dark", true)).toBe("hacker-dark");
   });
 });

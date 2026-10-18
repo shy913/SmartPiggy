@@ -34,8 +34,9 @@ USAGE = "用法：bill [--set-password [--user 账号]]"
 # 前端构建产物。**不进版本库**（见 .gitignore），部署时现构建——仓库里就不会
 # 有一份「改了源码忘了重建」的偏差。
 APP_BUILD_DIR = Path(__file__).parent / "static" / "app"
-# 外壳里那个 data-theme 占位符。服务端填好再吐出去，第一帧主题就是对的。
-THEME_SLOT = "%BILL_THEME%"
+# 外壳里的两个占位符：风格与深浅。服务端填好再吐出去，第一帧主题就是对的。
+STYLE_SLOT = "%BILL_THEME_STYLE%"
+MODE_SLOT = "%BILL_THEME_MODE%"
 
 # 不登录也能打的接口。**逐个点名**，而且只点登录本身：「问一句我登没登」
 # 「登录」「退出」。除此之外的 /api/* 一律 401。
@@ -145,10 +146,11 @@ def create_app() -> Flask:
         return send_from_directory(APP_BUILD_DIR / "assets", filename)
 
     def render_shell():
-        """外壳 HTML，顺手把主题填进 ``<html data-theme>``。
+        """外壳 HTML，顺手把风格与深浅填进 ``<html data-style data-mode>``。
 
         填在服务端而不是等 /api/meta 回来再设：否则第一帧永远用默认那套配色，
-        切成浅色主题的人每次打开都先闪一下深色。
+        切成浅色主题的人每次打开都先闪一下深色。「跟随系统」也不需要服务端知道
+        浏览器的偏好——CSS 里那个媒体查询会自己选。
         """
         index = APP_BUILD_DIR / "index.html"
         if not index.exists():
@@ -160,12 +162,17 @@ def create_app() -> Flask:
                 503,
             )
         try:
-            theme = settings.load().theme
+            conf = settings.load()
+            style, mode = conf.theme_style, conf.theme_mode
         except BillError:
             # 设置坏了不该连带把界面也挡在外面：先用默认主题把页面给出去，
             # 设置页自己会说明哪里填错了。
-            theme = themes.DEFAULT_THEME
-        html = index.read_text(encoding="utf-8").replace(THEME_SLOT, theme)
+            style, mode = themes.DEFAULT_STYLE, themes.DEFAULT_MODE
+        html = (
+            index.read_text(encoding="utf-8")
+            .replace(STYLE_SLOT, style)
+            .replace(MODE_SLOT, mode)
+        )
         return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
     @app.get("/")

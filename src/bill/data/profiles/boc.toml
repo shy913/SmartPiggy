@@ -1,0 +1,68 @@
+# 中国银行「交易流水明细清单」（文字版 PDF）。
+#
+# 从手机银行 / 网上银行导出的 PDF，密码就是文件名去掉 .pdf——读取层会按这个
+# 约定自动试，不用在界面上填密码。扫描件（图片版）没有文字层，导不进来。
+#
+# 这份流水一份文件里会同时出现人民币、英镑、美元，所以：
+#   - 币种列必须映射，并用 [values.currency] 把中文写法转成 ISO 代码；
+#   - [parse].timezone 声明北京时间，导入时换算到账本显示时区；
+#   - 购汇、转给自己另一张卡、转到 Monzo、微信零钱提现这些「自己账户之间」
+#     的动作按对方名称判中性，否则会凭空多出一大笔收入和支出。
+
+[profile]
+name     = "boc"
+title    = "中国银行"
+kind     = "bank"
+timezone = "Asia/Shanghai"
+format   = "pdf"
+# 账单自带币别列；这行只是某一行缺币种时的兜底。
+currency = "CNY"
+
+[match]
+required_headers  = ["记账日期", "记账时间", "币别", "金额"]
+preferred_headers = ["交易名称", "渠道", "附言", "对方账户名"]
+
+[headers]
+# 每页的表头都在表格第一块，前面只有页眉的账户说明，不用往前扫太远。
+scan_first_rows = 20
+match_any       = ["记账日期", "记账时间", "币别", "金额"]
+
+[columns]
+date                 = ["记账日期"]
+time                 = ["记账时间"]
+amount               = ["金额"]
+currency             = ["币别"]
+description          = ["交易名称"]
+memo                 = ["附言"]
+payment_method       = ["渠道"]
+counterparty         = ["对方账户名"]
+counterparty_account = ["对方卡号/账号"]
+
+[parse]
+# 日期和时间分成两列，读取层会拼成「2026-10-14 19:00:46」再解析。
+date_formats    = ["%Y-%m-%d %H:%M:%S"]
+sign_convention = "negative_is_out"
+
+# 对方是本人（含「支付宝-沈宏阳」这种带前缀的写法和英文名）时记中性：
+# 购汇、内部转账、微信零钱提现、转到 Monzo 都属于自己账户之间的移动。
+# 判断前会去掉所有空白并忽略大小写。
+neutral_counterparties = ["沈宏阳", "HONGYANG SHEN"]
+# 退款单独列出来：中行的收款行不会带「不计收支」，但退款不是收入。
+neutral_descriptions = ["网上快捷退款"]
+
+[values.currency]
+# 键是账单里的写法，值是 ISO 代码；查的时候不区分大小写。
+# 中文键必须加引号，TOML 的裸键只认 ASCII 字母、数字、下划线和连字符。
+"英镑" = "GBP"
+"人民币" = "CNY"
+"美元" = "USD"
+
+[dedup]
+# 中行流水没有唯一流水号，走「时间 + 方向 + 金额 + 对方」的内容指纹。
+id_null_values = ["", "/", "--", "-------------------"]
+
+[cleanup]
+# 表格抽取通常已经把这些页脚排除在外，这里只是兜底。
+footer_patterns = ['^-{4,}', '^第\s*\d+\s*页', '^温馨提示']
+# 保持默认的低阈值：汇总行由 footer_patterns 拦，调高会误伤末尾字段为空的合法行。
+min_columns     = 2

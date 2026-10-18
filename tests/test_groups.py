@@ -98,6 +98,25 @@ def test_tolerance_is_inclusive_and_absolute():
     assert groups.candidates(far, tolerance_cents=100, keywords=PAYBACK) == []
 
 
+def test_a_tiny_share_gets_a_relative_cap():
+    """小额时绝对的 ±0.5 会显得极宽：£1.12 分成两人，份额只有 £0.56。
+
+    一笔 £0.12 的收款差 44 便士，绝对额没超，却已经是份额的八成——
+    比例上限把它挡住；同一笔支出收到 £0.56 仍照常合。
+    """
+    tiny = [
+        row(1, "out", 112, text="发出群红包"),
+        row(2, "in", 12, at="2026-03-01 20:00:00", text="转账"),
+    ]
+    assert groups.candidates(tiny, tolerance_cents=50, keywords=PAYBACK) == []
+
+    exact = [
+        row(1, "out", 112, text="发出群红包"),
+        row(2, "in", 56, at="2026-03-01 20:00:00", text="转账"),
+    ]
+    assert len(groups.candidates(exact, tolerance_cents=50, keywords=PAYBACK)) == 1
+
+
 def test_repayment_must_arrive_after_the_expense():
     """早于支出的那笔不算：还钱总是发生在垫付之后。
 
@@ -281,6 +300,21 @@ def test_balanced_tolerance_is_inclusive():
     ]
     assert len(groups.balanced(rows, tolerance_cents=50, keywords=PAYBACK)) == 1
     assert groups.balanced(rows, tolerance_cents=49, keywords=PAYBACK) == []
+
+
+def test_balanced_tiny_amounts_get_the_same_relative_cap():
+    """小额退款也受比例上限约束：£1.12 的消费回来 £0.70，差了四成。"""
+    rough = [
+        row(1, "out", 112, at="2026-03-01 09:00:00"),
+        row(2, "in", 70, at="2026-03-01 14:00:00", text="转账"),
+    ]
+    assert groups.balanced(rough, tolerance_cents=50, keywords=PAYBACK) == []
+
+    exact = [
+        row(1, "out", 112, at="2026-03-01 09:00:00"),
+        row(2, "in", 112, at="2026-03-01 14:00:00", text="转账"),
+    ]
+    assert len(groups.balanced(exact, tolerance_cents=50, keywords=PAYBACK)) == 1
 
 
 def test_balanced_window_and_direction():

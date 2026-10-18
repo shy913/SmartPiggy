@@ -1,8 +1,9 @@
 <!doctype html>
-<!-- data-theme 由服务端在外壳路由里替换掉再吐出来：等 /api/meta 回来才设主题的话，
-     第一帧会是默认那套配色，切到浅色主题的人每次刷新都先闪一下深色。
+<!-- data-style / data-mode 由服务端在外壳路由里替换掉再吐出来：等 /api/meta
+     回来才设主题的话，第一帧会是默认那套配色，切到浅色主题的人每次刷新都先闪
+     一下深色。mode = "auto" 时由 CSS 的 prefers-color-scheme 在深浅两版之间选。
      占位符用一对百分号，Vite 构建时不会动它。 -->
-<html lang="zh-CN" data-theme="%BILL_THEME%">
+<html lang="zh-CN" data-style="%BILL_THEME_STYLE%" data-mode="%BILL_THEME_MODE%">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />

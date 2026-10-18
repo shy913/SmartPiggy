@@ -489,6 +489,54 @@ def test_autodetect_builds_the_group(conn, book):
     assert row["display_cents"] == SHARE
 
 
+def wechat_split_rows(kind: str | None) -> list[ParsedRow]:
+    """一笔三人平摊的消费 + 两笔各还一份的微信转账。
+
+    ``kind`` 是账单里「交易类型」那一列；``None`` 表示没有这个键。
+    """
+    raw = {"交易类型": kind} if kind else {}
+
+    def income(dedup_key, name):
+        return make_row(
+            dedup_key=dedup_key,
+            direction=Direction.IN,
+            amount_cents=9_532,
+            counterparty=name,
+            description="/",
+            raw=raw,
+        )
+
+    return [
+        make_row(
+            dedup_key="id:out",
+            direction=Direction.OUT,
+            amount_cents=28_539,
+            counterparty="程支付-携程旅行网",
+            description="网上快捷支付",
+        ),
+        income("id:in1", "王开阔 (Aki)"),
+        income("id:in2", "龚必勋 (Aslan)"),
+    ]
+
+
+def test_wechat_transaction_kind_counts_as_payback(conn):
+    """微信账单没有分类列，但「交易类型：群收款」本身就是「钱回来了」。
+
+    它不该塞进 source_category（那一列保持账单原意），检测时单独取出来当文字用。
+    没有这一层，三个人平摊的账每笔只差 ¥0.19，也会因为关键词过滤而合不上。
+    """
+    imported(conn, wechat_split_rows("群收款"))
+    with conn:
+        assert repo.autodetect(conn) == 1
+
+
+def test_a_person_transfer_without_the_kind_is_still_filtered(conn):
+    """只有人名不足以说明这是还款：没有「群收款」这类字样的仍然不猜。"""
+    imported(conn, wechat_split_rows(None))
+    with conn:
+        assert repo.autodetect(conn) == 0
+
+
 def test_autodetect_is_idempotent(conn, book):
     """反复扫不会把同一组越叠越多：已经入组的行不再参与。"""
     dinner(book)

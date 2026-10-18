@@ -16,6 +16,9 @@ from bill.money import format_amount, has_sub_cent, parse_amount, to_cents
         ("¥12.00", Decimal("12.00")),
         ("￥12.00", Decimal("12.00")),
         ("¥1,234.56", Decimal("1234.56")),
+        # 千分位和正负号同时出现：银行流水里非常常见。
+        ("-1,234.56", Decimal("-1234.56")),
+        ("+1,234.56", Decimal("1234.56")),
         ("-8.5", Decimal("-8.5")),
         ("+3.00", Decimal("3.00")),
         ("12.00元", Decimal("12.00")),

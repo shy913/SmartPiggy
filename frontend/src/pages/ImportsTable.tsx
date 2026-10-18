@@ -35,7 +35,7 @@ export function ImportsTable({
               data-flash={row.id === highlightedId ? "1" : undefined}
               className={cn(
                 "transition-colors duration-700",
-                row.id === highlightedId && "bg-accent/10",
+                row.id === highlightedId && "bg-warn/20",
               )}
             >
               <TD>

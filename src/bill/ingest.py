@@ -63,8 +63,8 @@ class StagedPreview:
             return {"new": 0, "duplicate": 0, "possible": 0, "neutral": 0, "problem": 0}
         return self.plan.counts()
 
-    def totals(self) -> tuple[int, int]:
-        return self.plan.totals() if self.plan else (0, 0)
+    def totals_by_currency(self) -> dict[str, tuple[int, int]]:
+        return self.plan.totals_by_currency() if self.plan else {}
 
     def rows(self, limit: int | None = None):
         if self.plan is None:
@@ -363,7 +363,12 @@ def confirm(connection: sqlite3.Connection, token: str) -> int:
                 connection,
                 since=dates.shift(coverage_start, hours=-reach),
                 until=dates.shift(coverage_end, hours=reach),
+                aa=True,
             )
+        elif conf.merge_rollup:
+            # 只开了利息汇总，或者这份账单没有覆盖区间：AA 需要时间窗，
+            # 收益汇总不需要，单独跑一遍。
+            merged = repo.autodetect(connection, aa=False)
 
         repo.finalize_import(
             connection,

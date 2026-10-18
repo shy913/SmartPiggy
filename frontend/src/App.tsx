@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -16,6 +16,14 @@ import { ImportDetailPage, ImportsPage } from "./pages/ImportsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ProfilesPage } from "./pages/ProfilesPage";
 import { Button } from "./components/ui/button";
+import {
+  DEFAULT_MODE,
+  DEFAULT_STYLE,
+  resolveThemeName,
+  type ThemeMode,
+  type ThemeName,
+  type ThemeStyle,
+} from "./theme/themes";
 import { cn } from "./lib/utils";
 
 /** 顶部那四个区。顺序跟旧界面一致，用户不用重新学。 */
@@ -34,6 +42,49 @@ export function useMeta() {
   return useQuery({ queryKey: ["meta"], queryFn: getMeta });
 }
 
+const DARK_QUERY = "(prefers-color-scheme: dark)";
+
+/**
+ * 浏览器当前是否偏好深色。
+ *
+ * jsdom 里没有 matchMedia，所以每一处都先确认它存在——测试环境退回浅色，
+ * 而不是在渲染时抛错。
+ */
+export function usePrefersDark(): boolean {
+  const query = () =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia(DARK_QUERY)
+      : null;
+  const [prefersDark, setPrefersDark] = useState(() => query()?.matches ?? false);
+
+  useEffect(() => {
+    const media = query();
+    if (!media) return;
+    setPrefersDark(media.matches);
+    const update = () => setPrefersDark(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+
+  return prefersDark;
+}
+
+/**
+ * 当前真正生效的那套配色（如 "cyberpunk-dark"）。
+ *
+ * 图表要拿具体颜色，读不了 CSS 变量，所以得由 JS 解析一遍。设置成「跟随系统」
+ * 时这里跟着浏览器的深浅走；系统在页面开着的时候切换，也会跟着重渲染。
+ */
+export function useResolvedTheme(): ThemeName {
+  const meta = useMeta();
+  const prefersDark = usePrefersDark();
+  return resolveThemeName(
+    (meta.data?.theme as ThemeStyle | undefined) ?? DEFAULT_STYLE,
+    (meta.data?.theme_mode as ThemeMode | undefined) ?? DEFAULT_MODE,
+    prefersDark,
+  );
+}
+
 function Splash() {
   return <div className="px-4 py-16 text-center text-muted">正在读取账本…</div>;
 }
@@ -42,13 +93,16 @@ export function App() {
   const session = useSession();
   const meta = useMeta();
   const client = useQueryClient();
-  const theme = meta.data?.theme;
+  const style = meta.data?.theme;
+  const mode = meta.data?.theme_mode;
 
-  // 主题跟着设置走。外壳已经把 data-theme 注入进来了（避免第一帧闪一下），
-  // 这里再设一次是为了「改完设置立刻生效」——不用刷新。
+  // 主题跟着设置走。外壳已经把 data-style / data-mode 注入进来了（避免第一帧
+  // 闪一下），这里再设一次是为了「改完设置立刻生效」——不用刷新。
+  // 深浅是 auto 时由 CSS 自己看浏览器偏好，这里不用替它决定。
   useEffect(() => {
-    if (theme) document.documentElement.dataset.theme = theme;
-  }, [theme]);
+    if (style) document.documentElement.dataset.style = style;
+    if (mode) document.documentElement.dataset.mode = mode;
+  }, [style, mode]);
 
   if (session.isPending) return <Splash />;
 
@@ -64,7 +118,7 @@ export function App() {
           否则内容从底下透过来。 */}
       <header className="sticky top-0 z-40 border-b border-border bg-panel">
         <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
-          <span className="font-semibold">记账</span>
+          <span className="brand font-semibold">记账</span>
           <nav className="flex flex-wrap items-center gap-1 text-sm">
             {NAV.map((item) => (
               <NavLink
