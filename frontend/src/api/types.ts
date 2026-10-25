@@ -135,6 +135,15 @@ export type DashboardCategory = {
   total: number;
 };
 
+/** 首页「对方汇总」的一行：同名合并后的支出和收入。 */
+export type DashboardCounterparty = {
+  name: string;
+  expense: number;
+  income: number;
+  expense_count: number;
+  income_count: number;
+};
+
 export type TrendPoint = { key: string; expense: number; income: number };
 
 /**
@@ -182,6 +191,11 @@ export type Dashboard = {
   singles: LedgerRow[];
   single_count: number;
   category_count: number;
+  /** 按支出排的对方榜（同一段区间、同一个显示币种）。 */
+  counterparties: DashboardCounterparty[];
+  /** 按收入排的对方榜。两个榜各自截断，计数在 `counterparty_counts`。 */
+  counterparties_income: DashboardCounterparty[];
+  counterparty_counts: { expense: number; income: number };
 };
 
 export type Summary = {
@@ -283,6 +297,8 @@ export type ListFilters = {
   account: number | null;
   q: string;
   category: string;
+  /** 精确匹配的对方名，从首页「对方汇总」点进来时带上。 */
+  counterparty: string;
   hidden: string;
 };
 

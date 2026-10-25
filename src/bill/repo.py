@@ -23,6 +23,7 @@ __all__ = [
     "by_month",
     "by_source_category",
     "count_groups",
+    "counterparty_totals",
     "coverage",
     "create_group",
     "create_import",
@@ -624,6 +625,17 @@ _EFFECTIVE_COLUMNS = """
 """
 
 
+def _counterparty_name(prefix: str = "t.") -> str:
+    """「对方」的归一口径：去掉首尾空白。
+
+    分层统计和交易记录筛选**必须用同一个表达式**。首页点「美团外卖」进列表时，
+    那边要是写 ``counterparty = ?`` 而统计这边写 ``TRIM(counterparty)``，
+    账单里带首尾空格的那几笔就会「统计里有、列表里没有」——数字对不上，
+    而且不报错。
+    """
+    return f"TRIM({prefix}counterparty)"
+
+
 def _effective_category(prefix: str = "t.") -> str:
     """页面上显示的分类：手改的优先，两列都归一到统一体系。
 
@@ -1019,6 +1031,61 @@ def by_source_category(
     ).fetchall()
 
 
+def counterparty_totals(
+    connection: sqlite3.Connection,
+    *,
+    start: str | None = None,
+    end: str | None = None,
+) -> list[sqlite3.Row]:
+    """按「对方」汇总区间内的收支，同名的合成一行。
+
+    名字只做一件事：去掉首尾空白。中英文混合的商户名在账单里大小写常常不一致，
+    但把它们强行折叠成小写会连显示名一起改掉；真正的同一个名字在各家账单里
+    本来就写得一样，折叠带来的收益远小于「显示成了我没写过的样子」的代价。
+
+    口径和首页合计完全一致：
+
+    - 隐藏行不在 ``effective`` 里；
+    - 中性行没有收支，不计入；
+    - 大额行不进金额——它们在首页另有一块「不计入合计的大额」；
+    - AA / 收支平衡的合并组按**净额**算一行（``effective`` 已经是净额）。
+
+    按显示币种分开汇总：没配汇率的币种各占一行，绝不跨币种相加。
+    """
+    conf = settings.load()
+    amount = _amount_in_display(conf, "t.")
+    large = _is_large_effective(conf, "t.")
+    name = _counterparty_name("t.")
+    where, params = _range_where(start, end)
+    cte, lead = _effective(conf, start=start, end=end)
+    return connection.execute(
+        f"""
+        {cte}
+        SELECT {name} AS counterparty,
+               {_group_by_display(conf, "t.")} AS display_currency,
+               COALESCE(SUM(CASE WHEN t.direction = 'out' AND NOT {large}
+                                 THEN {amount} END), 0) AS expense,
+               COALESCE(SUM(CASE WHEN t.direction = 'in'  AND NOT {large}
+                                 THEN {amount} END), 0) AS income,
+               -- 笔数**不**排除大额：首页那一行点进去看到的是这个对方在这一段
+               -- 区间里的全部记录（大额也在列表里），笔数要跟那边的「共 N 条」
+               -- 对得上。金额仍然按合计口径剔掉大额——两者说的不是同一件事。
+               COALESCE(SUM(CASE WHEN t.direction = 'out' THEN 1 ELSE 0 END), 0)
+                 AS expense_count,
+               COALESCE(SUM(CASE WHEN t.direction = 'in'  THEN 1 ELSE 0 END), 0)
+                 AS income_count
+        FROM effective t
+        WHERE {where} AND {name} <> ''
+        -- 这里必须重写整个表达式，不能写别名 counterparty：effective 里本来就
+        -- 有一列同名，SQLite 的分组会认输入列而不是输出别名，首尾空白就白去了。
+        GROUP BY {name}, display_currency
+        HAVING expense > 0 OR income > 0
+        ORDER BY display_currency, expense DESC, income DESC, counterparty
+        """,
+        [*lead, *params],
+    ).fetchall()
+
+
 def latest_month(connection: sqlite3.Connection) -> str | None:
     """账本里最近有数据的月份（'YYYY-MM'）。空账本返回 None。
 
@@ -1238,6 +1305,7 @@ def list_transactions(
     direction: str | None = None,
     search: str | None = None,
     category: str | None = None,
+    counterparty: str | None = None,
     hidden: str | None = None,
     limit: int = 100,
     offset: int = 0,
@@ -1249,7 +1317,8 @@ def list_transactions(
     """
     conf = settings.load()
     where, params = _transaction_filters(
-        start, end, account_id, direction, search, hidden, category
+        start, end, account_id, direction, search, hidden, category,
+        counterparty=counterparty,
     )
     cte, lead = _effective(
         conf, start=start, end=end, include_hidden=hidden != "0"
@@ -1292,13 +1361,15 @@ def count_transactions(
     direction: str | None = None,
     search: str | None = None,
     category: str | None = None,
+    counterparty: str | None = None,
     hidden: str | None = None,
 ) -> int:
     """跟 list_transactions 同源同过滤：一个合并组算一条。两处对不上的话，
     「共 N 条」和列表行数就会各说各话。"""
     conf = settings.load()
     where, params = _transaction_filters(
-        start, end, account_id, direction, search, hidden, category
+        start, end, account_id, direction, search, hidden, category,
+        counterparty=counterparty,
     )
     cte, lead = _effective(
         conf, start=start, end=end, include_hidden=hidden != "0"
@@ -1320,6 +1391,7 @@ def _transaction_filters(
     search: str | None,
     hidden: str | None = None,
     category: str | None = None,
+    counterparty: str | None = None,
 ) -> tuple[str, list]:
     clauses = ["1 = 1"]
     params: list = []
@@ -1351,6 +1423,12 @@ def _transaction_filters(
     # 留一条空跑的条件只会让人猜哪边在起作用。所以只给「只看隐藏」加。
     if hidden == "1":
         clauses.append("t.hidden = 1")
+    if counterparty:
+        # 用跟首页「对方汇总」完全相同的归一表达式，否则统计里点了某个人、
+        # 列表里却少几笔（名字带首尾空白的那几笔）。合并行的 counterparty
+        # 是组标题或锚点那一笔的对方，同样适用。
+        clauses.append(f"{_counterparty_name('t.')} = ?")
+        params.append(counterparty.strip())
     if search:
         # 商品、对方、备注三处一起搜——用户记不住自己当时写的哪个字段。
         clauses.append(

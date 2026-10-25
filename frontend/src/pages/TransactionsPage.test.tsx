@@ -28,6 +28,7 @@ function listBody(overrides: Partial<TransactionList> = {}): TransactionList {
       account: null,
       q: "",
       category: "",
+      counterparty: "",
       hidden: "0",
     },
     accounts: [{ id: 1, name: "支付宝" }],
@@ -173,6 +174,29 @@ describe("交易记录页", () => {
     await waitFor(() => expect(calls.length).toBeGreaterThan(1));
     expect(calls[calls.length - 1]).toContain(
       "category=%E9%A4%90%E9%A5%AE%E7%BE%8E%E9%A3%9F",
+    );
+  });
+
+  it("对方筛选从首页带进来，原样留在筛选栏并继续生效", async () => {
+    const user = userEvent.setup();
+    draw(
+      listBody({
+        filters: { ...listBody().filters, counterparty: "美团外卖" },
+        active_filters: ["对方「美团外卖」"],
+      }),
+      "/transactions?counterparty=%E7%BE%8E%E5%9B%A2%E5%A4%96%E5%8D%96&start=2026-10-01&end=2026-10-31",
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText(/对方「美团外卖」/)).toBeInTheDocument(),
+    );
+    await user.click(screen.getByText("筛选"));
+    expect(screen.getByLabelText("对方")).toHaveValue("美团外卖");
+
+    await user.click(screen.getByRole("button", { name: "查看" }));
+    await waitFor(() => expect(calls.length).toBeGreaterThan(1));
+    expect(calls[calls.length - 1]).toContain(
+      "counterparty=%E7%BE%8E%E5%9B%A2%E5%A4%96%E5%8D%96",
     );
   });
 

@@ -168,6 +168,9 @@ function dashboardBody(overrides: Partial<Dashboard> = {}): Dashboard {
     singles: [singleRow()],
     single_count: 1,
     category_count: 2,
+    counterparties: [],
+    counterparties_income: [],
+    counterparty_counts: { expense: 0, income: 0 },
     ...overrides,
   };
 }
@@ -361,6 +364,82 @@ describe("汇总页", () => {
     expect(href).toContain("start=2026-10-01");
     expect(href).toContain("end=2026-10-31");
     expect(href).toContain("direction=out");
+  });
+
+  it("对方汇总把同名合成一行，点进去带同一段区间和对方", async () => {
+    draw(
+      summaryBody(),
+      dashboardBody({
+        counterparties: [
+          {
+            name: "美团外卖",
+            expense: 3000,
+            income: 300,
+            expense_count: 3,
+            income_count: 1,
+          },
+          {
+            name: "星巴克",
+            expense: 500,
+            income: 0,
+            expense_count: 1,
+            income_count: 0,
+          },
+        ],
+        counterparties_income: [
+          {
+            name: "公司",
+            expense: 0,
+            income: 1200000,
+            expense_count: 0,
+            income_count: 1,
+          },
+        ],
+        counterparty_counts: { expense: 2, income: 1 },
+      }),
+    );
+    await waitFor(() => expect(screen.getByText("对方汇总")).toBeInTheDocument());
+    const link = screen.getByRole("link", { name: /美团外卖/ });
+    const href = link.getAttribute("href")!;
+    expect(href).toContain("/transactions?");
+    expect(href).toContain("counterparty=%E7%BE%8E%E5%9B%A2%E5%A4%96%E5%8D%96");
+    expect(href).toContain("direction=out");
+    expect(href).toContain("start=2026-10-01");
+    expect(href).toContain("end=2026-10-31");
+    expect(screen.getByText("3 笔")).toBeInTheDocument();
+  });
+
+  it("对方汇总可以切到收入来源", async () => {
+    const user = userEvent.setup();
+    draw(
+      summaryBody(),
+      dashboardBody({
+        counterparties: [
+          {
+            name: "美团外卖",
+            expense: 3000,
+            income: 300,
+            expense_count: 3,
+            income_count: 1,
+          },
+        ],
+        counterparties_income: [
+          {
+            name: "公司",
+            expense: 0,
+            income: 1200000,
+            expense_count: 0,
+            income_count: 1,
+          },
+        ],
+        counterparty_counts: { expense: 1, income: 1 },
+      }),
+    );
+    await user.click(await screen.findByRole("button", { name: "收入来源" }));
+    const link = screen.getByRole("link", { name: /公司/ });
+    const href = link.getAttribute("href")!;
+    expect(href).toContain("direction=in");
+    expect(href).toContain("counterparty=%E5%85%AC%E5%8F%B8");
   });
 
   it("更多把剩下的排行展开", async () => {

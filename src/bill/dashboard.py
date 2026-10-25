@@ -30,6 +30,9 @@ MAX_DAY_BUCKETS = 120
 # 单次排行一次给多少条。界面先露 5 条，「更多」时展开到这么多。
 RANKING_LIMIT = 20
 
+# 对方汇总同理：支出、收入各给这么多条，各自的「还有几个未列出」另算。
+COUNTERPARTY_LIMIT = 20
+
 
 def _shift_month(day: date, months: int) -> date:
     """把这个月的 1 号往前/往后挪几个月。"""
@@ -362,6 +365,31 @@ def build(connection, conf, source) -> dict:
     ]
     ranked_counts = repo.expense_ranking_counts(connection, **bounds)
 
+    # 对方汇总：同名合并后按支出、收入各排一次。排序和截断都在这里做，
+    # SQL 只负责分组——一个币种一个榜，绝不跨币种比大小。
+    counterparty_rows = [
+        row
+        for row in repo.counterparty_totals(connection, **bounds)
+        if row["display_currency"] == code
+    ]
+    by_expense = sorted(
+        (row for row in counterparty_rows if row["expense"] > 0),
+        key=lambda row: (-row["expense"], -row["income"], row["counterparty"]),
+    )
+    by_income = sorted(
+        (row for row in counterparty_rows if row["income"] > 0),
+        key=lambda row: (-row["income"], -row["expense"], row["counterparty"]),
+    )
+
+    def counterparty(row) -> dict:
+        return {
+            "name": row["counterparty"],
+            "expense": row["expense"],
+            "income": row["income"],
+            "expense_count": row["expense_count"],
+            "income_count": row["income_count"],
+        }
+
     if mode == "all" and first_day and last_day:
         trend_start, trend_end = first_day, last_day
     else:
@@ -408,4 +436,16 @@ def build(connection, conf, source) -> dict:
         "singles": ranked,
         "single_count": ranked_counts.get(code, 0),
         "category_count": len(ranked_categories),
+        # 支出对象和收入来源分开排：一个人可能两边都占，但两个榜的「第一」
+        # 不是同一件事，合成一个按净额排的榜会让两边都不准。
+        "counterparties": [
+            counterparty(row) for row in by_expense[:COUNTERPARTY_LIMIT]
+        ],
+        "counterparties_income": [
+            counterparty(row) for row in by_income[:COUNTERPARTY_LIMIT]
+        ],
+        "counterparty_counts": {
+            "expense": len(by_expense),
+            "income": len(by_income),
+        },
     }

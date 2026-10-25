@@ -408,6 +408,7 @@ def list_counts(connection, query) -> tuple[int, int]:
         "direction": query["direction"] or None,
         "search": query["search"] or None,
         "category": query["category"] or None,
+        "counterparty": query["counterparty"] or None,
     }
     total = repo.count_transactions(connection, **common, hidden=query["hidden"] or None)
     if query["hidden"] == "1":
@@ -433,6 +434,7 @@ def transaction_list():
         direction=query["direction"] or None,
         search=query["search"] or None,
         category=query["category"] or None,
+        counterparty=query["counterparty"] or None,
         hidden=query["hidden"] or None,
         limit=query["limit"],
         offset=offset,
@@ -468,6 +470,7 @@ def transaction_list():
             account_id=query["account_id"],
             search=query["search"],
             category=query["category"],
+            counterparty=query["counterparty"],
             hidden=query["hidden"],
         ),
         filters={
@@ -477,6 +480,7 @@ def transaction_list():
             "account": query["account_id"],
             "q": query["search"],
             "category": query["category"],
+            "counterparty": query["counterparty"],
             "hidden": query["hidden"],
         },
         accounts=_account_rows(connection),

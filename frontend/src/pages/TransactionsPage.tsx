@@ -357,6 +357,7 @@ function FilterBar({
     account: number | null;
     q: string;
     category: string;
+    counterparty: string;
     hidden: string;
   };
   accounts: { id: number; name: string }[];
@@ -371,6 +372,7 @@ function FilterBar({
     account: filters.account ? String(filters.account) : "",
     q: filters.q,
     category: filters.category,
+    counterparty: filters.counterparty,
     hidden: filters.hidden,
   });
 
@@ -467,6 +469,14 @@ function FilterBar({
             <option value="1">只看隐藏</option>
           </select>
         </Field>
+        <Field label="对方">
+          <Input
+            type="text"
+            placeholder="完整名称"
+            value={draft.counterparty}
+            onChange={(event) => setDraft({ ...draft, counterparty: event.target.value })}
+          />
+        </Field>
         <Field label="搜索" className="min-w-40 flex-1">
           <Input
             type="search"
@@ -495,6 +505,7 @@ function FilterBar({
               account: "",
               q: "",
               category: "",
+              counterparty: "",
               hidden: "0",
             });
             const next = new URLSearchParams();
