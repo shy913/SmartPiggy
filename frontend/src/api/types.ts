@@ -321,6 +321,9 @@ export type TransactionList = {
   categories: string[];
   group_count: number;
   display_currency: string;
+  /** 对方筛选生效时，跟这个对方往来的全部原始交易有几笔、其中几笔隐藏；
+   *  没有对方筛选时是 null。批量编辑用它报「全部时间共 N 笔」。 */
+  counterparty_scope: { total: number; hidden: number } | null;
 };
 
 /** 改一笔那张表单的初值。金额是**字符串**（'32.50'），时间带 'T' 分隔符。 */

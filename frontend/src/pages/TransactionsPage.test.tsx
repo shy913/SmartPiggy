@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -35,6 +35,7 @@ function listBody(overrides: Partial<TransactionList> = {}): TransactionList {
     categories: [],
     group_count: 0,
     display_currency: "CNY",
+    counterparty_scope: null,
     ...overrides,
   };
 }
@@ -68,16 +69,19 @@ function row(overrides: Partial<TransactionRow> = {}): TransactionRow {
 }
 
 let calls: string[] = [];
+let requests: { url: string; init?: RequestInit }[] = [];
 
 function draw(
   body: TransactionList,
   url: string | { pathname: string; state?: unknown } = "/transactions",
 ) {
   calls = [];
+  requests = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: string) => {
+    vi.fn(async (input: string, init?: RequestInit) => {
       calls.push(String(input));
+      requests.push({ url: String(input), init });
       return { ok: true, status: 200, text: async () => JSON.stringify(body) };
     }),
   );
@@ -198,6 +202,57 @@ describe("交易记录页", () => {
     expect(calls[calls.length - 1]).toContain(
       "counterparty=%E7%BE%8E%E5%9B%A2%E5%A4%96%E5%8D%96",
     );
+  });
+
+  it("对方筛选生效时，可以批量改这个人的分类和备注", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    draw(
+      listBody({
+        filters: { ...listBody().filters, counterparty: "王记饭馆" },
+        active_filters: ["对方「王记饭馆」"],
+        counterparty_scope: { total: 7, hidden: 2 },
+        categories: ["餐饮美食", "交通出行"],
+      }),
+      "/transactions?counterparty=%E7%8E%8B%E8%AE%B0%E9%A5%AD%E9%A6%86&start=2026-10-01&end=2026-10-31",
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText(/批量编辑/)).toBeInTheDocument(),
+    );
+    expect(screen.getByText(/全部时间共 7 笔，其中 2 笔已隐藏/)).toBeInTheDocument();
+
+    // 页面上有两个表单都带「分类」标签（筛选栏和批量编辑），只在批量那块里找。
+    const batch = screen.getByText(/批量编辑/).closest("form")!;
+    await user.selectOptions(within(batch).getByLabelText("分类"), "餐饮美食");
+    await user.type(within(batch).getByLabelText("备注"), "王记饭馆");
+    await user.click(within(batch).getByRole("button", { name: "应用到全部 7 笔" }));
+
+    await waitFor(() => {
+      const sent = requests.filter((item) => item.url.includes("/by-counterparty")).at(-1);
+      expect(sent).toBeTruthy();
+      expect(sent!.init?.method).toBe("PATCH");
+      expect(JSON.parse(String(sent!.init?.body))).toEqual({
+        counterparty: "王记饭馆",
+        category: "餐饮美食",
+        memo: "王记饭馆",
+      });
+    });
+  });
+
+  it("批量编辑只有「不改」时按钮是灰的——不能发一个什么都不改的请求", async () => {
+    draw(
+      listBody({
+        filters: { ...listBody().filters, counterparty: "王记饭馆" },
+        active_filters: ["对方「王记饭馆」"],
+        counterparty_scope: { total: 3, hidden: 0 },
+        categories: ["餐饮美食"],
+      }),
+      "/transactions?counterparty=%E7%8E%8B%E8%AE%B0%E9%A5%AD%E9%A6%86",
+    );
+
+    const batch = (await screen.findByText(/批量编辑/)).closest("form")!;
+    expect(within(batch).getByRole("button", { name: "应用到全部 3 笔" })).toBeDisabled();
   });
 
   it("隐藏默认不露脸；想看它们得自己选「连隐藏一起」", async () => {

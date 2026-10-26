@@ -23,6 +23,7 @@ __all__ = [
     "by_month",
     "by_source_category",
     "count_groups",
+    "counterparty_scope",
     "counterparty_totals",
     "coverage",
     "create_group",
@@ -57,6 +58,7 @@ __all__ = [
     "trend_series",
     "transaction_currencies",
     "transactions_for_import",
+    "update_counterparty_transactions",
     "update_group",
     "update_transaction",
 ]
@@ -1086,6 +1088,26 @@ def counterparty_totals(
     ).fetchall()
 
 
+def counterparty_scope(
+    connection: sqlite3.Connection, counterparty: str
+) -> dict[str, int]:
+    """跟某个对方往来的**全部**原始交易有几笔、其中几笔隐藏。
+
+    这里看的是 ``transactions`` 原表，不是合并后的账本：批量改分类改的就是这些
+    原始记录，报告的数量必须跟真正会改到的行数一致。跟当前列表的筛选条件无关
+    ——「这个人的交易」指的是全部时间、全部账户。
+    """
+    row = connection.execute(
+        """
+        SELECT COUNT(*) AS total, COALESCE(SUM(hidden), 0) AS hidden
+        FROM transactions
+        WHERE TRIM(counterparty) = ?
+        """,
+        (counterparty.strip(),),
+    ).fetchone()
+    return {"total": row["total"], "hidden": row["hidden"]}
+
+
 def latest_month(connection: sqlite3.Connection) -> str | None:
     """账本里最近有数据的月份（'YYYY-MM'）。空账本返回 None。
 
@@ -1654,6 +1676,47 @@ def reclassify(
         WHERE id IN ({marks})
         """,
         [category, db.now(), *ids],
+    )
+    return cursor.rowcount
+
+
+def update_counterparty_transactions(
+    connection: sqlite3.Connection,
+    counterparty: str,
+    *,
+    category: str | None = None,
+    memo: str | None = None,
+) -> int:
+    """把跟某个对方往来的全部交易一起改分类 / 备注，返回改了几笔。
+
+    ``None`` 表示这一项不动；空字符串是有效的值——分类清空就是「改回账单自带」，
+    备注清空就是删掉备注。调用方必须显式给 ``""`` 才清，没给就是不改。
+
+    **只动 ``category`` / ``memo`` / ``edited_at``。** 去重键和内容指纹一个字
+    不碰：那两列是记录的身份，改了之后重新导入同一份账单会比不中，同一笔钱
+    再插一遍——账翻倍而且不报错（跟单笔编辑同一条规矩）。
+    """
+    if category is None and memo is None:
+        return 0
+
+    assignments: list[str] = []
+    values: list = []
+    if category is not None:
+        assignments.append("category = ?")
+        values.append(category)
+    if memo is not None:
+        assignments.append("memo = ?")
+        values.append(memo)
+    assignments.append("edited_at = ?")
+    values.extend([db.now(), counterparty.strip()])
+
+    cursor = connection.execute(
+        f"""
+        UPDATE transactions
+        SET {", ".join(assignments)}
+        WHERE TRIM(counterparty) = ?
+        """,
+        values,
     )
     return cursor.rowcount
 

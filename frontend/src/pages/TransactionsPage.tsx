@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -9,6 +9,7 @@ import {
   listTransactions,
   reclassify,
   unhideTransaction,
+  updateCounterpartyTransactions,
 } from "../api/client";
 import type { MemberRow, TransactionRow } from "../api/types";
 import { BackLink } from "../components/BackLink";
@@ -244,6 +245,16 @@ export function TransactionsPage() {
         }}
       />
 
+      {data.filters.counterparty && data.counterparty_scope?.total ? (
+        <CounterpartyBatch
+          // 换一个对方就重置表单：不能把上一个人的分类和备注带过来。
+          key={data.filters.counterparty}
+          counterparty={data.filters.counterparty}
+          scope={data.counterparty_scope}
+          categories={data.categories}
+        />
+      ) : null}
+
       <Hint>{data.hint}</Hint>
       {data.backwards ? (
         <div className="mt-2">
@@ -340,6 +351,136 @@ export function TransactionsPage() {
         />
       ) : null}
     </div>
+  );
+}
+
+/**
+ * 按对方批量改分类 / 备注。
+ *
+ * 只在对方筛选生效时出现。范围是**全部时间、全部账户**跟这个对方往来的记录，
+ * 不是当前这一屏——个人收款码背后的那家店，每个月都会再来几笔，挨个月改
+ * 就失去了「批量」的意义。面板上把总笔数和其中隐藏的笔数写出来，再让用户
+ * 确认一次，避免把一条只改分类的操作误当成全选。
+ *
+ * 「不改」和「改回账单自带」是两件事：前者请求里根本不带这个字段，后者带
+ * 一个空字符串。备注同理，「留空」是不改，要清空得勾上那个框。
+ */
+function CounterpartyBatch({
+  counterparty,
+  scope,
+  categories,
+}: {
+  counterparty: string;
+  scope: { total: number; hidden: number };
+  categories: string[];
+}) {
+  const client = useQueryClient();
+  const [category, setCategory] = useState("__keep__");
+  const [memo, setMemo] = useState("");
+  const [clearMemo, setClearMemo] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  const changes: { category?: string; memo?: string } = {};
+  if (category === "__clear__") changes.category = "";
+  else if (category !== "__keep__") changes.category = category;
+  if (clearMemo) changes.memo = "";
+  else if (memo.trim()) changes.memo = memo.trim();
+  const hasChange = Object.keys(changes).length > 0;
+
+  const apply = useMutation({
+    mutationFn: (next: { category?: string; memo?: string }) =>
+      updateCounterpartyTransactions(counterparty, next),
+    onSuccess: (body) => {
+      setMessage(`已改 ${body.changed} 笔。`);
+      setError("");
+      client.invalidateQueries({ queryKey: ["transactions"] });
+      client.invalidateQueries({ queryKey: ["summary"] });
+      client.invalidateQueries({ queryKey: ["dashboard"] });
+      client.invalidateQueries({ queryKey: ["groups"] });
+    },
+    onError: (failure) =>
+      setError(failure instanceof ApiError ? failure.message : "没改成。"),
+  });
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!hasChange) return;
+    const parts: string[] = [];
+    if (category === "__clear__") parts.push("把分类改回账单自带");
+    else if (category !== "__keep__") parts.push(`把分类改为「${category}」`);
+    if (clearMemo) parts.push("清空备注");
+    else if (memo.trim()) parts.push(`写入备注「${memo.trim()}」`);
+    const count = scope.total;
+    if (
+      !confirm(
+        `将把与「${counterparty}」往来的全部 ${count} 笔交易${parts.join("，")}。继续？`,
+      )
+    ) {
+      return;
+    }
+    setMessage("");
+    setError("");
+    apply.mutate(changes);
+  };
+
+  return (
+    <form
+      onSubmit={submit}
+      className="mt-3 rounded-lg border border-accent/30 bg-panel px-4 py-3"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <div className="text-sm">
+          批量编辑「<span className="font-medium">{counterparty}</span>」的全部交易
+        </div>
+        <div className="text-xs text-muted">
+          全部时间共 {scope.total} 笔
+          {scope.hidden ? `，其中 ${scope.hidden} 笔已隐藏` : ""}
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap items-end gap-3">
+        <Field label="分类">
+          <select
+            className="h-9 rounded-md border border-border bg-bg px-2 text-sm"
+            value={category}
+            onChange={(event) => setCategory(event.target.value)}
+          >
+            <option value="__keep__">不改</option>
+            <option value="__clear__">改回账单自带</option>
+            {categories.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="备注" className="min-w-40 flex-1">
+          <Input
+            value={memo}
+            disabled={clearMemo}
+            placeholder="留空表示不改"
+            onChange={(event) => setMemo(event.target.value)}
+          />
+        </Field>
+        <label className="flex items-center gap-1.5 pb-2 text-xs text-muted">
+          <input
+            type="checkbox"
+            checked={clearMemo}
+            onChange={(event) => setClearMemo(event.target.checked)}
+          />
+          清空备注
+        </label>
+        <Button type="submit" variant="outline" disabled={!hasChange || apply.isPending}>
+          {apply.isPending ? "正在改…" : `应用到全部 ${scope.total} 笔`}
+        </Button>
+      </div>
+      {message ? <p className="mt-2 text-xs text-muted">{message}</p> : null}
+      {error ? (
+        <p className="mt-2 text-xs text-out" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </form>
   );
 }
 

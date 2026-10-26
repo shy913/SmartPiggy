@@ -181,6 +181,106 @@ def test_bulk_needs_a_selection(client):
     assert payload(response)["error"]["code"] == "validation"
 
 
+def test_bulk_counterparty_edit_touches_every_matching_transaction(
+    client, conn, book
+):
+    """个人收款码背后那家店：一次把跟这个对方往来的全部记录改对。
+
+    范围是全部时间、全部账户，隐藏的也算；首尾空白按同一个 TRIM 口径归并。
+    """
+    ids = book(
+        [
+            {
+                "occurred_at": "2026-01-05 12:00:00",
+                "direction": "out",
+                "amount_cents": 1000,
+                "counterparty": " 王记饭馆 ",
+                "source_category": "餐饮美食",
+            },
+            {
+                "occurred_at": "2026-02-05 12:00:00",
+                "direction": "out",
+                "amount_cents": 2000,
+                "counterparty": "王记饭馆",
+                "hidden": True,
+                "source_category": "餐饮美食",
+            },
+            {
+                "occurred_at": "2026-02-05 13:00:00",
+                "direction": "out",
+                "amount_cents": 3000,
+                "counterparty": "别的商家",
+                "memo": "别动我",
+            },
+        ]
+    )
+    before = {
+        row["id"]: (row["dedup_key"], row["content_hash"])
+        for row in conn.execute("SELECT id, dedup_key, content_hash FROM transactions")
+    }
+
+    # 当前列表只筛了一月份，但批量编辑说的是「这个人的全部」。
+    listing = txns(
+        client,
+        start="2026-01-01",
+        end="2026-01-31",
+        counterparty="王记饭馆",
+        hidden="all",
+    )
+    assert listing["counterparty_scope"] == {"total": 2, "hidden": 1}
+
+    response = client.patch(
+        "/api/transactions/by-counterparty",
+        json={"counterparty": "王记饭馆", "category": "餐饮美食", "memo": "楼下那家"},
+    )
+    assert payload(response)["changed"] == 2
+
+    for txn_id in ids[:2]:
+        detail = payload(client.get(f"/api/transactions/{txn_id}"))["transaction"]
+        assert detail["effective_category"] == "餐饮美食"
+        assert detail["memo"] == "楼下那家"
+    untouched = payload(client.get(f"/api/transactions/{ids[2]}"))["transaction"]
+    assert untouched["memo"] == "别动我"
+
+    # 再只改备注：分类这次没出现在请求体里，不能被顺手清掉。
+    client.patch(
+        "/api/transactions/by-counterparty",
+        json={"counterparty": "王记饭馆", "memo": "家常菜"},
+    )
+    for txn_id in ids[:2]:
+        detail = payload(client.get(f"/api/transactions/{txn_id}"))["transaction"]
+        assert detail["effective_category"] == "餐饮美食"
+        assert detail["memo"] == "家常菜"
+
+    # 空字符串是有效值：分类回到账单自带，备注清空。
+    client.patch(
+        "/api/transactions/by-counterparty",
+        json={"counterparty": "王记饭馆", "category": "", "memo": ""},
+    )
+    for txn_id in ids[:2]:
+        detail = payload(client.get(f"/api/transactions/{txn_id}"))["transaction"]
+        assert detail["effective_category"] == "餐饮美食", "回落到 source_category"
+        assert detail["memo"] == ""
+
+    after = {
+        row["id"]: (row["dedup_key"], row["content_hash"])
+        for row in conn.execute("SELECT id, dedup_key, content_hash FROM transactions")
+    }
+    assert after == before, "批量改分类 / 备注绝不能重算去重键和内容指纹"
+
+
+def test_bulk_counterparty_edit_validates(client):
+    for body in (
+        {},
+        {"counterparty": "   "},
+        {"counterparty": "王记饭馆"},
+        {"counterparty": "王记饭馆", "category": 3},
+    ):
+        response = client.patch("/api/transactions/by-counterparty", json=body)
+        assert response.status_code == 400
+        assert payload(response)["error"]["code"] == "validation"
+
+
 # --------------------------------------------------------------------------
 # 合并组
 # --------------------------------------------------------------------------
