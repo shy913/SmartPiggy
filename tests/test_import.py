@@ -357,18 +357,18 @@ def test_monzo_joins_the_separate_date_and_time_columns(conn):
     assert preview.error == ""
 
     by_party = {row.transaction.counterparty: row.transaction for row in preview.plan.rows}
-    assert by_party["Tesco"].occurred_at == "2026-09-28 19:26:21"
-    assert by_party["Happy Lamb"].occurred_at == "2026-10-03 23:58:56"
+    assert by_party["Grocer"].occurred_at == "2026-09-28 19:26:21"
+    assert by_party["Hotpot Place"].occurred_at == "2026-10-03 23:58:56"
 
 
 def test_monzo_sign_decides_the_direction(conn):
     preview = ingest.stage(conn, "monzo.csv", monzo_csv())
     by_party = {row.transaction.counterparty: row.transaction for row in preview.plan.rows}
 
-    assert by_party["Tesco"].direction is Direction.OUT
-    assert by_party["Tesco"].amount_cents == 385
-    assert by_party["Happy Lamb"].direction is Direction.OUT
-    assert by_party["Happy Lamb"].amount_cents == 5540
+    assert by_party["Grocer"].direction is Direction.OUT
+    assert by_party["Grocer"].amount_cents == 1234
+    assert by_party["Hotpot Place"].direction is Direction.OUT
+    assert by_party["Hotpot Place"].amount_cents == 4560
     # chaps 是转入，正数就是收入
     assert by_party[""].direction is Direction.IN
     assert by_party[""].amount_cents == 100000
@@ -383,7 +383,7 @@ def test_monzo_zero_amount_card_checks_become_neutral(conn):
 
     income, expense = preview.totals_by_currency()["GBP"]
     assert income == 100000, "0.00 的行不该影响收入"
-    assert expense == 5540 + 385
+    assert expense == 4560 + 1234
 
 
 def test_monzo_carries_the_currency_column(conn):

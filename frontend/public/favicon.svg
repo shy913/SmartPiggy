@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="记账">
+  <!-- 标签栏图标：蓝底 + 近黑的「¥」。底色不跟主题走，因为浏览器标签栏
+       分不出应用的深浅主题；一块饱和的蓝在浅色和深色标签栏上都立得住，
+       而近黑的字在蓝底上最容易在 16px 时还认得出。 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7fb3ff" />
+      <stop offset="1" stop-color="#4a86e8" />
+    </linearGradient>
+  </defs>
+  <rect x="1.5" y="1.5" width="61" height="61" rx="15" fill="url(#bg)" />
+  <g fill="none" stroke="#0e1116" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 16 L32 29 L44 16" />
+    <path d="M32 29 V50" />
+    <path d="M19 36.5 H45" />
+    <path d="M19 46 H45" />
+  </g>
+</svg>
