@@ -319,6 +319,10 @@ export type CategorySuggestion = {
 export type CategorySuggestions = {
   total_uncategorized: number;
   suggestions: CategorySuggestion[];
+  /** 已立下的「以后都这样」：以后导入、账单没带分类时套用。 */
+  rules: { counterparty: string; category: string }[];
+  /** 点过「跳过」的对方；列出来才能恢复。 */
+  skips: { counterparty: string }[];
 };
 
 export type TransactionList = {

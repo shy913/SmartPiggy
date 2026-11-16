@@ -180,11 +180,49 @@ export const reclassify = (ids: number[], category: string) =>
 export const updateCounterpartyTransactions = (
   counterparty: string,
   changes: { category?: string; memo?: string },
+  options: { uncategorizedOnly?: boolean } = {},
 ) =>
   request<{ changed: number }>("/api/transactions/by-counterparty", {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ counterparty, ...changes }),
+    body: JSON.stringify({
+      counterparty,
+      ...changes,
+      // 只在需要时带上：老请求的形状保持不变，别让「不改」多出一个假字段。
+      ...(options.uncategorizedOnly ? { uncategorized_only: true } : {}),
+    }),
+  });
+
+/** 记住「以后都这样」：这个对方以后导入、且账单没有分类时套用这个分类。 */
+export const saveCategoryRule = (counterparty: string, category: string) =>
+  request<{ changed: number }>("/api/transactions/category-rules", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ counterparty, category }),
+  });
+
+/** 取消「以后都这样」。已经落下的分类不动，只是以后导入不再自动套用。 */
+export const deleteCategoryRule = (counterparty: string) =>
+  request<void>("/api/transactions/category-rules", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ counterparty }),
+  });
+
+/** 这个对方以后不再出自动建议；交易保持未分类。 */
+export const skipCategorySuggestion = (counterparty: string) =>
+  request<{ skipped: boolean }>("/api/transactions/category-suggestions/skip", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ counterparty }),
+  });
+
+/** 恢复这个对方的自动建议；交易本来就没动过。 */
+export const restoreCategorySuggestion = (counterparty: string) =>
+  request<void>("/api/transactions/category-suggestions/skip", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ counterparty }),
   });
 
 // --------------------------------------------------------------------------

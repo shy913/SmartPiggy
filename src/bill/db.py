@@ -273,6 +273,35 @@ MIGRATIONS: list[list[str]] = [
         "CREATE INDEX ix_transactions_visible_currency"
         " ON transactions(currency) WHERE hidden = 0",
     ],
+    [
+        # v8：给「自动识别」用的两条用户决定。
+        #
+        # category_rules 是「以后都这样」：按对方记住一个分类，**导入时**套给
+        # 账单里没带分类的新记录。它只落 `category`，不碰 source_category、不去重、
+        # 不重算指纹；账单自带分类的记录一律不套，账单说了算。
+        #
+        # counterparty_key 是去空白、转小写的对方名。中文不变，英文商家名
+        # （Tesco / TESCO）能对上同一把钥匙；显示用的原名另存一列。
+        """
+        CREATE TABLE category_rules (
+          counterparty_key TEXT PRIMARY KEY,
+          counterparty     TEXT NOT NULL,
+          category         TEXT NOT NULL,
+          created_at       TEXT NOT NULL,
+          updated_at       TEXT NOT NULL
+        )
+        """,
+        # category_suggestion_skips 是「跳过」：这个对方以后不再出自动建议，
+        # 交易本身一字不动，仍然保持未分类。按对方记而不是按交易记——
+        # 建议本来就是按对方聚合的，只跳过一笔会显得同一个人忽隐忽现。
+        """
+        CREATE TABLE category_suggestion_skips (
+          counterparty_key TEXT PRIMARY KEY,
+          counterparty     TEXT NOT NULL,
+          created_at       TEXT NOT NULL
+        )
+        """,
+    ],
 ]
 
 

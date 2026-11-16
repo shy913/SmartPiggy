@@ -930,11 +930,18 @@ def transactions_bulk_by_counterparty():
 
     范围是**全部时间、全部账户**，跟当前列表的区间无关——这个功能的用途
     正是「这个人的全部往来都归到这一类」，不是只修当前这一屏。
+
+    ``uncategorized_only`` 为真时只补还没有分类的行。行内「采纳建议 / 改分类」
+    用这一档，避免把已经归好类的往来一起覆盖掉。
     """
     body = _body()
     raw = body.get("counterparty")
     if not isinstance(raw, str) or not raw.strip():
         return _error("validation", "先说清楚是哪一个对方。", 400)
+
+    only_uncategorized = body.get("uncategorized_only", False)
+    if not isinstance(only_uncategorized, bool):
+        return _error("validation", "uncategorized_only 得是 true 或 false。", 400)
 
     changes: dict[str, str] = {}
     if "category" in body:
@@ -952,9 +959,73 @@ def transactions_bulk_by_counterparty():
 
     with get_conn() as connection:
         changed = repo.update_counterparty_transactions(
-            connection, raw.strip(), **changes
+            connection,
+            raw.strip(),
+            uncategorized_only=only_uncategorized,
+            **changes,
         )
     return jsonify(changed=changed)
+
+
+@blueprint.post("/transactions/category-rules")
+def category_rule_create():
+    """记住「以后都这样」：这个对方以后导入、且账单没有分类时套用这个分类。
+
+    顺手把当前还没分类的同对方交易一并归好；已经分类的（手改或账单自带）
+    一个字不动。返回这次改掉的现有笔数。
+    """
+    body = _body()
+    raw = body.get("counterparty")
+    category = body.get("category")
+    if not isinstance(raw, str) or not raw.strip():
+        return _error("validation", "先说清楚是哪一个对方。", 400)
+    if not isinstance(category, str) or not category.strip():
+        return _error("validation", "说清楚以后归到哪一类。", 400)
+
+    with get_conn() as connection:
+        changed = repo.save_category_rule(
+            connection, raw.strip(), category.strip()
+        )
+    return jsonify(changed=changed)
+
+
+@blueprint.delete("/transactions/category-rules")
+def category_rule_delete():
+    """取消「以后都这样」。已经落下的分类不动，只是以后导入不再自动套用。"""
+    body = _body()
+    raw = body.get("counterparty")
+    if not isinstance(raw, str) or not raw.strip():
+        return _error("validation", "先说清楚是哪一个对方。", 400)
+
+    with get_conn() as connection:
+        repo.delete_category_rule(connection, raw.strip())
+    return "", 204
+
+
+@blueprint.post("/transactions/category-suggestions/skip")
+def category_suggestion_skip():
+    """这个对方以后不再出自动建议；交易保持未分类，一个字不改。"""
+    body = _body()
+    raw = body.get("counterparty")
+    if not isinstance(raw, str) or not raw.strip():
+        return _error("validation", "先说清楚是哪一个对方。", 400)
+
+    with get_conn() as connection:
+        repo.skip_category_suggestion(connection, raw.strip())
+    return jsonify(skipped=True)
+
+
+@blueprint.delete("/transactions/category-suggestions/skip")
+def category_suggestion_unskip():
+    """恢复这个对方的自动建议；交易本来就保持未分类，不需要还原什么。"""
+    body = _body()
+    raw = body.get("counterparty")
+    if not isinstance(raw, str) or not raw.strip():
+        return _error("validation", "先说清楚是哪一个对方。", 400)
+
+    with get_conn() as connection:
+        repo.unskip_category_suggestion(connection, raw.strip())
+    return "", 204
 
 
 # --------------------------------------------------------------------------

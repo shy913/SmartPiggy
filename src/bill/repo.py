@@ -29,6 +29,7 @@ __all__ = [
     "create_group",
     "create_import",
     "currencies",
+    "delete_category_rule",
     "delete_import",
     "delete_transaction",
     "dissolve_group",
@@ -48,17 +49,21 @@ __all__ = [
     "list_groups",
     "list_imports",
     "list_transactions",
+    "load_category_rules",
     "month_totals",
     "overall_totals",
     "previous_import_of_file",
     "prune_groups",
     "reclassify",
+    "save_category_rule",
     "save_issues",
+    "skip_category_suggestion",
     "transaction_categories",
-    "trend_series",
-    "uncategorized_suggestions",
     "transaction_currencies",
     "transactions_for_import",
+    "trend_series",
+    "uncategorized_suggestions",
+    "unskip_category_suggestion",
     "update_counterparty_transactions",
     "update_group",
     "update_transaction",
@@ -375,6 +380,9 @@ def insert_rows(
     duplicates = 0
     # 一批记录共用一个导入时间。放进循环里会变成每行读一次设置文件。
     now = db.now()
+    # 「以后都这样」的规则只套给账单没带分类的记录；账单自带的分类优先。
+    # 一次导入读一遍，不在每行里查一次库。
+    rules = load_category_rules(connection)
 
     for row in rows:
         transaction = row.transaction
@@ -395,9 +403,13 @@ def insert_rows(
                 content_hash=row.content_hash,
                 raw_json=json.dumps(transaction.raw, ensure_ascii=False),
                 created_at=now,
-                # 账单里没有「用户分类」这一列，导入进来的一律留空，
-                # 显示时回落到账单自带的 source_category。
-                category="",
+                # 账单里没有「用户分类」这一列；这里只填用户立下的「以后都这样」。
+                # 账单自带分类的记录不套规则，显示时仍回落到 source_category。
+                category=(
+                    ""
+                    if transaction.source_category.strip()
+                    else rules.get(_counterparty_key(transaction.counterparty), "")
+                ),
             ),
         )
         inserted += 1
@@ -1691,7 +1703,8 @@ def uncategorized_suggestions(
     一键应用会把这个对方的全部交易都改成那一类，混着两种猜法时宁可不出建议。
 
     ``count`` 是未分类笔数，``scope`` 是这个对方在全部时间里一共有多少笔
-    （含已分类、含隐藏）——界面确认框要如实说出会改到多少笔。
+    （含已分类、含隐藏）——界面确认框要如实说出会改到多少笔。用户点过
+    「跳过」的对方不再出现在建议里。
     """
     total_uncategorized = connection.execute(
         """
@@ -1725,8 +1738,17 @@ def uncategorized_suggestions(
         else:
             bucket["unmatched"] += item["n"]
 
+    skipped = {
+        row["counterparty_key"]
+        for row in connection.execute(
+            "SELECT counterparty_key FROM category_suggestion_skips"
+        )
+    }
+
     candidates: list[dict] = []
     for name, bucket in buckets.items():
+        if _counterparty_key(name) in skipped:
+            continue
         if bucket["unmatched"] or len(bucket["categories"]) != 1:
             continue
         candidates.append(
@@ -1764,9 +1786,32 @@ def uncategorized_suggestions(
             {"total": item["count"], "hidden": item["hidden"]},
         )
 
+    rules = [
+        {"counterparty": row["counterparty"], "category": row["category"]}
+        for row in connection.execute(
+            """
+            SELECT counterparty, category FROM category_rules
+            ORDER BY counterparty LIMIT 50
+            """
+        )
+    ]
+    skips = [
+        {"counterparty": row["counterparty"]}
+        for row in connection.execute(
+            """
+            SELECT counterparty FROM category_suggestion_skips
+            ORDER BY counterparty LIMIT 50
+            """
+        )
+    ]
+
     return {
         "total_uncategorized": total_uncategorized,
         "suggestions": candidates[:limit],
+        # 已经立下的「以后都这样」。列在面板里，改错了随时能改回来或取消。
+        "rules": rules,
+        # 跳过过的对方。也要列出来，否则点一次就再也回不到建议里了。
+        "skips": skips,
     }
 
 
@@ -1776,11 +1821,15 @@ def update_counterparty_transactions(
     *,
     category: str | None = None,
     memo: str | None = None,
+    uncategorized_only: bool = False,
 ) -> int:
     """把跟某个对方往来的全部交易一起改分类 / 备注，返回改了几笔。
 
     ``None`` 表示这一项不动；空字符串是有效的值——分类清空就是「改回账单自带」，
     备注清空就是删掉备注。调用方必须显式给 ``""`` 才清，没给就是不改。
+
+    ``uncategorized_only`` 只动两列分类都为空的行。自动建议的「采纳 / 改分类」
+    走这一档：补上缺的分类，但不覆盖已经归好类的记录。
 
     **只动 ``category`` / ``memo`` / ``edited_at``。** 去重键和内容指纹一个字
     不碰：那两列是记录的身份，改了之后重新导入同一份账单会比不中，同一笔钱
@@ -1800,15 +1849,114 @@ def update_counterparty_transactions(
     assignments.append("edited_at = ?")
     values.extend([db.now(), counterparty.strip()])
 
+    only_uncategorized = (
+        "AND TRIM(category) = '' AND TRIM(source_category) = ''"
+        if uncategorized_only
+        else ""
+    )
     cursor = connection.execute(
         f"""
         UPDATE transactions
         SET {", ".join(assignments)}
         WHERE TRIM(counterparty) = ?
+        {only_uncategorized}
         """,
         values,
     )
     return cursor.rowcount
+
+
+def _counterparty_key(name: str) -> str:
+    """规则 / 跳过表用的对方键：去首尾空白、转小写。
+
+    中文不会变，英文商家名（``Tesco`` / ``TESCO``）能对上同一把钥匙。显示用的
+    原名另存一列，界面仍按用户看到的样子写。
+    """
+    return name.strip().casefold()
+
+
+def load_category_rules(connection: sqlite3.Connection) -> dict[str, str]:
+    """「以后都这样」的规则：{对方键: 分类}。导入时整批读一次。"""
+    return {
+        row["counterparty_key"]: row["category"]
+        for row in connection.execute(
+            "SELECT counterparty_key, category FROM category_rules"
+        )
+    }
+
+
+def save_category_rule(
+    connection: sqlite3.Connection, counterparty: str, category: str
+) -> int:
+    """记住「以后都这样」，并把当前还没有分类的同对方交易一并归好。
+
+    返回这次顺手改掉的现有笔数（未来导入由 ``insert_rows`` 套规则，不计在内）。
+
+    同一对方改过一次就覆盖旧规则；顺手删掉这个对方的「跳过」——既然已经
+    明确表态要分类，跳过那条记录就没有意义了。
+    """
+    name = counterparty.strip()
+    key = _counterparty_key(name)
+    now = db.now()
+    connection.execute(
+        """
+        INSERT INTO category_rules
+          (counterparty_key, counterparty, category, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(counterparty_key) DO UPDATE SET
+          counterparty = excluded.counterparty,
+          category     = excluded.category,
+          updated_at   = excluded.updated_at
+        """,
+        (key, name, category, now, now),
+    )
+    connection.execute(
+        "DELETE FROM category_suggestion_skips WHERE counterparty_key = ?", (key,)
+    )
+    # 只补还没有分类的；已经归好类的（手改或账单自带）保持原样。
+    return update_counterparty_transactions(
+        connection, name, category=category, uncategorized_only=True
+    )
+
+
+def delete_category_rule(
+    connection: sqlite3.Connection, counterparty: str
+) -> bool:
+    """取消「以后都这样」。已经落下的分类不动，只是以后导入不再自动套用。"""
+    cursor = connection.execute(
+        "DELETE FROM category_rules WHERE counterparty_key = ?",
+        (_counterparty_key(counterparty),),
+    )
+    return cursor.rowcount > 0
+
+
+def skip_category_suggestion(
+    connection: sqlite3.Connection, counterparty: str
+) -> bool:
+    """这个对方以后不再出自动建议，交易保持未分类。"""
+    name = counterparty.strip()
+    key = _counterparty_key(name)
+    connection.execute(
+        """
+        INSERT INTO category_suggestion_skips
+          (counterparty_key, counterparty, created_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(counterparty_key) DO NOTHING
+        """,
+        (key, name, db.now()),
+    )
+    return True
+
+
+def unskip_category_suggestion(
+    connection: sqlite3.Connection, counterparty: str
+) -> bool:
+    """恢复这个对方的自动建议。交易本来就没动过，建议会按关键词重新出现。"""
+    cursor = connection.execute(
+        "DELETE FROM category_suggestion_skips WHERE counterparty_key = ?",
+        (_counterparty_key(counterparty),),
+    )
+    return cursor.rowcount > 0
 
 
 def transaction_categories(connection: sqlite3.Connection) -> list[str]:

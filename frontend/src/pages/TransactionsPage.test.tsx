@@ -36,7 +36,7 @@ function listBody(overrides: Partial<TransactionList> = {}): TransactionList {
     group_count: 0,
     display_currency: "CNY",
     counterparty_scope: null,
-    category_suggestions: { total_uncategorized: 0, suggestions: [] },
+    category_suggestions: { total_uncategorized: 0, suggestions: [], rules: [], skips: [] },
     ...overrides,
   };
 }
@@ -272,6 +272,8 @@ describe("交易记录页", () => {
               scope: { total: 14, hidden: 1 },
             },
           ],
+          rules: [],
+          skips: [],
         },
       }),
     );
@@ -306,6 +308,8 @@ describe("交易记录页", () => {
             hidden: 0,
             scope: { total: 1, hidden: 0 },
           })),
+          rules: [],
+          skips: [],
         },
       }),
     );
@@ -318,22 +322,173 @@ describe("交易记录页", () => {
     expect(screen.getByText(/商家D/)).toBeInTheDocument();
   });
 
-  it("未分类的行上也会标一句建议，但不会替它落库", async () => {
+  function suggestionRow() {
+    return row({
+      counterparty: "Tesco",
+      effective_category: "",
+      emoji: "",
+      suggested_category: "日用百货",
+    });
+  }
+
+  it("已记下的「以后都这样」可以改分类或取消", async () => {
+    const user = userEvent.setup();
+    draw(
+      listBody({
+        categories: ["日用百货", "餐饮美食"],
+        category_suggestions: {
+          total_uncategorized: 0,
+          suggestions: [],
+          rules: [{ counterparty: "Tesco", category: "日用百货" }],
+          skips: [],
+        },
+      }),
+    );
+
+    await waitFor(() => expect(screen.getByText("以后都这样")).toBeInTheDocument());
+    await user.selectOptions(
+      screen.getByLabelText("「Tesco」以后的分类"),
+      "餐饮美食",
+    );
+    await waitFor(() => {
+      const sent = requests.filter((item) => item.url.includes("/category-rules")).at(-1);
+      expect(sent).toBeTruthy();
+      expect(sent!.init?.method).toBe("POST");
+      expect(JSON.parse(String(sent!.init?.body))).toEqual({
+        counterparty: "Tesco",
+        category: "餐饮美食",
+      });
+    });
+
+    await user.click(screen.getByRole("button", { name: "取消" }));
+    await waitFor(() => {
+      const sent = requests.filter((item) => item.url.includes("/category-rules")).at(-1);
+      expect(sent).toBeTruthy();
+      expect(sent!.init?.method).toBe("DELETE");
+      expect(JSON.parse(String(sent!.init?.body))).toEqual({ counterparty: "Tesco" });
+    });
+  });
+
+  it("跳过过的对方可以从「已跳过」里恢复", async () => {
+    const user = userEvent.setup();
+    draw(
+      listBody({
+        category_suggestions: {
+          total_uncategorized: 1,
+          suggestions: [],
+          rules: [],
+          skips: [{ counterparty: "金枝叶" }],
+        },
+      }),
+    );
+
+    await waitFor(() => expect(screen.getByText("已跳过")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "恢复" }));
+    await waitFor(() => {
+      const sent = requests
+        .filter((item) => item.url.includes("/category-suggestions/skip"))
+        .at(-1);
+      expect(sent).toBeTruthy();
+      expect(sent!.init?.method).toBe("DELETE");
+      expect(JSON.parse(String(sent!.init?.body))).toEqual({ counterparty: "金枝叶" });
+    });
+  });
+
+  it("未分类的行上会标一句建议，但不会替它落库", async () => {
     draw(
       listBody({
         total: 1,
-        rows: [
-          row({
-            counterparty: "Tesco",
-            effective_category: "",
-            emoji: "",
-            suggested_category: "日用百货",
-          }),
-        ],
+        rows: [suggestionRow()],
+        categories: ["日用百货", "餐饮美食"],
       }),
     );
-    await waitFor(() => expect(screen.getByText("建议 日用百货")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /建议 日用百货/ })).toBeInTheDocument(),
+    );
     expect(requests.filter((item) => item.init?.method === "PATCH")).toHaveLength(0);
+    expect(requests.filter((item) => item.init?.method === "POST")).toHaveLength(0);
+  });
+
+  it("点建议就是采纳：只补这个对方未分类的交易", async () => {
+    const user = userEvent.setup();
+    draw(
+      listBody({
+        total: 1,
+        rows: [suggestionRow()],
+        categories: ["日用百货", "餐饮美食"],
+      }),
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: /建议 日用百货/ }),
+    );
+    await waitFor(() => {
+      const sent = requests.filter((item) => item.url.includes("/by-counterparty")).at(-1);
+      expect(sent).toBeTruthy();
+      expect(sent!.init?.method).toBe("PATCH");
+      expect(JSON.parse(String(sent!.init?.body))).toEqual({
+        counterparty: "Tesco",
+        category: "日用百货",
+        uncategorized_only: true,
+      });
+    });
+  });
+
+  it("「以后都这样」记一条规则，「跳过」只收起建议", async () => {
+    const user = userEvent.setup();
+    draw(
+      listBody({
+        total: 1,
+        rows: [suggestionRow()],
+        categories: ["日用百货", "餐饮美食"],
+      }),
+    );
+
+    await user.click(await screen.findByRole("button", { name: "以后都这样" }));
+    await waitFor(() => {
+      const sent = requests.filter((item) => item.url.includes("/category-rules")).at(-1);
+      expect(sent).toBeTruthy();
+      expect(sent!.init?.method).toBe("POST");
+      expect(JSON.parse(String(sent!.init?.body))).toEqual({
+        counterparty: "Tesco",
+        category: "日用百货",
+      });
+    });
+
+    await user.click(screen.getByRole("button", { name: "跳过" }));
+    await waitFor(() => {
+      const sent = requests
+        .filter((item) => item.url.includes("/category-suggestions/skip"))
+        .at(-1);
+      expect(sent).toBeTruthy();
+      expect(sent!.init?.method).toBe("POST");
+      expect(JSON.parse(String(sent!.init?.body))).toEqual({ counterparty: "Tesco" });
+    });
+  });
+
+  it("也可以直接改成别的分类", async () => {
+    const user = userEvent.setup();
+    draw(
+      listBody({
+        total: 1,
+        rows: [suggestionRow()],
+        categories: ["日用百货", "餐饮美食"],
+      }),
+    );
+
+    await user.selectOptions(
+      await screen.findByLabelText("改为其他分类"),
+      "餐饮美食",
+    );
+    await waitFor(() => {
+      const sent = requests.filter((item) => item.url.includes("/by-counterparty")).at(-1);
+      expect(sent).toBeTruthy();
+      expect(JSON.parse(String(sent!.init?.body))).toEqual({
+        counterparty: "Tesco",
+        category: "餐饮美食",
+        uncategorized_only: true,
+      });
+    });
   });
 
   it("隐藏默认不露脸；想看它们得自己选「连隐藏一起」", async () => {

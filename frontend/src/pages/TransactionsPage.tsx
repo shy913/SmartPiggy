@@ -5,9 +5,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ApiError,
   createGroup,
+  deleteCategoryRule,
   hideTransaction,
   listTransactions,
   reclassify,
+  restoreCategorySuggestion,
+  saveCategoryRule,
+  skipCategorySuggestion,
   unhideTransaction,
   updateCounterpartyTransactions,
 } from "../api/client";
@@ -250,7 +254,10 @@ export function TransactionsPage() {
         }}
       />
 
-      <AutoCategorySuggestions data={data.category_suggestions} />
+      <AutoCategorySuggestions
+        data={data.category_suggestions}
+        categories={data.categories}
+      />
 
       {data.filters.counterparty && data.counterparty_scope?.total ? (
         <CounterpartyBatch
@@ -310,6 +317,7 @@ export function TransactionsPage() {
                   <Row
                     key={row.id}
                     row={row}
+                    categories={data.categories}
                     displayCurrency={data.display_currency}
                     selected={row.id !== null && selected.includes(row.id)}
                     highlighted={flashed && flashTarget === `txn-${row.id}`}
@@ -368,7 +376,13 @@ export function TransactionsPage() {
  * 对方的全部交易**（不限区间、不限账户，连隐藏的也算）改成那个分类。面板上
  * 把总笔数和其中已分类的笔数写清楚：一次点击可能覆盖不只未分类的那几笔。
  */
-function AutoCategorySuggestions({ data }: { data: CategorySuggestions }) {
+function AutoCategorySuggestions({
+  data,
+  categories,
+}: {
+  data: CategorySuggestions;
+  categories: string[];
+}) {
   const client = useQueryClient();
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -376,6 +390,15 @@ function AutoCategorySuggestions({ data }: { data: CategorySuggestions }) {
   // 看不到账目了。想接着处理再展开。
   const [showAll, setShowAll] = useState(false);
   const visible = showAll ? data.suggestions : data.suggestions.slice(0, 3);
+
+  const refresh = () => {
+    client.invalidateQueries({ queryKey: ["transactions"] });
+    client.invalidateQueries({ queryKey: ["summary"] });
+    client.invalidateQueries({ queryKey: ["dashboard"] });
+    client.invalidateQueries({ queryKey: ["groups"] });
+  };
+  const fail = (failure: unknown) =>
+    setError(failure instanceof ApiError ? failure.message : "没改成。");
 
   const apply = useMutation({
     mutationFn: (item: CategorySuggestion) =>
@@ -385,23 +408,53 @@ function AutoCategorySuggestions({ data }: { data: CategorySuggestions }) {
         `已把与「${item.counterparty}」往来的 ${body.changed} 笔改成「${item.category}」。`,
       );
       setError("");
-      client.invalidateQueries({ queryKey: ["transactions"] });
-      client.invalidateQueries({ queryKey: ["summary"] });
-      client.invalidateQueries({ queryKey: ["dashboard"] });
-      client.invalidateQueries({ queryKey: ["groups"] });
+      refresh();
     },
-    onError: (failure) =>
-      setError(failure instanceof ApiError ? failure.message : "没改成。"),
+    onError: fail,
   });
 
-  if (!data.suggestions.length) return null;
+  const updateRule = useMutation({
+    mutationFn: (rule: { counterparty: string; category: string }) =>
+      saveCategoryRule(rule.counterparty, rule.category),
+    onSuccess: (_body, rule) => {
+      setMessage(`「${rule.counterparty}」以后都归为「${rule.category}」。`);
+      setError("");
+      refresh();
+    },
+    onError: fail,
+  });
+
+  const removeRule = useMutation({
+    mutationFn: (counterparty: string) => deleteCategoryRule(counterparty),
+    onSuccess: (_body, counterparty) => {
+      setMessage(`已取消「${counterparty}」的以后都这样。`);
+      setError("");
+      refresh();
+    },
+    onError: fail,
+  });
+
+  const restore = useMutation({
+    mutationFn: (counterparty: string) => restoreCategorySuggestion(counterparty),
+    onSuccess: (_body, counterparty) => {
+      setMessage(`已恢复「${counterparty}」的自动建议。`);
+      setError("");
+      refresh();
+    },
+    onError: fail,
+  });
+
+  if (!data.suggestions.length && !data.rules.length && !data.skips.length) {
+    return null;
+  }
 
   return (
     <section className="mt-3 rounded-lg border border-border bg-panel px-4 py-3">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <h2 className="text-sm font-medium">自动识别</h2>
         <span className="text-xs text-muted">
-          全部账本里还有 {data.total_uncategorized} 笔未分类，{data.suggestions.length} 组可归类
+          全部账本里还有 {data.total_uncategorized} 笔未分类
+          {data.suggestions.length ? `，${data.suggestions.length} 组可归类` : ""}
         </span>
       </div>
       <ul className="m-0 mt-2 list-none divide-y divide-border">
@@ -461,6 +514,87 @@ function AutoCategorySuggestions({ data }: { data: CategorySuggestions }) {
           </li>
         ) : null}
       </ul>
+      {data.rules.length ? (
+        <div className="mt-3 border-t border-border pt-2">
+          <div className="text-xs text-muted">以后都这样</div>
+          <ul className="m-0 mt-1 list-none">
+            {data.rules.map((rule) => (
+              <li
+                key={rule.counterparty}
+                className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1 text-xs"
+              >
+                <span className="min-w-0 [overflow-wrap:anywhere]">
+                  「{rule.counterparty}」
+                </span>
+                <select
+                  aria-label={`「${rule.counterparty}」以后的分类`}
+                  className="h-6 rounded border border-border bg-bg px-1 text-xs"
+                  value={rule.category}
+                  disabled={updateRule.isPending || removeRule.isPending}
+                  onChange={(event) => {
+                    const category = event.target.value;
+                    if (category && category !== rule.category) {
+                      setMessage("");
+                      setError("");
+                      updateRule.mutate({ counterparty: rule.counterparty, category });
+                    }
+                  }}
+                >
+                  {categories.map((item) => (
+                    <option key={item} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                  {!categories.includes(rule.category) ? (
+                    <option value={rule.category}>{rule.category}</option>
+                  ) : null}
+                </select>
+                <button
+                  type="button"
+                  className="text-muted underline hover:text-text"
+                  disabled={updateRule.isPending || removeRule.isPending}
+                  onClick={() => {
+                    setMessage("");
+                    setError("");
+                    removeRule.mutate(rule.counterparty);
+                  }}
+                >
+                  取消
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {data.skips.length ? (
+        <div className="mt-3 border-t border-border pt-2">
+          <div className="text-xs text-muted">已跳过</div>
+          <ul className="m-0 mt-1 flex flex-wrap gap-x-3 gap-y-1 list-none">
+            {data.skips.map((skip) => (
+              <li
+                key={skip.counterparty}
+                className="flex items-center gap-1.5 text-xs"
+              >
+                <span className="[overflow-wrap:anywhere]">
+                  「{skip.counterparty}」
+                </span>
+                <button
+                  type="button"
+                  className="text-muted underline hover:text-text"
+                  disabled={restore.isPending}
+                  onClick={() => {
+                    setMessage("");
+                    setError("");
+                    restore.mutate(skip.counterparty);
+                  }}
+                >
+                  恢复
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {message ? <p className="mt-2 text-xs text-muted">{message}</p> : null}
       {error ? (
         <p className="mt-2 text-xs text-out" role="alert">
@@ -779,8 +913,138 @@ function FilterBar({
   );
 }
 
+/**
+ * 未分类行上的建议动作。
+ *
+ * 「建议 X」本身就是采纳按钮：只补这个对方还没有分类的交易，已经归好类的
+ * 不动。「以后都这样」另存一条规则，以后导入时账单没带分类就套用它；
+ * 「跳过」只把这个对方从建议里拿掉，交易保持未分类。
+ */
+function SuggestionActions({
+  row,
+  suggested,
+  categories,
+}: {
+  row: TransactionRow;
+  suggested: string;
+  categories: string[];
+}) {
+  const client = useQueryClient();
+  const [error, setError] = useState("");
+
+  const refresh = () => {
+    client.invalidateQueries({ queryKey: ["transactions"] });
+    client.invalidateQueries({ queryKey: ["summary"] });
+    client.invalidateQueries({ queryKey: ["dashboard"] });
+    client.invalidateQueries({ queryKey: ["groups"] });
+    client.invalidateQueries({ queryKey: ["transaction"] });
+  };
+  const fail = (failure: unknown) =>
+    setError(failure instanceof ApiError ? failure.message : "没改成。");
+
+  const accept = useMutation({
+    mutationFn: () =>
+      updateCounterpartyTransactions(
+        row.counterparty,
+        { category: suggested },
+        { uncategorizedOnly: true },
+      ),
+    onSuccess: refresh,
+    onError: fail,
+  });
+  const always = useMutation({
+    mutationFn: () => saveCategoryRule(row.counterparty, suggested),
+    onSuccess: refresh,
+    onError: fail,
+  });
+  const skip = useMutation({
+    mutationFn: () => skipCategorySuggestion(row.counterparty),
+    onSuccess: refresh,
+    onError: fail,
+  });
+  const change = useMutation({
+    mutationFn: (category: string) =>
+      updateCounterpartyTransactions(
+        row.counterparty,
+        { category },
+        { uncategorizedOnly: true },
+      ),
+    onSuccess: refresh,
+    onError: fail,
+  });
+  const busy =
+    accept.isPending || always.isPending || skip.isPending || change.isPending;
+
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => {
+          setError("");
+          accept.mutate();
+        }}
+        className="rounded-full border border-accent/40 px-2 py-0.5 text-accent hover:bg-accent/10 disabled:opacity-50"
+        title={`把这个对方的全部未分类交易归为「${suggested}」`}
+      >
+        建议 {suggested} · 采纳
+      </button>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => {
+          setError("");
+          always.mutate();
+        }}
+        className="rounded-full border border-border px-2 py-0.5 text-muted hover:text-text disabled:opacity-50"
+        title={`以后导入的「${row.counterparty}」也归为「${suggested}」`}
+      >
+        以后都这样
+      </button>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => {
+          setError("");
+          skip.mutate();
+        }}
+        className="rounded-full border border-border px-2 py-0.5 text-muted hover:text-text disabled:opacity-50"
+        title="不再为这个对方建议分类，交易保持未分类"
+      >
+        跳过
+      </button>
+      <select
+        aria-label="改为其他分类"
+        className="h-6 rounded border border-border bg-bg px-1 text-xs text-muted"
+        value=""
+        disabled={busy}
+        onChange={(event) => {
+          const category = event.target.value;
+          if (!category) return;
+          setError("");
+          change.mutate(category);
+        }}
+        title="把这个对方的全部未分类交易改成另一个分类"
+      >
+        <option value="">改为…</option>
+        {categories.map((item) => (
+          <option key={item} value={item}>
+            {item}
+          </option>
+        ))}
+      </select>
+      {error ? (
+        <span className="text-out" role="alert">
+          {error}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 function Row({
   row,
+  categories,
   displayCurrency,
   selected,
   highlighted,
@@ -788,6 +1052,7 @@ function Row({
   onHide,
 }: {
   row: TransactionRow;
+  categories: string[];
   displayCurrency: string;
   selected: boolean;
   highlighted: boolean;
@@ -882,12 +1147,16 @@ function Row({
           ) : (
             <CategoryMark category={row.effective_category} emoji={row.emoji} />
           )}
-          {!row.effective_category && row.suggested_category ? (
-            <Tag tone="accent">建议 {row.suggested_category}</Tag>
-          ) : null}
           {row.is_large ? <Tag>大额</Tag> : null}
           {hidden ? <Tag>已隐藏</Tag> : null}
         </div>
+        {!row.effective_category && row.suggested_category ? (
+          <SuggestionActions
+            row={row}
+            suggested={row.suggested_category}
+            categories={categories}
+          />
+        ) : null}
       </TD>
       {/* 空间不够时整列收起：手机上两列平分剩下的宽度，谁都读不完整。 */}
       <TD className="hidden sm:table-cell">

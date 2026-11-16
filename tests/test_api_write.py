@@ -279,6 +279,197 @@ def test_bulk_counterparty_edit_validates(client):
         response = client.patch("/api/transactions/by-counterparty", json=body)
         assert response.status_code == 400
         assert payload(response)["error"]["code"] == "validation"
+    response = client.patch(
+        "/api/transactions/by-counterparty",
+        json={"counterparty": "王记饭馆", "category": "餐饮美食", "uncategorized_only": "yes"},
+    )
+    assert response.status_code == 400
+
+
+def test_uncategorized_only_only_fills_the_empty_ones(client, book):
+    """行内采纳建议不能覆盖已经归好类的往来。"""
+    ids = book(
+        [
+            {"occurred_at": "2026-01-05 12:00:00", "direction": "out",
+             "amount_cents": 100, "counterparty": "金枝叶"},
+            {"occurred_at": "2026-01-06 12:00:00", "direction": "out",
+             "amount_cents": 200, "counterparty": "金枝叶",
+             "source_category": "餐饮美食"},
+            {"occurred_at": "2026-01-07 12:00:00", "direction": "out",
+             "amount_cents": 300, "counterparty": "金枝叶",
+             "category": "交通出行"},
+        ]
+    )
+    response = client.patch(
+        "/api/transactions/by-counterparty",
+        json={
+            "counterparty": "金枝叶",
+            "category": "转账红包",
+            "uncategorized_only": True,
+        },
+    )
+    assert payload(response)["changed"] == 1
+
+    categories = [
+        payload(client.get(f"/api/transactions/{txn_id}"))["transaction"][
+            "effective_category"
+        ]
+        for txn_id in ids
+    ]
+    assert categories == ["转账红包", "餐饮美食", "交通出行"]
+
+
+def test_a_rule_categorizes_current_empty_rows_and_future_imports(client, book):
+    """「以后都这样」：补当前未分类的，也管账单里没带分类的新导入。"""
+    ids = book(
+        [
+            {"occurred_at": "2026-01-05 12:00:00", "direction": "out",
+             "amount_cents": 100, "counterparty": "金枝叶"},
+            {"occurred_at": "2026-01-06 12:00:00", "direction": "out",
+             "amount_cents": 200, "counterparty": "金枝叶",
+             "source_category": "餐饮美食"},
+        ]
+    )
+    response = client.post(
+        "/api/transactions/category-rules",
+        json={"counterparty": "金枝叶", "category": "转账红包"},
+    )
+    assert payload(response)["changed"] == 1, "只补没分类的那一笔"
+
+    detail = payload(client.get(f"/api/transactions/{ids[0]}"))["transaction"]
+    assert detail["effective_category"] == "转账红包"
+    detail = payload(client.get(f"/api/transactions/{ids[1]}"))["transaction"]
+    assert detail["effective_category"] == "餐饮美食", "账单自带的分类优先"
+    assert txns(client, start="", end="")["category_suggestions"]["rules"] == [
+        {"counterparty": "金枝叶", "category": "转账红包"}
+    ]
+
+    # 以后的新导入：微信账单没有分类列，规则要接手。
+    token = upload(
+        client,
+        wechat_xlsx(
+            [
+                ["2026-11-05 16:31:00", "转账", "金枝叶", "微信转账", "支出", 573.03,
+                 "零钱", "支付成功", "WXRULE1", "MRULE1", ""],
+            ]
+        ),
+        "微信账单.xlsx",
+    )
+    confirm(client, token)
+    rows = txns(client, start="", end="", counterparty="金枝叶")["rows"]
+    imported = next(row for row in rows if row["currency"] == "CNY" and row["id"] not in ids)
+    assert imported["effective_category"] == "转账红包"
+
+    # 账单自己带分类的时候，规则不能盖掉它。
+    token = upload(
+        client,
+        alipay_csv(
+            [
+                ("2026-11-06 12:00:00", "餐饮美食", "金枝叶", "", "午饭",
+                 "支出", "¥32.50", "余额", "交易成功", "2026110622001", "M2", ""),
+            ]
+        ),
+        "支付宝账单.csv",
+    )
+    confirm(client, token)
+    rows = txns(client, start="", end="", counterparty="金枝叶")["rows"]
+    imported = next(
+        row for row in rows
+        if row["description"] == "午饭" and row["id"] not in ids
+    )
+    assert imported["effective_category"] == "餐饮美食"
+
+
+def test_deleting_a_rule_stops_future_imports_but_keeps_old_categories(client, book):
+    ids = book(
+        [
+            {"occurred_at": "2026-01-05 12:00:00", "direction": "out",
+             "amount_cents": 100, "counterparty": "金枝叶"},
+        ]
+    )
+    client.post(
+        "/api/transactions/category-rules",
+        json={"counterparty": "金枝叶", "category": "转账红包"},
+    )
+    assert payload(client.get(f"/api/transactions/{ids[0]}"))["transaction"][
+        "effective_category"
+    ] == "转账红包"
+
+    response = client.delete(
+        "/api/transactions/category-rules", json={"counterparty": "金枝叶"}
+    )
+    assert response.status_code == 204
+    assert txns(client, start="", end="")["category_suggestions"]["rules"] == []
+    # 已经落下的分类不因为取消规则而回滚。
+    assert payload(client.get(f"/api/transactions/{ids[0]}"))["transaction"][
+        "effective_category"
+    ] == "转账红包"
+
+    token = upload(
+        client,
+        wechat_xlsx(
+            [
+                ["2026-11-07 16:31:00", "转账", "金枝叶", "微信转账", "支出", 88.00,
+                 "零钱", "支付成功", "WXNORULE1", "MNORULE1", ""],
+            ]
+        ),
+        "微信账单.xlsx",
+    )
+    confirm(client, token)
+    imported = next(
+        row for row in txns(client, start="", end="")["rows"]
+        if row["description"] == "微信转账" and row["id"] not in ids
+    )
+    assert imported["effective_category"] == "", "取消规则后不再替新导入猜"
+
+
+def test_skipping_a_suggestion_keeps_the_row_uncategorized(client, book):
+    ids = book(
+        [
+            {"occurred_at": "2026-11-05 16:31:00", "direction": "out",
+             "amount_cents": 57303, "counterparty": "金枝叶", "description": "微信转账"},
+        ]
+    )
+    body = txns(client, start="", end="")
+    assert body["category_suggestions"]["suggestions"] == [
+        {
+            "counterparty": "金枝叶",
+            "category": "转账红包",
+            "count": 1,
+            "hidden": 0,
+            "scope": {"total": 1, "hidden": 0},
+        }
+    ]
+
+    response = client.post(
+        "/api/transactions/category-suggestions/skip",
+        json={"counterparty": "金枝叶"},
+    )
+    assert payload(response)["skipped"] is True
+
+    body = txns(client, start="", end="")
+    assert body["category_suggestions"]["suggestions"] == []
+    assert body["category_suggestions"]["skips"] == [{"counterparty": "金枝叶"}]
+    detail = payload(client.get(f"/api/transactions/{ids[0]}"))["transaction"]
+    assert detail["effective_category"] == "", "跳过不改交易，保留未分类"
+
+    response = client.delete(
+        "/api/transactions/category-suggestions/skip",
+        json={"counterparty": "金枝叶"},
+    )
+    assert response.status_code == 204
+    body = txns(client, start="", end="")
+    assert [item["counterparty"] for item in body["category_suggestions"]["suggestions"]] == [
+        "金枝叶"
+    ], "恢复之后建议要回来"
+
+    # 后来明确要分类了，跳过记录要让位。
+    client.post(
+        "/api/transactions/category-rules",
+        json={"counterparty": "金枝叶", "category": "转账红包"},
+    )
+    detail = payload(client.get(f"/api/transactions/{ids[0]}"))["transaction"]
+    assert detail["effective_category"] == "转账红包"
 
 
 # --------------------------------------------------------------------------
