@@ -36,6 +36,7 @@ from . import (
     params,
     repo,
     settings,
+    sqlquery,
     themes,
 )
 from .errors import BillError, ProfileError, UploadError
@@ -283,6 +284,27 @@ def meta():
         # 就多了一套时区逻辑，两边会在月初月末差出一天。
         default_range=params.default_range(conf),
     )
+
+
+# --------------------------------------------------------------------------
+# 只读查询
+# --------------------------------------------------------------------------
+
+@blueprint.post("/query")
+def query():
+    """临时 SQL 查询：只放行单条 SELECT / WITH，只读、限行、限时。
+
+    写法（只认 WHERE 之后的条件、表名等）都由 SQLite 自己校验；这一层多做的
+    只是把「不能写」变成一进门就拒绝，而不是等改完了再报错。
+    """
+    sql = _body().get("sql")
+    if not isinstance(sql, str):
+        return _error("validation", "写一条 SELECT 查询。", 400)
+    try:
+        result = sqlquery.run(get_conn(), sql)
+    except sqlquery.QueryError as error:
+        return _error("query", str(error), 400)
+    return jsonify(result)
 
 
 # --------------------------------------------------------------------------

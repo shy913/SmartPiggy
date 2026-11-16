@@ -26,6 +26,7 @@ PROTECTED = (
     ("GET", "/api/imports"),
     ("GET", "/api/settings"),
     ("GET", "/api/profiles"),
+    ("POST", "/api/query"),
     ("POST", "/api/transactions"),
     ("PATCH", "/api/transactions/1"),
     ("DELETE", "/api/transactions/1"),

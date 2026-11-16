@@ -529,3 +529,15 @@ export type ProfilesPayload = {
   user_dir: string;
   builtin_dir: string;
 };
+
+// --------------------------------------------------------------------------
+// 只读查询
+// --------------------------------------------------------------------------
+
+export type QueryResult = {
+  columns: string[];
+  /** 单元格原样取值：整数、字符串、NULL，REAL 以字符串发。 */
+  rows: (string | number | null)[][];
+  truncated: boolean;
+  elapsed_ms: number;
+};
