@@ -369,6 +369,8 @@ function DashboardView({
 
       <Ranking data={data} back={back} theme={theme} />
 
+      <Counterparties data={data} back={back} />
+
       <Insights data={data} summary={summary} back={back} theme={theme} />
     </div>
   );
@@ -894,6 +896,130 @@ function allExpenses(data: Dashboard): string {
     direction: "out",
   });
   return `/transactions?${query.toString()}`;
+}
+
+/**
+ * 对方汇总：同一个商家 / 人合并成一行，支出和收入各看一个榜。
+ *
+ * 这里只统计「对方」这一列非空的记录。账单没写对方的那几笔仍然在合计里，
+ * 只是没法归到某个人头上——把它们硬塞进一个叫「未知」的桶，读起来就像真有
+ * 这么个商家。两个榜都跟首页合计同一个口径：隐藏、中性、大额不进金额。
+ *
+ * 点某一行落到**同一段区间、同一个对方**的交易记录，那边是精确匹配，
+ * 不是模糊搜索，所以「所有和这个人/商家的交易」是真的全部。
+ */
+function Counterparties({ data, back }: { data: Dashboard; back: string }) {
+  const [tab, setTab] = useState<"expense" | "income">("expense");
+  const [expanded, setExpanded] = useState(false);
+  const expense = tab === "expense";
+  const rows = expense ? data.counterparties : data.counterparties_income;
+  const total = expense
+    ? data.counterparty_counts.expense
+    : data.counterparty_counts.income;
+  const base = expense ? data.stats.expense : data.stats.income;
+  const visible = rows.slice(0, expanded ? MORE_ROWS : TOP_ROWS);
+  const max = rows.length ? (expense ? rows[0].expense : rows[0].income) : 0;
+
+  return (
+    <Card className="mt-4">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-base font-semibold">对方汇总</h2>
+          <div className="flex items-center rounded-md border border-border p-0.5 text-xs">
+            {(
+              [
+                ["expense", "支出对象"],
+                ["income", "收入来源"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                className={cn(
+                  "rounded px-2.5 py-1 transition-colors",
+                  tab === key ? "bg-panel-hover text-text" : "text-muted hover:text-text",
+                )}
+                onClick={() => {
+                  setTab(key);
+                  setExpanded(false);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {visible.length ? (
+        <ol className="m-0 list-none p-0">
+          {visible.map((row, index) => {
+            const amount = expense ? row.expense : row.income;
+            const count = expense ? row.expense_count : row.income_count;
+            const query = new URLSearchParams({
+              start: data.range.start,
+              end: data.range.end,
+              direction: expense ? "out" : "in",
+              counterparty: row.name,
+            });
+            return (
+              <li key={`${tab}-${row.name}`}>
+                <Link
+                  to={`/transactions?${query.toString()}`}
+                  state={{ from: back, backLabel: "汇总" }}
+                  className="relative flex items-center gap-3 overflow-hidden rounded-md px-2 py-2 hover:bg-panel-hover"
+                >
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "absolute inset-y-0 left-0 rounded-md",
+                      expense ? "bg-out/10" : "bg-in/10",
+                    )}
+                    style={{ width: `${max ? Math.max((amount / max) * 100, 2) : 0}%` }}
+                  />
+                  <span className="tabular relative w-5 text-right text-xs text-muted">
+                    {index + 1}
+                  </span>
+                  <span className="relative min-w-0 flex-1">
+                    <span className="truncate text-sm" title={row.name}>
+                      {row.name}
+                    </span>
+                    <span className="block text-xs text-muted">{count} 笔</span>
+                  </span>
+                  <span
+                    className={cn(
+                      "tabular relative text-sm",
+                      expense ? "text-out" : "text-in",
+                    )}
+                  >
+                    {formatAmount(amount)}
+                  </span>
+                  <span className="tabular relative w-10 text-right text-xs text-muted">
+                    {base ? `${Math.round((amount / base) * 100)}%` : ""}
+                  </span>
+                </Link>
+              </li>
+            );
+          })}
+        </ol>
+      ) : (
+        <Empty>{expense ? "这个区间里没有支出。" : "这个区间里没有收入。"}</Empty>
+      )}
+
+      <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted">
+        {rows.length > TOP_ROWS ? (
+          <button
+            type="button"
+            className="text-accent underline"
+            onClick={() => setExpanded(!expanded)}
+          >
+            {expanded ? "收起" : `更多（${Math.min(rows.length, MORE_ROWS) - TOP_ROWS}）`}
+          </button>
+        ) : null}
+        {total > rows.length ? <span>还有 {total - rows.length} 个未列出</span> : null}
+      </div>
+    </Card>
+  );
 }
 
 /**

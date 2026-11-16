@@ -171,6 +171,22 @@ export const reclassify = (ids: number[], category: string) =>
     body: JSON.stringify({ transaction_ids: ids, category }),
   });
 
+/**
+ * 把跟某个对方往来的全部交易一起改分类 / 备注。
+ *
+ * `changes` 里没有出现的字段就不动：只改分类的请求不会把备注抹掉。
+ * 空字符串是有效值——分类清空 = 改回账单自带，备注清空 = 删掉备注。
+ */
+export const updateCounterpartyTransactions = (
+  counterparty: string,
+  changes: { category?: string; memo?: string },
+) =>
+  request<{ changed: number }>("/api/transactions/by-counterparty", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ counterparty, ...changes }),
+  });
+
 // --------------------------------------------------------------------------
 // 合并组
 // --------------------------------------------------------------------------

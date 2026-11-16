@@ -103,6 +103,26 @@ def test_every_step_of_the_chain_stays_float_free(client):
     assert_no_floats(txns(client, start="", end=""), "list")
 
 
+def test_icons_never_fall_back_to_the_app_shell(client, tmp_path, monkeypatch):
+    """图标地址缺文件时要回空 404，不能落到 SPA 兜底上换成一整页 HTML。
+
+    落了兜底的话响应是 200 + HTML，浏览器既不显示图标也不报错——只会在标签栏
+    上留一个空白方块，没有任何地方能看出是路由写漏了。
+    """
+    from bill import web
+
+    monkeypatch.setattr(web, "APP_BUILD_DIR", tmp_path)
+    for name in ("favicon.svg", "favicon.ico", "apple-touch-icon.png"):
+        missing = client.get(f"/{name}")
+        assert missing.status_code == 404
+        assert missing.data == b"", "缺文件时回的不该是一页 HTML"
+
+    (tmp_path / "favicon.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg"/>')
+    found = client.get("/favicon.svg")
+    assert found.status_code == 200
+    assert found.mimetype == "image/svg+xml"
+
+
 def test_the_two_pages_have_different_defaults_on_purpose(client, book):
     """列表默认看整本账，汇总默认看当月——两边**故意**不一样。
 

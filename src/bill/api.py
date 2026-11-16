@@ -201,6 +201,15 @@ def _listed(item, fields, *, null_group_id: bool = False) -> dict:
     # 单独占一列会让别的列跟着挤。映射表（含关键词兜底）在 `categories.py`，
     # 在这儿算好发出去——搬到前端就等于把那张表再抄一份。
     row["emoji"] = categories.emoji(row.get("effective_category"))
+    # 未分类的一行顺手给一个建议。它只用来在行上提示，点面板里的按钮才会
+    # 真正落库；已分类的行永远是空串，不会又冒出一个「建议」。
+    row["suggested_category"] = (
+        ""
+        if row.get("effective_category")
+        else categories.detect(
+            row.get("counterparty"), row.get("description"), row.get("memo")
+        )
+    )
     return row
 
 
@@ -430,6 +439,7 @@ def list_counts(connection, query) -> tuple[int, int]:
         "direction": query["direction"] or None,
         "search": query["search"] or None,
         "category": query["category"] or None,
+        "counterparty": query["counterparty"] or None,
     }
     total = repo.count_transactions(connection, **common, hidden=query["hidden"] or None)
     if query["hidden"] == "1":
@@ -455,6 +465,7 @@ def transaction_list():
         direction=query["direction"] or None,
         search=query["search"] or None,
         category=query["category"] or None,
+        counterparty=query["counterparty"] or None,
         hidden=query["hidden"] or None,
         limit=query["limit"],
         offset=offset,
@@ -468,6 +479,13 @@ def transaction_list():
 
     accounts = repo.accounts(connection)
     start, end = query["start"], query["end"]
+    # 对方筛选生效时，列表上方那块批量编辑要报「全部时间共几笔」。它跟当前
+    # 区间无关——改分类改的是这个人的全部往来，不是这一屏。
+    scope = (
+        repo.counterparty_scope(connection, query["counterparty"])
+        if query["counterparty"]
+        else None
+    )
     return jsonify(
         rows=transaction_rows(found),
         members={str(key): member_rows(value) for key, value in members.items()},
@@ -490,6 +508,7 @@ def transaction_list():
             account_id=query["account_id"],
             search=query["search"],
             category=query["category"],
+            counterparty=query["counterparty"],
             hidden=query["hidden"],
         ),
         filters={
@@ -499,12 +518,18 @@ def transaction_list():
             "account": query["account_id"],
             "q": query["search"],
             "category": query["category"],
+            "counterparty": query["counterparty"],
             "hidden": query["hidden"],
         },
         accounts=_account_rows(connection),
         categories=repo.transaction_categories(connection),
         group_count=repo.count_groups(connection),
         display_currency=conf.display_currency,
+        # 没有对方筛选时是 null。有的话是 {total, hidden}，含隐藏记录。
+        counterparty_scope=scope,
+        # 未分类交易的归类建议。跟当前筛选无关——这一批是「全部账本里还有
+        # 哪些能认」；点一下改的是那个对方的全部交易。
+        category_suggestions=repo.uncategorized_suggestions(connection),
     )
 
 
@@ -892,6 +917,43 @@ def transactions_bulk_reclassify():
         return _error("validation", "先在左边勾选几笔。", 400)
     with get_conn() as connection:
         changed = repo.reclassify(connection, ids, (_body().get("category") or "").strip())
+    return jsonify(changed=changed)
+
+
+@blueprint.patch("/transactions/by-counterparty")
+def transactions_bulk_by_counterparty():
+    """把跟某个对方往来的全部交易一起改分类 / 备注。
+
+    ``category`` / ``memo`` **只有出现在请求体里才改**；空字符串是有效值
+    （分类清空 = 改回账单自带，备注清空 = 删掉备注）。这样「只想改分类」
+    的请求不会顺手把备注抹掉。
+
+    范围是**全部时间、全部账户**，跟当前列表的区间无关——这个功能的用途
+    正是「这个人的全部往来都归到这一类」，不是只修当前这一屏。
+    """
+    body = _body()
+    raw = body.get("counterparty")
+    if not isinstance(raw, str) or not raw.strip():
+        return _error("validation", "先说清楚是哪一个对方。", 400)
+
+    changes: dict[str, str] = {}
+    if "category" in body:
+        value = body.get("category")
+        if not isinstance(value, str):
+            return _error("validation", "分类得是文本。", 400)
+        changes["category"] = value.strip()
+    if "memo" in body:
+        value = body.get("memo")
+        if not isinstance(value, str):
+            return _error("validation", "备注得是文本。", 400)
+        changes["memo"] = value.strip()
+    if not changes:
+        return _error("validation", "分类和备注至少改一项。", 400)
+
+    with get_conn() as connection:
+        changed = repo.update_counterparty_transactions(
+            connection, raw.strip(), **changes
+        )
     return jsonify(changed=changed)
 
 

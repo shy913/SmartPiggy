@@ -23,6 +23,8 @@ __all__ = [
     "by_month",
     "by_source_category",
     "count_groups",
+    "counterparty_scope",
+    "counterparty_totals",
     "coverage",
     "create_group",
     "create_import",
@@ -54,8 +56,10 @@ __all__ = [
     "save_issues",
     "transaction_categories",
     "trend_series",
+    "uncategorized_suggestions",
     "transaction_currencies",
     "transactions_for_import",
+    "update_counterparty_transactions",
     "update_group",
     "update_transaction",
 ]
@@ -624,6 +628,17 @@ _EFFECTIVE_COLUMNS = """
 """
 
 
+def _counterparty_name(prefix: str = "t.") -> str:
+    """「对方」的归一口径：去掉首尾空白。
+
+    分层统计和交易记录筛选**必须用同一个表达式**。首页点「美团外卖」进列表时，
+    那边要是写 ``counterparty = ?`` 而统计这边写 ``TRIM(counterparty)``，
+    账单里带首尾空格的那几笔就会「统计里有、列表里没有」——数字对不上，
+    而且不报错。
+    """
+    return f"TRIM({prefix}counterparty)"
+
+
 def _effective_category(prefix: str = "t.") -> str:
     """页面上显示的分类：手改的优先，两列都归一到统一体系。
 
@@ -1019,6 +1034,81 @@ def by_source_category(
     ).fetchall()
 
 
+def counterparty_totals(
+    connection: sqlite3.Connection,
+    *,
+    start: str | None = None,
+    end: str | None = None,
+) -> list[sqlite3.Row]:
+    """按「对方」汇总区间内的收支，同名的合成一行。
+
+    名字只做一件事：去掉首尾空白。中英文混合的商户名在账单里大小写常常不一致，
+    但把它们强行折叠成小写会连显示名一起改掉；真正的同一个名字在各家账单里
+    本来就写得一样，折叠带来的收益远小于「显示成了我没写过的样子」的代价。
+
+    口径和首页合计完全一致：
+
+    - 隐藏行不在 ``effective`` 里；
+    - 中性行没有收支，不计入；
+    - 大额行不进金额——它们在首页另有一块「不计入合计的大额」；
+    - AA / 收支平衡的合并组按**净额**算一行（``effective`` 已经是净额）。
+
+    按显示币种分开汇总：没配汇率的币种各占一行，绝不跨币种相加。
+    """
+    conf = settings.load()
+    amount = _amount_in_display(conf, "t.")
+    large = _is_large_effective(conf, "t.")
+    name = _counterparty_name("t.")
+    where, params = _range_where(start, end)
+    cte, lead = _effective(conf, start=start, end=end)
+    return connection.execute(
+        f"""
+        {cte}
+        SELECT {name} AS counterparty,
+               {_group_by_display(conf, "t.")} AS display_currency,
+               COALESCE(SUM(CASE WHEN t.direction = 'out' AND NOT {large}
+                                 THEN {amount} END), 0) AS expense,
+               COALESCE(SUM(CASE WHEN t.direction = 'in'  AND NOT {large}
+                                 THEN {amount} END), 0) AS income,
+               -- 笔数**不**排除大额：首页那一行点进去看到的是这个对方在这一段
+               -- 区间里的全部记录（大额也在列表里），笔数要跟那边的「共 N 条」
+               -- 对得上。金额仍然按合计口径剔掉大额——两者说的不是同一件事。
+               COALESCE(SUM(CASE WHEN t.direction = 'out' THEN 1 ELSE 0 END), 0)
+                 AS expense_count,
+               COALESCE(SUM(CASE WHEN t.direction = 'in'  THEN 1 ELSE 0 END), 0)
+                 AS income_count
+        FROM effective t
+        WHERE {where} AND {name} <> ''
+        -- 这里必须重写整个表达式，不能写别名 counterparty：effective 里本来就
+        -- 有一列同名，SQLite 的分组会认输入列而不是输出别名，首尾空白就白去了。
+        GROUP BY {name}, display_currency
+        HAVING expense > 0 OR income > 0
+        ORDER BY display_currency, expense DESC, income DESC, counterparty
+        """,
+        [*lead, *params],
+    ).fetchall()
+
+
+def counterparty_scope(
+    connection: sqlite3.Connection, counterparty: str
+) -> dict[str, int]:
+    """跟某个对方往来的**全部**原始交易有几笔、其中几笔隐藏。
+
+    这里看的是 ``transactions`` 原表，不是合并后的账本：批量改分类改的就是这些
+    原始记录，报告的数量必须跟真正会改到的行数一致。跟当前列表的筛选条件无关
+    ——「这个人的交易」指的是全部时间、全部账户。
+    """
+    row = connection.execute(
+        """
+        SELECT COUNT(*) AS total, COALESCE(SUM(hidden), 0) AS hidden
+        FROM transactions
+        WHERE TRIM(counterparty) = ?
+        """,
+        (counterparty.strip(),),
+    ).fetchone()
+    return {"total": row["total"], "hidden": row["hidden"]}
+
+
 def latest_month(connection: sqlite3.Connection) -> str | None:
     """账本里最近有数据的月份（'YYYY-MM'）。空账本返回 None。
 
@@ -1238,6 +1328,7 @@ def list_transactions(
     direction: str | None = None,
     search: str | None = None,
     category: str | None = None,
+    counterparty: str | None = None,
     hidden: str | None = None,
     limit: int = 100,
     offset: int = 0,
@@ -1249,7 +1340,8 @@ def list_transactions(
     """
     conf = settings.load()
     where, params = _transaction_filters(
-        start, end, account_id, direction, search, hidden, category
+        start, end, account_id, direction, search, hidden, category,
+        counterparty=counterparty,
     )
     cte, lead = _effective(
         conf, start=start, end=end, include_hidden=hidden != "0"
@@ -1292,13 +1384,15 @@ def count_transactions(
     direction: str | None = None,
     search: str | None = None,
     category: str | None = None,
+    counterparty: str | None = None,
     hidden: str | None = None,
 ) -> int:
     """跟 list_transactions 同源同过滤：一个合并组算一条。两处对不上的话，
     「共 N 条」和列表行数就会各说各话。"""
     conf = settings.load()
     where, params = _transaction_filters(
-        start, end, account_id, direction, search, hidden, category
+        start, end, account_id, direction, search, hidden, category,
+        counterparty=counterparty,
     )
     cte, lead = _effective(
         conf, start=start, end=end, include_hidden=hidden != "0"
@@ -1320,6 +1414,7 @@ def _transaction_filters(
     search: str | None,
     hidden: str | None = None,
     category: str | None = None,
+    counterparty: str | None = None,
 ) -> tuple[str, list]:
     clauses = ["1 = 1"]
     params: list = []
@@ -1351,6 +1446,12 @@ def _transaction_filters(
     # 留一条空跑的条件只会让人猜哪边在起作用。所以只给「只看隐藏」加。
     if hidden == "1":
         clauses.append("t.hidden = 1")
+    if counterparty:
+        # 用跟首页「对方汇总」完全相同的归一表达式，否则统计里点了某个人、
+        # 列表里却少几笔（名字带首尾空白的那几笔）。合并行的 counterparty
+        # 是组标题或锚点那一笔的对方，同样适用。
+        clauses.append(f"{_counterparty_name('t.')} = ?")
+        params.append(counterparty.strip())
     if search:
         # 商品、对方、备注三处一起搜——用户记不住自己当时写的哪个字段。
         clauses.append(
@@ -1576,6 +1677,136 @@ def reclassify(
         WHERE id IN ({marks})
         """,
         [category, db.now(), *ids],
+    )
+    return cursor.rowcount
+
+
+def uncategorized_suggestions(
+    connection: sqlite3.Connection, *, limit: int = 50
+) -> dict:
+    """给「未分类」的交易按对方聚合出一批可一键采用的分类建议。
+
+    只算 ``category`` 和 ``source_category`` 都空的行；手改过或账单自带分类的
+    一律不碰。同一个对方下的**所有**未分类行必须认出同一个分类才给建议——
+    一键应用会把这个对方的全部交易都改成那一类，混着两种猜法时宁可不出建议。
+
+    ``count`` 是未分类笔数，``scope`` 是这个对方在全部时间里一共有多少笔
+    （含已分类、含隐藏）——界面确认框要如实说出会改到多少笔。
+    """
+    total_uncategorized = connection.execute(
+        """
+        SELECT COUNT(*) AS n FROM transactions
+        WHERE TRIM(category) = '' AND TRIM(source_category) = ''
+        """
+    ).fetchone()["n"]
+
+    grouped = connection.execute(
+        """
+        SELECT TRIM(counterparty) AS counterparty, description, memo,
+               COUNT(*) AS n, COALESCE(SUM(hidden), 0) AS hidden
+        FROM transactions
+        WHERE TRIM(category) = '' AND TRIM(source_category) = ''
+          AND TRIM(counterparty) <> ''
+        GROUP BY TRIM(counterparty), description, memo
+        """
+    ).fetchall()
+
+    buckets: dict[str, dict] = {}
+    for item in grouped:
+        name = item["counterparty"]
+        bucket = buckets.setdefault(
+            name, {"count": 0, "hidden": 0, "unmatched": 0, "categories": set()}
+        )
+        bucket["count"] += item["n"]
+        bucket["hidden"] += item["hidden"]
+        guess = categories.detect(name, item["description"], item["memo"])
+        if guess:
+            bucket["categories"].add(guess)
+        else:
+            bucket["unmatched"] += item["n"]
+
+    candidates: list[dict] = []
+    for name, bucket in buckets.items():
+        if bucket["unmatched"] or len(bucket["categories"]) != 1:
+            continue
+        candidates.append(
+            {
+                "counterparty": name,
+                "category": next(iter(bucket["categories"])),
+                "count": bucket["count"],
+                "hidden": bucket["hidden"],
+            }
+        )
+    candidates.sort(key=lambda item: (-item["count"], item["counterparty"]))
+
+    scopes: dict[str, dict[str, int]] = {}
+    names = [item["counterparty"] for item in candidates]
+    if names:
+        marks = ", ".join("?" * len(names))
+        for item in connection.execute(
+            f"""
+            SELECT TRIM(counterparty) AS counterparty, COUNT(*) AS total,
+                   COALESCE(SUM(hidden), 0) AS hidden
+            FROM transactions
+            WHERE TRIM(counterparty) IN ({marks})
+            GROUP BY TRIM(counterparty)
+            """,
+            names,
+        ):
+            scopes[item["counterparty"]] = {
+                "total": item["total"],
+                "hidden": item["hidden"],
+            }
+
+    for item in candidates:
+        item["scope"] = scopes.get(
+            item["counterparty"],
+            {"total": item["count"], "hidden": item["hidden"]},
+        )
+
+    return {
+        "total_uncategorized": total_uncategorized,
+        "suggestions": candidates[:limit],
+    }
+
+
+def update_counterparty_transactions(
+    connection: sqlite3.Connection,
+    counterparty: str,
+    *,
+    category: str | None = None,
+    memo: str | None = None,
+) -> int:
+    """把跟某个对方往来的全部交易一起改分类 / 备注，返回改了几笔。
+
+    ``None`` 表示这一项不动；空字符串是有效的值——分类清空就是「改回账单自带」，
+    备注清空就是删掉备注。调用方必须显式给 ``""`` 才清，没给就是不改。
+
+    **只动 ``category`` / ``memo`` / ``edited_at``。** 去重键和内容指纹一个字
+    不碰：那两列是记录的身份，改了之后重新导入同一份账单会比不中，同一笔钱
+    再插一遍——账翻倍而且不报错（跟单笔编辑同一条规矩）。
+    """
+    if category is None and memo is None:
+        return 0
+
+    assignments: list[str] = []
+    values: list = []
+    if category is not None:
+        assignments.append("category = ?")
+        values.append(category)
+    if memo is not None:
+        assignments.append("memo = ?")
+        values.append(memo)
+    assignments.append("edited_at = ?")
+    values.extend([db.now(), counterparty.strip()])
+
+    cursor = connection.execute(
+        f"""
+        UPDATE transactions
+        SET {", ".join(assignments)}
+        WHERE TRIM(counterparty) = ?
+        """,
+        values,
     )
     return cursor.rowcount
 

@@ -135,6 +135,15 @@ export type DashboardCategory = {
   total: number;
 };
 
+/** 首页「对方汇总」的一行：同名合并后的支出和收入。 */
+export type DashboardCounterparty = {
+  name: string;
+  expense: number;
+  income: number;
+  expense_count: number;
+  income_count: number;
+};
+
 export type TrendPoint = { key: string; expense: number; income: number };
 
 /**
@@ -182,6 +191,11 @@ export type Dashboard = {
   singles: LedgerRow[];
   single_count: number;
   category_count: number;
+  /** 按支出排的对方榜（同一段区间、同一个显示币种）。 */
+  counterparties: DashboardCounterparty[];
+  /** 按收入排的对方榜。两个榜各自截断，计数在 `counterparty_counts`。 */
+  counterparties_income: DashboardCounterparty[];
+  counterparty_counts: { expense: number; income: number };
 };
 
 export type Summary = {
@@ -255,6 +269,9 @@ export type TransactionRow = {
   /** 分类退化成的一个 emoji（名字在 effective_category 里，挂在 tooltip 上）。
    *  没分类时是空串；列表上会补一个问号占住那个位置。 */
   emoji: string;
+  /** 未分类时服务端按对方 / 说明 / 备注猜出来的分类；已分类或猜不出时是空串。
+   *  只是建议，点面板里的按钮才会写进账本。 */
+  suggested_category?: string;
 };
 
 /** 合并组的组员。它们是真实记录，不是合成行。 */
@@ -274,6 +291,7 @@ export type MemberRow = {
    *  再标一份只是把同一个数印两遍。 */
   display_currency: string;
   emoji: string;
+  suggested_category?: string;
 };
 
 export type ListFilters = {
@@ -283,7 +301,24 @@ export type ListFilters = {
   account: number | null;
   q: string;
   category: string;
+  /** 精确匹配的对方名，从首页「对方汇总」点进来时带上。 */
+  counterparty: string;
   hidden: string;
+};
+
+/** 一条「未分类能一键归好」的建议。`count` 是未分类笔数；`scope` 是这个对方
+ *  在全部时间里的总笔数（含已分类、含隐藏），点按钮会改到这么多笔。 */
+export type CategorySuggestion = {
+  counterparty: string;
+  category: string;
+  count: number;
+  hidden: number;
+  scope: { total: number; hidden: number };
+};
+
+export type CategorySuggestions = {
+  total_uncategorized: number;
+  suggestions: CategorySuggestion[];
 };
 
 export type TransactionList = {
@@ -305,6 +340,11 @@ export type TransactionList = {
   categories: string[];
   group_count: number;
   display_currency: string;
+  /** 对方筛选生效时，跟这个对方往来的全部原始交易有几笔、其中几笔隐藏；
+   *  没有对方筛选时是 null。批量编辑用它报「全部时间共 N 笔」。 */
+  counterparty_scope: { total: number; hidden: number } | null;
+  /** 未分类交易的归类建议，跟当前筛选无关。 */
+  category_suggestions: CategorySuggestions;
 };
 
 /** 改一笔那张表单的初值。金额是**字符串**（'32.50'），时间带 'T' 分隔符。 */

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -28,12 +28,15 @@ function listBody(overrides: Partial<TransactionList> = {}): TransactionList {
       account: null,
       q: "",
       category: "",
+      counterparty: "",
       hidden: "0",
     },
     accounts: [{ id: 1, name: "支付宝" }],
     categories: [],
     group_count: 0,
     display_currency: "CNY",
+    counterparty_scope: null,
+    category_suggestions: { total_uncategorized: 0, suggestions: [] },
     ...overrides,
   };
 }
@@ -67,16 +70,19 @@ function row(overrides: Partial<TransactionRow> = {}): TransactionRow {
 }
 
 let calls: string[] = [];
+let requests: { url: string; init?: RequestInit }[] = [];
 
 function draw(
   body: TransactionList,
   url: string | { pathname: string; state?: unknown } = "/transactions",
 ) {
   calls = [];
+  requests = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: string) => {
+    vi.fn(async (input: string, init?: RequestInit) => {
       calls.push(String(input));
+      requests.push({ url: String(input), init });
       return { ok: true, status: 200, text: async () => JSON.stringify(body) };
     }),
   );
@@ -174,6 +180,160 @@ describe("交易记录页", () => {
     expect(calls[calls.length - 1]).toContain(
       "category=%E9%A4%90%E9%A5%AE%E7%BE%8E%E9%A3%9F",
     );
+  });
+
+  it("对方筛选从首页带进来，原样留在筛选栏并继续生效", async () => {
+    const user = userEvent.setup();
+    draw(
+      listBody({
+        filters: { ...listBody().filters, counterparty: "美团外卖" },
+        active_filters: ["对方「美团外卖」"],
+      }),
+      "/transactions?counterparty=%E7%BE%8E%E5%9B%A2%E5%A4%96%E5%8D%96&start=2026-10-01&end=2026-10-31",
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText(/对方「美团外卖」/)).toBeInTheDocument(),
+    );
+    await user.click(screen.getByText("筛选"));
+    expect(screen.getByLabelText("对方")).toHaveValue("美团外卖");
+
+    await user.click(screen.getByRole("button", { name: "查看" }));
+    await waitFor(() => expect(calls.length).toBeGreaterThan(1));
+    expect(calls[calls.length - 1]).toContain(
+      "counterparty=%E7%BE%8E%E5%9B%A2%E5%A4%96%E5%8D%96",
+    );
+  });
+
+  it("对方筛选生效时，可以批量改这个人的分类和备注", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    draw(
+      listBody({
+        filters: { ...listBody().filters, counterparty: "王记饭馆" },
+        active_filters: ["对方「王记饭馆」"],
+        counterparty_scope: { total: 7, hidden: 2 },
+        categories: ["餐饮美食", "交通出行"],
+      }),
+      "/transactions?counterparty=%E7%8E%8B%E8%AE%B0%E9%A5%AD%E9%A6%86&start=2026-10-01&end=2026-10-31",
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText(/批量编辑/)).toBeInTheDocument(),
+    );
+    expect(screen.getByText(/全部时间共 7 笔，其中 2 笔已隐藏/)).toBeInTheDocument();
+
+    // 页面上有两个表单都带「分类」标签（筛选栏和批量编辑），只在批量那块里找。
+    const batch = screen.getByText(/批量编辑/).closest("form")!;
+    await user.selectOptions(within(batch).getByLabelText("分类"), "餐饮美食");
+    await user.type(within(batch).getByLabelText("备注"), "王记饭馆");
+    await user.click(within(batch).getByRole("button", { name: "应用到全部 7 笔" }));
+
+    await waitFor(() => {
+      const sent = requests.filter((item) => item.url.includes("/by-counterparty")).at(-1);
+      expect(sent).toBeTruthy();
+      expect(sent!.init?.method).toBe("PATCH");
+      expect(JSON.parse(String(sent!.init?.body))).toEqual({
+        counterparty: "王记饭馆",
+        category: "餐饮美食",
+        memo: "王记饭馆",
+      });
+    });
+  });
+
+  it("批量编辑只有「不改」时按钮是灰的——不能发一个什么都不改的请求", async () => {
+    draw(
+      listBody({
+        filters: { ...listBody().filters, counterparty: "王记饭馆" },
+        active_filters: ["对方「王记饭馆」"],
+        counterparty_scope: { total: 3, hidden: 0 },
+        categories: ["餐饮美食"],
+      }),
+      "/transactions?counterparty=%E7%8E%8B%E8%AE%B0%E9%A5%AD%E9%A6%86",
+    );
+
+    const batch = (await screen.findByText(/批量编辑/)).closest("form")!;
+    expect(within(batch).getByRole("button", { name: "应用到全部 3 笔" })).toBeDisabled();
+  });
+
+  it("未分类的对方给出建议，点一下就把这个对方的全部交易归好", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    draw(
+      listBody({
+        category_suggestions: {
+          total_uncategorized: 12,
+          suggestions: [
+            {
+              counterparty: "Tesco",
+              category: "日用百货",
+              count: 12,
+              hidden: 0,
+              scope: { total: 14, hidden: 1 },
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(await screen.findByText("自动识别")).toBeInTheDocument();
+    expect(screen.getByText(/Tesco/)).toBeInTheDocument();
+    expect(screen.getByText(/另有 2 笔已分类/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "全部 14 笔归为「日用百货」" }));
+
+    await waitFor(() => {
+      const sent = requests.filter((item) => item.url.includes("/by-counterparty")).at(-1);
+      expect(sent).toBeTruthy();
+      expect(sent!.init?.method).toBe("PATCH");
+      expect(JSON.parse(String(sent!.init?.body))).toEqual({
+        counterparty: "Tesco",
+        category: "日用百货",
+      });
+    });
+  });
+
+  it("建议很多时先露三组，其余可以展开", async () => {
+    const user = userEvent.setup();
+    draw(
+      listBody({
+        category_suggestions: {
+          total_uncategorized: 4,
+          suggestions: ["商家A", "商家B", "商家C", "商家D"].map((counterparty) => ({
+            counterparty,
+            category: "日用百货",
+            count: 1,
+            hidden: 0,
+            scope: { total: 1, hidden: 0 },
+          })),
+        },
+      }),
+    );
+
+    await waitFor(() => expect(screen.getByText("自动识别")).toBeInTheDocument());
+    expect(screen.getByText(/商家C/)).toBeInTheDocument();
+    expect(screen.queryByText(/商家D/)).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "展开其余 1 组" }));
+    expect(screen.getByText(/商家D/)).toBeInTheDocument();
+  });
+
+  it("未分类的行上也会标一句建议，但不会替它落库", async () => {
+    draw(
+      listBody({
+        total: 1,
+        rows: [
+          row({
+            counterparty: "Tesco",
+            effective_category: "",
+            emoji: "",
+            suggested_category: "日用百货",
+          }),
+        ],
+      }),
+    );
+    await waitFor(() => expect(screen.getByText("建议 日用百货")).toBeInTheDocument());
+    expect(requests.filter((item) => item.init?.method === "PATCH")).toHaveLength(0);
   });
 
   it("隐藏默认不露脸；想看它们得自己选「连隐藏一起」", async () => {

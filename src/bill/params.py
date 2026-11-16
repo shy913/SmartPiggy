@@ -181,6 +181,7 @@ def active_filter_labels(
     account_id=None,
     search="",
     category="",
+    counterparty="",
     hidden="",
 ) -> list[str]:
     """当前生效的筛选条件，写成几个短标签。
@@ -211,6 +212,8 @@ def active_filter_labels(
         labels.append(word)
     if category:
         labels.append(f"分类「{category}」")
+    if counterparty:
+        labels.append(f"对方「{counterparty}」")
     if word := _HIDDEN_WORDS.get(hidden):
         labels.append(word)
     if search:
@@ -250,6 +253,9 @@ def list_query(source) -> dict:
         # 分类名是自由文本，不重写、不清理空白以外的任何东西——去掉首尾空白
         # 就够了，中间的空格是名字的一部分（「Eating Out」）。
         "category": (source.get("category") or "").strip(),
+        # 「对方」是精确筛选，不是模糊搜索：首页点某个商家进来，要的是**这个**
+        # 商家的全部记录。首尾空白去掉，跟统计那边的 TRIM 口径对齐。
+        "counterparty": (source.get("counterparty") or "").strip(),
         "hidden": hidden,
         # limit 是「这一段给到哪」，不是页大小，所以只往上加：链接里手改出来的
         # 小数不至于把列表缩成一条。
