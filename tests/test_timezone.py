@@ -127,7 +127,7 @@ def test_monzo_times_pass_through_unchanged(conn, isolated_data_dir):
     write_settings(isolated_data_dir, "Europe/London")
     preview = ingest.stage(conn, "monzo.csv", monzo_csv())
     by_party = {row.transaction.counterparty: row.transaction for row in preview.plan.rows}
-    assert by_party["Tesco"].occurred_at == "2026-09-28 12:26:21"
+    assert by_party["Grocer"].occurred_at == "2026-09-28 12:26:21"
 
 
 def test_the_minute_view_drops_the_seconds():

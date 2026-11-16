@@ -80,18 +80,18 @@ MONZO_HEADER = [
 MONZO_ROWS = [
     # 零金额的「Active card check」——不是真交易，该落成中性而不是被算成支出。
     ["tx_001", "24/09/2026", "07:47:46", "Card payment", "Apple", "🍎 ", "Entertainment",
-     "0.00", "GBP", "0.00", "GBP", "Active card check", "Hollyhill Estate", "",
-     "APPLE.COM/BILL         CORK          IRL", "", "0.00", ""],
+     "0.00", "GBP", "0.00", "GBP", "Active card check", "Sample Street 1", "",
+     "SAMPLE.COM/BILL        SAMPLEVILLE   GBR", "", "0.00", ""],
     # 正数是收入
     ["tx_002", "28/09/2026", "08:41:12", "chaps", "", "", "Transfers",
      "1000.00", "GBP", "1000.00", "GBP", "TRANSFER 1K", "", "", "TRANSFER 1K", "", "", "1000.00"],
     # 负数是支出
-    ["tx_003", "28/09/2026", "12:26:21", "Card payment", "Tesco", "🍏 ", "Groceries",
-     "-3.85", "GBP", "-3.85", "GBP", "", "Park", "",
-     "TESCO STORES 6636      BIRMINGHAM    GBR", "", "-3.85", ""],
-    ["tx_004", "03/10/2026", "16:58:56", "Card payment", "Happy Lamb", "🍽", "Eating out",
-     "-55.40", "GBP", "-55.40", "GBP", "", "21 Ladywell Walk", "",
-     "Happy Lamb Hotpot Lady Birmingham    GBR", "", "-55.40", ""],
+    ["tx_003", "28/09/2026", "12:26:21", "Card payment", "Grocer", "🍏 ", "Groceries",
+     "-12.34", "GBP", "-12.34", "GBP", "", "Sample Park", "",
+     "SAMPLE STORES 0000      SAMPLEVILLE   GBR", "", "-12.34", ""],
+    ["tx_004", "03/10/2026", "16:58:56", "Card payment", "Hotpot Place", "🍽", "Eating out",
+     "-45.60", "GBP", "-45.60", "GBP", "", "21 Sample Walk", "",
+     "Sample Hotpot Sample Cafe Sampleville    GBR", "", "-45.60", ""],
 ]
 
 
