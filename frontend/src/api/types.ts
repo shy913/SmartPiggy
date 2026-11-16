@@ -135,6 +135,15 @@ export type DashboardCategory = {
   total: number;
 };
 
+/** 首页「对方汇总」的一行：同名合并后的支出和收入。 */
+export type DashboardCounterparty = {
+  name: string;
+  expense: number;
+  income: number;
+  expense_count: number;
+  income_count: number;
+};
+
 export type TrendPoint = { key: string; expense: number; income: number };
 
 /**
@@ -182,6 +191,11 @@ export type Dashboard = {
   singles: LedgerRow[];
   single_count: number;
   category_count: number;
+  /** 按支出排的对方榜（同一段区间、同一个显示币种）。 */
+  counterparties: DashboardCounterparty[];
+  /** 按收入排的对方榜。两个榜各自截断，计数在 `counterparty_counts`。 */
+  counterparties_income: DashboardCounterparty[];
+  counterparty_counts: { expense: number; income: number };
 };
 
 export type Summary = {
@@ -283,6 +297,8 @@ export type ListFilters = {
   account: number | null;
   q: string;
   category: string;
+  /** 精确匹配的对方名，从首页「对方汇总」点进来时带上。 */
+  counterparty: string;
   hidden: string;
 };
 
@@ -305,6 +321,9 @@ export type TransactionList = {
   categories: string[];
   group_count: number;
   display_currency: string;
+  /** 对方筛选生效时，跟这个对方往来的全部原始交易有几笔、其中几笔隐藏；
+   *  没有对方筛选时是 null。批量编辑用它报「全部时间共 N 笔」。 */
+  counterparty_scope: { total: number; hidden: number } | null;
 };
 
 /** 改一笔那张表单的初值。金额是**字符串**（'32.50'），时间带 'T' 分隔符。 */

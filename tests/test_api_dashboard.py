@@ -392,6 +392,152 @@ def test_the_uncategorised_bucket_can_be_filtered(client, book):
     assert [row["description"] for row in listing["rows"]] == ["没有分类的一笔"]
 
 
+def test_the_counterparty_ranking_merges_the_same_name_and_links_to_the_same_rows(
+    client, book
+):
+    """同一个商家在账单里带着首尾空白也要合成一行。
+
+    首页点进去的交易记录用的是同一个 TRIM 口径——不然统计里是 3 笔、
+    列表里只有 2 笔，而两边都不报错。
+    """
+    now = today()
+    book(
+        [
+            {
+                "occurred_at": f"{now.isoformat()} 09:00:00",
+                "direction": "out",
+                "amount_cents": 1000,
+                "counterparty": " 美团外卖 ",
+            },
+            {
+                "occurred_at": f"{now.isoformat()} 10:00:00",
+                "direction": "out",
+                "amount_cents": 2000,
+                "counterparty": "美团外卖",
+            },
+            {
+                "occurred_at": f"{now.isoformat()} 11:00:00",
+                "direction": "out",
+                "amount_cents": 500,
+                "counterparty": "星巴克",
+            },
+            {
+                "occurred_at": f"{now.isoformat()} 12:00:00",
+                "direction": "in",
+                "amount_cents": 3000,
+                "counterparty": "美团外卖",
+            },
+            {
+                "occurred_at": f"{now.isoformat()} 13:00:00",
+                "direction": "neutral",
+                "amount_cents": 9999,
+                "counterparty": "美团外卖",
+            },
+        ]
+    )
+    body = dashboard(client)
+    assert body["counterparty_counts"] == {"expense": 2, "income": 1}
+    assert [row["name"] for row in body["counterparties"]] == ["美团外卖", "星巴克"]
+
+    meituan = body["counterparties"][0]
+    assert meituan == {
+        "name": "美团外卖",
+        "expense": 3000,
+        "income": 3000,
+        "expense_count": 2,
+        "income_count": 1,
+    }
+    # 中性行不计收支，也不进任何一边的笔数。
+    assert body["counterparties"][1]["expense_count"] == 1
+    assert [row["name"] for row in body["counterparties_income"]] == ["美团外卖"]
+
+    listing = payload(
+        client.get(
+            "/api/transactions",
+            query_string={
+                "counterparty": "美团外卖",
+                "direction": "out",
+                "start": body["range"]["start"],
+                "end": body["range"]["end"],
+            },
+        )
+    )
+    assert listing["total"] == 2
+    assert {row["counterparty"] for row in listing["rows"]} == {" 美团外卖 ", "美团外卖"}
+    assert listing["filters"]["counterparty"] == "美团外卖"
+    assert "对方「美团外卖」" in listing["active_filters"]
+
+
+def test_the_counterparty_ranking_leaves_out_large_and_neutral_rows(
+    client, book, tmp_path
+):
+    (tmp_path / "settings.toml").write_text(
+        'timezone = "Asia/Shanghai"\n\n[currency]\ndisplay = "CNY"\nrates = {}\n'
+        "\n[large]\nout = 500\nin = 0\n",
+        encoding="utf-8",
+    )
+    now = today()
+    book(
+        [
+            {
+                "occurred_at": f"{now.isoformat()} 09:00:00",
+                "direction": "out",
+                "amount_cents": 1000,
+                "counterparty": "日常商家",
+            },
+            {
+                "occurred_at": f"{now.isoformat()} 10:00:00",
+                "direction": "out",
+                "amount_cents": 60000,
+                "counterparty": "大额商家",
+            },
+            {
+                "occurred_at": f"{now.isoformat()} 11:00:00",
+                "direction": "neutral",
+                "amount_cents": 2000,
+                "counterparty": "转账对象",
+            },
+            {
+                "occurred_at": f"{now.isoformat()} 12:00:00",
+                "direction": "in",
+                "amount_cents": 5000,
+                "counterparty": "工资",
+            },
+        ]
+    )
+    body = dashboard(client)
+    assert [row["name"] for row in body["counterparties"]] == ["日常商家"]
+    assert [row["name"] for row in body["counterparties_income"]] == ["工资"]
+    # 大额和中性仍然在账本里，只是不进这个榜；合计那边另有一块交代它们。
+    assert body["stats"]["large_expense"] == 60000
+    assert body["stats"]["neutral_count"] == 1
+
+
+def test_the_counterparty_ranking_does_not_mix_currencies(client, book):
+    now = today()
+    book(
+        [
+            {
+                "occurred_at": f"{now.isoformat()} 09:00:00",
+                "direction": "out",
+                "amount_cents": 1000,
+                "currency": "CNY",
+                "counterparty": "人民币商家",
+            },
+            {
+                "occurred_at": f"{now.isoformat()} 10:00:00",
+                "direction": "out",
+                "amount_cents": 2000,
+                "currency": "GBP",
+                "counterparty": "英镑商家",
+            },
+        ]
+    )
+    body = dashboard(client)
+    assert [row["name"] for row in body["counterparties"]] == ["人民币商家"]
+    assert body["counterparty_counts"]["expense"] == 1
+
+
 def test_the_single_ranking_is_sorted_and_never_crosses_currencies(client, book):
     now = today()
     book(
