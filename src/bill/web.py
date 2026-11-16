@@ -145,6 +145,20 @@ def create_app() -> Flask:
         """构建出来的 JS / CSS。"""
         return send_from_directory(APP_BUILD_DIR / "assets", filename)
 
+    @app.get("/favicon.ico")
+    @app.get("/favicon.svg")
+    @app.get("/apple-touch-icon.png")
+    def site_icon():
+        """标签栏和收藏夹用的几个图标，Vite 从 ``frontend/public/`` 拷到产物根下。
+
+        得单独给路由：产物根目录没有通配映射，而落到下面那个 SPA 兜底上的话，
+        文件不在时会被换成 200 的 HTML——浏览器只会安静地不显示图标，什么都不报。
+        """
+        name = request.path.strip("/")
+        if not (APP_BUILD_DIR / name).is_file():
+            return "", 404
+        return send_from_directory(APP_BUILD_DIR, name)
+
     def render_shell():
         """外壳 HTML，顺手把风格与深浅填进 ``<html data-style data-mode>``。
 

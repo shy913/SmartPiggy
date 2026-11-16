@@ -10,6 +10,11 @@
          顶栏自己用 env(safe-area-inset-*) 补。 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>记账</title>
+    <!-- 三个地址都在 public/ 下，Vite 原样拷到产物根目录；服务端在 web.py 里
+         单独给它们开了路由。SVG 优先，ICO 留给还不认 SVG 图标的浏览器。 -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   </head>
   <body>
     <div id="root"></div>
