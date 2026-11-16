@@ -11,7 +11,12 @@ import {
   unhideTransaction,
   updateCounterpartyTransactions,
 } from "../api/client";
-import type { MemberRow, TransactionRow } from "../api/types";
+import type {
+  CategorySuggestion,
+  CategorySuggestions,
+  MemberRow,
+  TransactionRow,
+} from "../api/types";
 import { BackLink } from "../components/BackLink";
 import { CategoryMark } from "../components/CategoryMark";
 import { MemberAmount } from "../components/MemberAmount";
@@ -245,6 +250,8 @@ export function TransactionsPage() {
         }}
       />
 
+      <AutoCategorySuggestions data={data.category_suggestions} />
+
       {data.filters.counterparty && data.counterparty_scope?.total ? (
         <CounterpartyBatch
           // 换一个对方就重置表单：不能把上一个人的分类和备注带过来。
@@ -351,6 +358,116 @@ export function TransactionsPage() {
         />
       ) : null}
     </div>
+  );
+}
+
+/**
+ * 未分类交易按对方聚合出来的归类建议。
+ *
+ * 每一行都是「这个对方的全部未分类交易认出了同一个分类」，点一下就把**这个
+ * 对方的全部交易**（不限区间、不限账户，连隐藏的也算）改成那个分类。面板上
+ * 把总笔数和其中已分类的笔数写清楚：一次点击可能覆盖不只未分类的那几笔。
+ */
+function AutoCategorySuggestions({ data }: { data: CategorySuggestions }) {
+  const client = useQueryClient();
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  // 默认只露三组：这一块在交易表格上面，全摊开时手机上第一屏就只剩建议、
+  // 看不到账目了。想接着处理再展开。
+  const [showAll, setShowAll] = useState(false);
+  const visible = showAll ? data.suggestions : data.suggestions.slice(0, 3);
+
+  const apply = useMutation({
+    mutationFn: (item: CategorySuggestion) =>
+      updateCounterpartyTransactions(item.counterparty, { category: item.category }),
+    onSuccess: (body, item) => {
+      setMessage(
+        `已把与「${item.counterparty}」往来的 ${body.changed} 笔改成「${item.category}」。`,
+      );
+      setError("");
+      client.invalidateQueries({ queryKey: ["transactions"] });
+      client.invalidateQueries({ queryKey: ["summary"] });
+      client.invalidateQueries({ queryKey: ["dashboard"] });
+      client.invalidateQueries({ queryKey: ["groups"] });
+    },
+    onError: (failure) =>
+      setError(failure instanceof ApiError ? failure.message : "没改成。"),
+  });
+
+  if (!data.suggestions.length) return null;
+
+  return (
+    <section className="mt-3 rounded-lg border border-border bg-panel px-4 py-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h2 className="text-sm font-medium">自动识别</h2>
+        <span className="text-xs text-muted">
+          全部账本里还有 {data.total_uncategorized} 笔未分类，{data.suggestions.length} 组可归类
+        </span>
+      </div>
+      <ul className="m-0 mt-2 list-none divide-y divide-border">
+        {visible.map((item) => {
+          const extra = item.scope.total - item.count;
+          return (
+            <li
+              key={item.counterparty}
+              className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2 text-sm"
+            >
+              <span className="min-w-0 [overflow-wrap:anywhere]">
+                「{item.counterparty}」{item.count} 笔未分类 →{" "}
+                <span className="font-medium">{item.category}</span>
+                {extra > 0 ? (
+                  <span className="ml-1 text-xs text-muted">另有 {extra} 笔已分类</span>
+                ) : null}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="ml-auto"
+                disabled={apply.isPending}
+                onClick={() => {
+                  const hidden = item.scope.hidden
+                    ? `，其中 ${item.scope.hidden} 笔已隐藏`
+                    : "";
+                  const overwrite =
+                    extra > 0
+                      ? `其中 ${extra} 笔已经有分类，也会一并覆盖。`
+                      : "";
+                  if (
+                    confirm(
+                      `将把与「${item.counterparty}」往来的全部 ${item.scope.total} 笔交易${hidden}改成「${item.category}」。${overwrite}继续？`,
+                    )
+                  ) {
+                    apply.mutate(item);
+                  }
+                }}
+              >
+                全部 {item.scope.total} 笔归为「{item.category}」
+              </Button>
+            </li>
+          );
+        })}
+        {data.suggestions.length > 3 ? (
+          <li className="pt-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowAll((current) => !current)}
+            >
+              {showAll
+                ? "收起"
+                : `展开其余 ${data.suggestions.length - 3} 组`}
+            </Button>
+          </li>
+        ) : null}
+      </ul>
+      {message ? <p className="mt-2 text-xs text-muted">{message}</p> : null}
+      {error ? (
+        <p className="mt-2 text-xs text-out" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </section>
   );
 }
 
@@ -765,6 +882,9 @@ function Row({
           ) : (
             <CategoryMark category={row.effective_category} emoji={row.emoji} />
           )}
+          {!row.effective_category && row.suggested_category ? (
+            <Tag tone="accent">建议 {row.suggested_category}</Tag>
+          ) : null}
           {row.is_large ? <Tag>大额</Tag> : null}
           {hidden ? <Tag>已隐藏</Tag> : null}
         </div>

@@ -6,7 +6,15 @@
 
 from __future__ import annotations
 
-from bill.categories import CANONICAL, UNKNOWN, _ALIASES, canonical, emoji
+from bill.categories import (
+    CANONICAL,
+    UNKNOWN,
+    _ALIASES,
+    _AUTO_RULES,
+    canonical,
+    detect,
+    emoji,
+)
 
 
 def test_monzo_categories_collapse_into_the_chinese_taxonomy():
@@ -77,3 +85,60 @@ def test_a_category_matching_nothing_still_gets_a_mark():
     """
     assert emoji("量子纠缠") == UNKNOWN
     assert emoji("xyzzy") == UNKNOWN
+
+
+# --------------------------------------------------------------------------
+# 未分类的自动识别
+# --------------------------------------------------------------------------
+
+
+def test_english_merchant_names_are_detected():
+    """银行流水常常只有英文商家名，没有分类列。"""
+    assert detect("Tesco") == "日用百货"
+    assert detect("Sainsbury's Superstore") == "日用百货"
+    assert detect("Starbucks") == "餐饮美食"
+    assert detect("Uber") == "交通出行"
+
+
+def test_the_more_specific_rule_wins():
+    """顺序就是优先级：猜宽了会把外卖认成打车、把宠物医院认成看人。"""
+    assert detect("Uber Eats") == "餐饮美食"
+    assert detect("宠物医院") == "宠物"
+    assert detect("旅行社", "五一出行订金") == "酒店旅游"
+    assert detect("保险公司", "旅行保险") == "保险"
+    assert detect("修车铺", "自行车维修") == "生活服务"
+
+
+def test_short_english_keywords_do_not_match_inside_other_words():
+    """`bus` 不能命中 `business`，`rent` 不能命中 `parent`——这一层错得很安静。"""
+    assert detect("business account") == ""
+    assert detect("parent payment") == ""
+    assert detect("subway") == "", "地铁品牌不在词表里，不能因为含 bus 就被认成公交"
+
+
+def test_underscores_are_treated_as_spaces():
+    assert detect("uber_eats") == "餐饮美食"
+
+
+def test_chinese_and_english_are_matched_together():
+    """对方名是中文、说明里夹英文，或者反过来，都要认得出。"""
+    assert detect("楼下早餐店", "早餐") == "餐饮美食"
+    assert detect("某电商", "双十一 shopping") == "日用百货"
+
+
+def test_nothing_recognizable_returns_empty():
+    """认不出就是空串，不硬凑一个「其他」。"""
+    assert detect("老同学", "还代付款") == ""
+    assert detect("", "") == ""
+    assert detect(None) == ""
+
+
+def test_every_detection_target_is_a_canonical_category():
+    """建议里写错一个字，筛选下拉和汇总页就会多出一行，而且不报错。"""
+    assert {category for _, category in _AUTO_RULES} <= set(CANONICAL)
+
+
+def test_the_same_rule_is_not_listed_twice():
+    """重复条目本身不致命，但说明顺序被人手滑改过，值得当场拦下来。"""
+    keywords = [keyword for keyword, _ in _AUTO_RULES]
+    assert len(keywords) == len(set(keywords))

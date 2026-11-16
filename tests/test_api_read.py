@@ -670,6 +670,64 @@ def test_each_listed_row_carries_a_category_emoji(client, book):
     assert rows[200]["emoji"] == "", "没分类的不挂通用图标——每行顶同一个记号是白占地方"
 
 
+def test_uncategorized_rows_come_back_with_a_category_suggestion(client, book):
+    """未分类的行给一句建议；已分类的行不给，建议也不能把它们算进去。"""
+    book(
+        [
+            {"occurred_at": f"{today()} 12:00:00", "direction": "out", "amount_cents": 1200,
+             "counterparty": "Tesco", "description": "Supermarket"},
+            {"occurred_at": f"{today()} 12:00:00", "direction": "out", "amount_cents": 1300,
+             "counterparty": "Tesco", "description": "Tesco Express",
+             "source_category": "Groceries"},
+            {"occurred_at": f"{today()} 12:00:00", "direction": "out", "amount_cents": 3800,
+             "counterparty": "星巴克", "description": "拿铁"},
+            {"occurred_at": f"{today()} 12:00:00", "direction": "out", "amount_cents": 3000,
+             "counterparty": "老同学", "description": "代付聚餐"},
+            {"occurred_at": f"{today()} 12:00:00", "direction": "in", "amount_cents": 1500,
+             "counterparty": "老同学", "description": "还代付款"},
+        ]
+    )
+    body = txns(client, start="", end="")
+    rows = {(row["counterparty"], row["description"]): row for row in body["rows"]}
+    assert rows[("Tesco", "Supermarket")]["suggested_category"] == "日用百货"
+    assert rows[("Tesco", "Tesco Express")]["suggested_category"] == ""
+    assert rows[("星巴克", "拿铁")]["suggested_category"] == "餐饮美食"
+
+    suggestions = {
+        item["counterparty"]: item for item in body["category_suggestions"]["suggestions"]
+    }
+    assert body["category_suggestions"]["total_uncategorized"] == 4
+    assert set(suggestions) == {"Tesco", "星巴克"}
+    assert suggestions["Tesco"]["category"] == "日用百货"
+    assert suggestions["Tesco"]["count"] == 1
+    assert suggestions["Tesco"]["scope"] == {"total": 2, "hidden": 0}, (
+        "scope 要数上已经分类的那笔——按钮改的是这个对方的全部交易"
+    )
+    assert "老同学" not in suggestions, (
+        "同一个对方下有的认得出、有的认不出，就不出建议，免得一键把一半改错"
+    )
+    assert_no_floats(body, "transactions")
+
+
+def test_a_suggestion_scope_includes_hidden_rows(client, book):
+    book(
+        [
+            {"occurred_at": f"{today()} 12:00:00", "direction": "out", "amount_cents": 100,
+             "counterparty": "Costco", "description": "weekly shop", "hidden": True},
+            {"occurred_at": f"{today()} 12:00:00", "direction": "out", "amount_cents": 200,
+             "counterparty": "Costco", "description": "另一种购物"},
+            {"occurred_at": f"{today()} 12:00:00", "direction": "out", "amount_cents": 300,
+             "counterparty": "Costco", "description": "会员续费",
+             "source_category": "Groceries"},
+        ]
+    )
+    suggestion = txns(client, start="", end="")["category_suggestions"]["suggestions"][0]
+    assert suggestion["counterparty"] == "Costco"
+    assert suggestion["count"] == 2
+    assert suggestion["hidden"] == 1
+    assert suggestion["scope"] == {"total": 3, "hidden": 1}
+
+
 def test_each_ledger_row_also_carries_the_same_emoji(client, book):
     """汇总页的排行 / 大额跟交易列表用同一套分类图标，别各挂各的。"""
     book(

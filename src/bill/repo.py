@@ -56,6 +56,7 @@ __all__ = [
     "save_issues",
     "transaction_categories",
     "trend_series",
+    "uncategorized_suggestions",
     "transaction_currencies",
     "transactions_for_import",
     "update_counterparty_transactions",
@@ -1678,6 +1679,95 @@ def reclassify(
         [category, db.now(), *ids],
     )
     return cursor.rowcount
+
+
+def uncategorized_suggestions(
+    connection: sqlite3.Connection, *, limit: int = 12
+) -> dict:
+    """给「未分类」的交易按对方聚合出一批可一键采用的分类建议。
+
+    只算 ``category`` 和 ``source_category`` 都空的行；手改过或账单自带分类的
+    一律不碰。同一个对方下的**所有**未分类行必须认出同一个分类才给建议——
+    一键应用会把这个对方的全部交易都改成那一类，混着两种猜法时宁可不出建议。
+
+    ``count`` 是未分类笔数，``scope`` 是这个对方在全部时间里一共有多少笔
+    （含已分类、含隐藏）——界面确认框要如实说出会改到多少笔。
+    """
+    total_uncategorized = connection.execute(
+        """
+        SELECT COUNT(*) AS n FROM transactions
+        WHERE TRIM(category) = '' AND TRIM(source_category) = ''
+        """
+    ).fetchone()["n"]
+
+    grouped = connection.execute(
+        """
+        SELECT TRIM(counterparty) AS counterparty, description, memo,
+               COUNT(*) AS n, COALESCE(SUM(hidden), 0) AS hidden
+        FROM transactions
+        WHERE TRIM(category) = '' AND TRIM(source_category) = ''
+          AND TRIM(counterparty) <> ''
+        GROUP BY TRIM(counterparty), description, memo
+        """
+    ).fetchall()
+
+    buckets: dict[str, dict] = {}
+    for item in grouped:
+        name = item["counterparty"]
+        bucket = buckets.setdefault(
+            name, {"count": 0, "hidden": 0, "unmatched": 0, "categories": set()}
+        )
+        bucket["count"] += item["n"]
+        bucket["hidden"] += item["hidden"]
+        guess = categories.detect(name, item["description"], item["memo"])
+        if guess:
+            bucket["categories"].add(guess)
+        else:
+            bucket["unmatched"] += item["n"]
+
+    candidates: list[dict] = []
+    for name, bucket in buckets.items():
+        if bucket["unmatched"] or len(bucket["categories"]) != 1:
+            continue
+        candidates.append(
+            {
+                "counterparty": name,
+                "category": next(iter(bucket["categories"])),
+                "count": bucket["count"],
+                "hidden": bucket["hidden"],
+            }
+        )
+    candidates.sort(key=lambda item: (-item["count"], item["counterparty"]))
+
+    scopes: dict[str, dict[str, int]] = {}
+    names = [item["counterparty"] for item in candidates]
+    if names:
+        marks = ", ".join("?" * len(names))
+        for item in connection.execute(
+            f"""
+            SELECT TRIM(counterparty) AS counterparty, COUNT(*) AS total,
+                   COALESCE(SUM(hidden), 0) AS hidden
+            FROM transactions
+            WHERE TRIM(counterparty) IN ({marks})
+            GROUP BY TRIM(counterparty)
+            """,
+            names,
+        ):
+            scopes[item["counterparty"]] = {
+                "total": item["total"],
+                "hidden": item["hidden"],
+            }
+
+    for item in candidates:
+        item["scope"] = scopes.get(
+            item["counterparty"],
+            {"total": item["count"], "hidden": item["hidden"]},
+        )
+
+    return {
+        "total_uncategorized": total_uncategorized,
+        "suggestions": candidates[:limit],
+    }
 
 
 def update_counterparty_transactions(

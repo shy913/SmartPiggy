@@ -200,6 +200,15 @@ def _listed(item, fields, *, null_group_id: bool = False) -> dict:
     # 单独占一列会让别的列跟着挤。映射表（含关键词兜底）在 `categories.py`，
     # 在这儿算好发出去——搬到前端就等于把那张表再抄一份。
     row["emoji"] = categories.emoji(row.get("effective_category"))
+    # 未分类的一行顺手给一个建议。它只用来在行上提示，点面板里的按钮才会
+    # 真正落库；已分类的行永远是空串，不会又冒出一个「建议」。
+    row["suggested_category"] = (
+        ""
+        if row.get("effective_category")
+        else categories.detect(
+            row.get("counterparty"), row.get("description"), row.get("memo")
+        )
+    )
     return row
 
 
@@ -496,6 +505,9 @@ def transaction_list():
         display_currency=conf.display_currency,
         # 没有对方筛选时是 null。有的话是 {total, hidden}，含隐藏记录。
         counterparty_scope=scope,
+        # 未分类交易的归类建议。跟当前筛选无关——这一批是「全部账本里还有
+        # 哪些能认」；点一下改的是那个对方的全部交易。
+        category_suggestions=repo.uncategorized_suggestions(connection),
     )
 
 

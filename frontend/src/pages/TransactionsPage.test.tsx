@@ -36,6 +36,7 @@ function listBody(overrides: Partial<TransactionList> = {}): TransactionList {
     group_count: 0,
     display_currency: "CNY",
     counterparty_scope: null,
+    category_suggestions: { total_uncategorized: 0, suggestions: [] },
     ...overrides,
   };
 }
@@ -253,6 +254,86 @@ describe("交易记录页", () => {
 
     const batch = (await screen.findByText(/批量编辑/)).closest("form")!;
     expect(within(batch).getByRole("button", { name: "应用到全部 3 笔" })).toBeDisabled();
+  });
+
+  it("未分类的对方给出建议，点一下就把这个对方的全部交易归好", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    draw(
+      listBody({
+        category_suggestions: {
+          total_uncategorized: 12,
+          suggestions: [
+            {
+              counterparty: "Tesco",
+              category: "日用百货",
+              count: 12,
+              hidden: 0,
+              scope: { total: 14, hidden: 1 },
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(await screen.findByText("自动识别")).toBeInTheDocument();
+    expect(screen.getByText(/Tesco/)).toBeInTheDocument();
+    expect(screen.getByText(/另有 2 笔已分类/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "全部 14 笔归为「日用百货」" }));
+
+    await waitFor(() => {
+      const sent = requests.filter((item) => item.url.includes("/by-counterparty")).at(-1);
+      expect(sent).toBeTruthy();
+      expect(sent!.init?.method).toBe("PATCH");
+      expect(JSON.parse(String(sent!.init?.body))).toEqual({
+        counterparty: "Tesco",
+        category: "日用百货",
+      });
+    });
+  });
+
+  it("建议很多时先露三组，其余可以展开", async () => {
+    const user = userEvent.setup();
+    draw(
+      listBody({
+        category_suggestions: {
+          total_uncategorized: 4,
+          suggestions: ["商家A", "商家B", "商家C", "商家D"].map((counterparty) => ({
+            counterparty,
+            category: "日用百货",
+            count: 1,
+            hidden: 0,
+            scope: { total: 1, hidden: 0 },
+          })),
+        },
+      }),
+    );
+
+    await waitFor(() => expect(screen.getByText("自动识别")).toBeInTheDocument());
+    expect(screen.getByText(/商家C/)).toBeInTheDocument();
+    expect(screen.queryByText(/商家D/)).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "展开其余 1 组" }));
+    expect(screen.getByText(/商家D/)).toBeInTheDocument();
+  });
+
+  it("未分类的行上也会标一句建议，但不会替它落库", async () => {
+    draw(
+      listBody({
+        total: 1,
+        rows: [
+          row({
+            counterparty: "Tesco",
+            effective_category: "",
+            emoji: "",
+            suggested_category: "日用百货",
+          }),
+        ],
+      }),
+    );
+    await waitFor(() => expect(screen.getByText("建议 日用百货")).toBeInTheDocument());
+    expect(requests.filter((item) => item.init?.method === "PATCH")).toHaveLength(0);
   });
 
   it("隐藏默认不露脸；想看它们得自己选「连隐藏一起」", async () => {
