@@ -1682,7 +1682,7 @@ def reclassify(
 
 
 def uncategorized_suggestions(
-    connection: sqlite3.Connection, *, limit: int = 12
+    connection: sqlite3.Connection, *, limit: int = 50
 ) -> dict:
     """给「未分类」的交易按对方聚合出一批可一键采用的分类建议。
 
