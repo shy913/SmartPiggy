@@ -21,6 +21,7 @@ function settingsBody(overrides: Partial<SettingsPayload> = {}): SettingsPayload
       ],
       large_out: "500",
       large_in: "2000",
+      large_window: "90",
       merge_enabled: true,
       merge_balanced: true,
       merge_window_hours: "12",

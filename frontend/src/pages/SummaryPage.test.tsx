@@ -149,6 +149,17 @@ function dashboardBody(overrides: Partial<Dashboard> = {}): Dashboard {
       to: "2026-09",
       total: 14000,
     },
+    large: {
+      window_days: 90,
+      days: 90,
+      start: "2026-07-21",
+      end: "2026-10-18",
+      expense: 120000,
+      income: 0,
+      count: 2,
+      expense_monthly: 41333,
+      income_monthly: 0,
+    },
     trend: {
       bucket: "day",
       points: [
@@ -199,7 +210,11 @@ function calledUrls(): string[] {
   );
 }
 
-beforeEach(() => vi.unstubAllGlobals());
+beforeEach(() => {
+  vi.unstubAllGlobals();
+  // 「大额」开关记在 localStorage，上一个用例关掉不能影响下一个。
+  localStorage.clear();
+});
 afterEach(() => vi.unstubAllGlobals());
 
 describe("汇总页", () => {
@@ -213,6 +228,44 @@ describe("汇总页", () => {
     expect(screen.getByText("花费排行")).toBeInTheDocument();
     expect(screen.getByText("柱状")).toBeInTheDocument();
     expect(screen.getByText("折线")).toBeInTheDocument();
+  });
+
+  it("预测与平均里单列大额，并可用开关隐藏且记住选择", async () => {
+    const user = userEvent.setup();
+    draw(summaryBody());
+    await waitFor(() => expect(screen.getByText("大额月均")).toBeInTheDocument());
+    expect(screen.getByText("最近 90 天 · 2 笔")).toBeInTheDocument();
+    expect(screen.getByText("413.33")).toBeInTheDocument();
+    expect(screen.getByText("最近 90 天合计 1,200.00")).toBeInTheDocument();
+
+    const toggle = screen.getByRole("switch", { name: "显示大额" });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(screen.queryByText("大额月均")).toBeNull();
+    expect(localStorage.getItem("bill.summary.showLarge")).toBe("0");
+  });
+
+  it("最近窗口里没有大额时不摆空块", async () => {
+    draw(
+      summaryBody(),
+      dashboardBody({
+        large: {
+          window_days: 90,
+          days: 90,
+          start: "2026-07-21",
+          end: "2026-10-18",
+          expense: 0,
+          income: 0,
+          count: 0,
+          expense_monthly: 0,
+          income_monthly: 0,
+        },
+      }),
+    );
+    await waitFor(() => expect(screen.getByText("预计本月支出")).toBeInTheDocument());
+    expect(screen.queryByRole("switch", { name: "显示大额" })).toBeNull();
+    expect(screen.queryByText("大额月均")).toBeNull();
   });
 
   it("支出和收入两格整块可点，落到同一段区间的筛选结果", async () => {

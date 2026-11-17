@@ -566,13 +566,79 @@ function ExclusionHints({ data, back }: { data: Dashboard; back: string }) {
   );
 }
 
+/** 预测与平均卡里「大额」那一块的开关记在本地：它是显示偏好，不是统计口径。 */
+const LARGE_SWITCH_KEY = "bill.summary.showLarge";
+
+function readSwitch(key: string, fallback: boolean): boolean {
+  try {
+    const value = globalThis.localStorage?.getItem(key);
+    return value ? value === "1" : fallback;
+  } catch {
+    return fallback; // 隐私模式或禁用了存储时，读不到就按默认显示。
+  }
+}
+
+function useStoredSwitch(
+  key: string,
+  fallback: boolean,
+): [boolean, (next: boolean) => void] {
+  const [on, setOn] = useState(() => readSwitch(key, fallback));
+  const set = (next: boolean) => {
+    setOn(next);
+    try {
+      globalThis.localStorage?.setItem(key, next ? "1" : "0");
+    } catch {
+      // 存不下也不影响这一次的显示，刷新后回到默认而已。
+    }
+  };
+  return [on, set];
+}
+
+/**
+ * 预测与平均。上面几格都剔除了大额，所以下面单独给大额一块：回答「大额最近
+ * 大概一个月是多少」，跟「日常水平」并排看才知道合起来花了多少。
+ *
+ * 滚动窗口的折算在服务端做（整数分交付）；这里只管显示和开关。
+ */
 function Forecast({ data }: { data: Dashboard }) {
   const averages = data.averages;
+  const large = data.large;
+  const [showLarge, setShowLarge] = useStoredSwitch(LARGE_SWITCH_KEY, true);
+  const hasLarge = large.count > 0;
+
   return (
     <Card>
-      <div className="flex items-baseline justify-between">
+      <div className="flex items-baseline justify-between gap-2">
         <h2 className="text-base font-semibold">预测与平均</h2>
-        <span className="text-xs text-muted">{data.currency}</span>
+        <div className="flex items-center gap-3">
+          {hasLarge ? (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={showLarge}
+              aria-label="显示大额"
+              className="flex items-center gap-1.5 text-xs text-muted transition-colors hover:text-text"
+              onClick={() => setShowLarge(!showLarge)}
+            >
+              <span
+                aria-hidden
+                className={cn(
+                  "relative inline-block h-4 w-7 rounded-full transition-colors",
+                  showLarge ? "bg-accent" : "border border-border bg-panel-hover",
+                )}
+              >
+                <span
+                  className={cn(
+                    "absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full transition-all",
+                    showLarge ? "left-3.5 bg-on-accent" : "left-0.5 bg-muted",
+                  )}
+                />
+              </span>
+              大额
+            </button>
+          ) : null}
+          <span className="text-xs text-muted">{data.currency}</span>
+        </div>
       </div>
       <div className="mt-3 grid gap-4 sm:grid-cols-2">
         {/* 两个预测都是拿「今天所在的月 / 年」外推的。翻到已经过完的区间时，
@@ -597,6 +663,36 @@ function Forecast({ data }: { data: Dashboard }) {
             <div className="text-xs text-muted">年均支出</div>
             <div className="tabular text-lg font-semibold">{formatAmount(averages.yearly)}</div>
             <div className="text-xs text-muted">按近 {averages.months} 个月折算</div>
+          </div>
+        </div>
+      ) : null}
+      {hasLarge && showLarge ? (
+        <div className="mt-4 border-t border-border pt-3">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-xs text-muted">大额月均</span>
+            <span className="text-xs text-muted">
+              最近 {large.days} 天 · {large.count} 笔
+            </span>
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-3">
+            <div>
+              <div className="text-xs text-muted">大额支出</div>
+              <div className="tabular text-lg font-semibold text-out">
+                {formatAmount(large.expense_monthly)}
+              </div>
+              <div className="text-xs text-muted">
+                最近 {large.days} 天合计 {formatAmount(large.expense)}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-muted">大额收入</div>
+              <div className="tabular text-lg font-semibold text-in">
+                {formatAmount(large.income_monthly)}
+              </div>
+              <div className="text-xs text-muted">
+                最近 {large.days} 天合计 {formatAmount(large.income)}
+              </div>
+            </div>
           </div>
         </div>
       ) : null}

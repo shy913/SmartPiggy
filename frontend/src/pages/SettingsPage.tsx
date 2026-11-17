@@ -378,7 +378,7 @@ export function SettingsPage() {
         </Group>
 
         <Group title="大额" hint="统计口径">
-          <div className="grid max-w-lg gap-4 sm:grid-cols-2">
+          <div className="grid max-w-lg gap-4 sm:grid-cols-3">
             <Field label="单笔支出 ≥ 多少算大额">
               <Input
                 className="w-32"
@@ -391,6 +391,13 @@ export function SettingsPage() {
                 className="w-32"
                 value={current.large_in}
                 onChange={(event) => set({ large_in: event.target.value })}
+              />
+            </Field>
+            <Field label="大额月均按最近多少天折算">
+              <Input
+                className="w-32"
+                value={current.large_window}
+                onChange={(event) => set({ large_window: event.target.value })}
               />
             </Field>
           </div>

@@ -58,6 +58,9 @@ _MISSING = object()
 # 注意它跟着 display 走：display 改成 CNY 之后，同样的数就变成 ¥500 / ¥2,000。
 DEFAULT_LARGE_OUT = 500
 DEFAULT_LARGE_IN = 2000
+# 首页「大额月均」按最近多少天的滚动窗口折算。一个季度左右：够等到一两笔
+# 大额，又不至于把半年前那一笔一直摊到今天。窗口比账本还长时取账本天数。
+DEFAULT_LARGE_WINDOW = 90
 # 多久没导入账单就在首页提醒。0 = 不提醒（但账户区仍显示上次导入时间）。
 DEFAULT_STALE_DAYS = 30
 
@@ -90,6 +93,8 @@ class Settings:
     # 没配汇率的币种比不了（见 repo._comparable）。
     large_out_cents: int = DEFAULT_LARGE_OUT * 100
     large_in_cents: int = DEFAULT_LARGE_IN * 100
+    # 「大额月均」的滚动窗口（天）。只影响首页那块折算，不改判定本身。
+    large_window_days: int = DEFAULT_LARGE_WINDOW
     # 导入后自动检测并合并 AA。
     merge_enabled: bool = True
     # 顺带把「收支平衡」的两笔（一笔支出 + 之后一笔等额收入）也合上，净额是 0。
@@ -200,6 +205,17 @@ def load() -> Settings:
         large = parsed.get("large") or {}
         large_out = _threshold(large.get("out", DEFAULT_LARGE_OUT), "out")
         large_in = _threshold(large.get("in", DEFAULT_LARGE_IN), "in")
+        try:
+            large_window = int(large.get("window_days", DEFAULT_LARGE_WINDOW))
+        except (TypeError, ValueError):
+            raise BillError(
+                "large 的 window_days 得是个整数天数，"
+                f"现在是 {large.get('window_days')!r}。"
+            ) from None
+        if large_window < 1:
+            raise BillError(
+                f"large 的 window_days 至少是 1 天，现在是 {large_window}。"
+            )
 
         merge = parsed.get("merge", {})
         window = float(merge.get("window_hours", DEFAULT_WINDOW_HOURS))
@@ -250,6 +266,7 @@ def load() -> Settings:
             timezone=timezone,
             large_out_cents=large_out,
             large_in_cents=large_in,
+            large_window_days=large_window,
             merge_enabled=bool(merge.get("enabled", True)),
             merge_balanced=bool(merge.get("balanced", True)),
             merge_window_hours=window,
@@ -291,6 +308,7 @@ def as_form(conf: Settings) -> dict[str, Any]:
         "rates": rates,
         "large_out": _major(conf.large_out_cents),
         "large_in": _major(conf.large_in_cents),
+        "large_window": str(conf.large_window_days),
         "merge_enabled": conf.merge_enabled,
         "merge_balanced": conf.merge_balanced,
         "merge_window_hours": f"{conf.merge_window_hours:g}",
@@ -364,6 +382,7 @@ def read_form(data) -> tuple[Settings | None, dict[str, Any], list[str]]:
 
     large_out = _form_threshold(values["large_out"], "支出", errors)
     large_in = _form_threshold(values["large_in"], "收入", errors)
+    large_window = _form_window(values.get("large_window"), errors)
 
     enabled = bool(data.get("merge_enabled"))
     balanced_merge = bool(data.get("merge_balanced"))
@@ -424,6 +443,7 @@ def read_form(data) -> tuple[Settings | None, dict[str, Any], list[str]]:
             timezone=timezone,
             large_out_cents=large_out,
             large_in_cents=large_in,
+            large_window_days=large_window,
             merge_enabled=enabled,
             merge_balanced=balanced_merge,
             merge_window_hours=window,
@@ -456,6 +476,7 @@ def _echo(data) -> dict[str, Any]:
         "rates": rows,
         "large_out": (data.get("large_out") or "").strip(),
         "large_in": (data.get("large_in") or "").strip(),
+        "large_window": (data.get("large_window") or "").strip(),
         "merge_enabled": bool(data.get("merge_enabled")),
         "merge_balanced": bool(data.get("merge_balanced")),
         "merge_window_hours": (data.get("merge_window_hours") or "").strip(),
@@ -487,6 +508,19 @@ def _form_threshold(text: str, label: str, errors: list[str]) -> int:
     except BillError as error:
         errors.append(str(error))
         return 0
+
+
+def _form_window(text: str | None, errors: list[str]) -> int:
+    """表单里的滚动窗口。空 = 用默认值，不是「关掉」（跟 stale_days 一个规矩）。"""
+    try:
+        days = int((text or "").strip() or DEFAULT_LARGE_WINDOW)
+    except ValueError:
+        errors.append("大额滚动窗口得是个正整数天数，比如 90。")
+        return DEFAULT_LARGE_WINDOW
+    if days < 1:
+        errors.append("大额滚动窗口至少是 1 天。")
+        return DEFAULT_LARGE_WINDOW
+    return days
 
 
 # --------------------------------------------------------------------------
@@ -521,6 +555,8 @@ rates = {rates}
 # 单位是上面那个 display 币种的**主单位**；0 表示这一侧不启用。
 out = {large_out}
 in = {large_in}
+# 首页「大额月均」按最近多少天的滚动平均折算。
+window_days = {large_window}
 
 [merge]
 # 合并：一笔支出加上之后跟着来的收款，合并成一行按净额算。
@@ -560,6 +596,7 @@ def render_toml(conf: Settings) -> str:
         rates=f"{{ {rates} }}" if rates else "{}",
         large_out=_major(conf.large_out_cents),
         large_in=_major(conf.large_in_cents),
+        large_window=conf.large_window_days,
         merge_enabled="true" if conf.merge_enabled else "false",
         merge_balanced="true" if conf.merge_balanced else "false",
         merge_window=f"{conf.merge_window_hours:g}",

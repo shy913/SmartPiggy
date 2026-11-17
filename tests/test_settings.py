@@ -27,6 +27,7 @@ def form(**overrides) -> dict:
         "rates": [{"code": "CNY", "rate": "8.9"}],
         "large_out": "500",
         "large_in": "2000",
+        "large_window": "90",
         "merge_enabled": True,
         "merge_balanced": True,
         "merge_window_hours": "12",
@@ -289,6 +290,21 @@ def test_a_negative_stale_days_is_rejected_with_a_readable_message(client):
     assert "不小于 0" in response.get_json()["errors"][0]
 
 
+def test_the_large_rolling_window_round_trips_through_the_file(client, isolated_data_dir):
+    """大额月均的滚动窗口跟阈值住在同一段里，模板漏掉它就会被静默改回默认。"""
+    assert save(client, large_window="60").status_code == 200
+    written = (isolated_data_dir / "settings.toml").read_text(encoding="utf-8")
+    assert "[large]" in written
+    assert "window_days = 60" in written
+    assert settings.load().large_window_days == 60
+
+
+def test_the_large_rolling_window_falls_back_to_the_default(client):
+    """老配置里没有这一项时用默认值，不是当成 0 天。"""
+    assert save(client, large_window="").status_code == 200
+    assert settings.load().large_window_days == settings.DEFAULT_LARGE_WINDOW
+
+
 def test_the_original_file_is_kept_as_a_backup_once(client, isolated_data_dir):
     original = (isolated_data_dir / "settings.toml").read_text(encoding="utf-8")
 
@@ -327,6 +343,8 @@ def test_a_save_writes_exactly_what_the_form_said(client, isolated_data_dir):
         ({"rates": [{"code": "CNY", "rate": "八点九"}]}, "不是个数字"),
         ({"rates": [{"code": "人民币", "rate": "8.9"}]}, "不像个币种"),
         ({"large_out": "负五"}, "阈值"),
+        ({"large_window": "0"}, "窗口"),
+        ({"large_window": "九十"}, "窗口"),
         ({"merge_window_hours": "0"}, "窗口"),
         ({"merge_tolerance": "-1"}, "容差"),
     ],

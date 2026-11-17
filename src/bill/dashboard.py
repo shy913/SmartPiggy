@@ -201,6 +201,44 @@ def _averages(connection, code: str, today: date, cover) -> dict | None:
     }
 
 
+def _large_summary(connection, conf, code: str, today: date, first_day: date | None) -> dict:
+    """最近 N 天的大额收支，以及按同一个节奏折算出来的一整月。
+
+    大额已被剔出所有合计，这里回答的是另一个问题：「最近这一段，大额大概
+    一个月花掉多少」。窗口按账本第一天截短——账本只有 40 天时拿 90 天去除，
+    会把折算压到一半不到，而屏幕上仍是一个像模像样的数。
+
+    只取显示币种：跟别处一样，绝不跨币种相加。大额判定本身已经在 SQL 里做完。
+    """
+    configured = conf.large_window_days
+    window_start = today - timedelta(days=configured - 1)
+    if first_day is not None and first_day > window_start:
+        window_start = min(first_day, today)
+    days = max((today - window_start).days + 1, 1)
+    totals = _total_of(
+        repo.overall_totals(
+            connection,
+            start=window_start.isoformat(),
+            end=today.isoformat(),
+        ),
+        code,
+    )
+    # 折到「当前这个月」的实际天数：回答的是「照最近这个节奏，一个月大概
+    # 多少」，而不是强行摊成整齐的 30 天。
+    month_days = calendar.monthrange(today.year, today.month)[1]
+    return {
+        "window_days": configured,
+        "days": days,
+        "start": window_start.isoformat(),
+        "end": today.isoformat(),
+        "expense": totals["large_expense"],
+        "income": totals["large_income"],
+        "count": totals["large_count"],
+        "expense_monthly": _round_divide(totals["large_expense"] * month_days, days),
+        "income_monthly": _round_divide(totals["large_income"] * month_days, days),
+    }
+
+
 def _trend(connection, code: str, mode: str, start: date, end: date, today: date) -> dict:
     """区间内的支出趋势。当前还没过完的区间只画到**今天**。
 
@@ -431,6 +469,7 @@ def build(connection, conf, source) -> dict:
         ),
         "forecast": _forecast(forecast_input, today),
         "averages": _averages(connection, code, today, cover),
+        "large": _large_summary(connection, conf, code, today, first_day),
         "trend": _trend(connection, code, mode, trend_start, trend_end, today),
         "categories": ranked_categories,
         "singles": ranked,

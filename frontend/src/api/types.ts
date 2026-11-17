@@ -178,6 +178,19 @@ export type Dashboard = {
     to: string;
     total: number;
   } | null;
+  /** 最近 `window_days` 天的大额收支，及按同一节奏折算的整月。 */
+  large: {
+    /** 设置里的滚动窗口；`days` 是账本实际覆盖的天数（窗口更长时被截短）。 */
+    window_days: number;
+    days: number;
+    start: string;
+    end: string;
+    expense: number;
+    income: number;
+    count: number;
+    expense_monthly: number;
+    income_monthly: number;
+  };
   trend: {
     bucket: "day" | "month";
     points: TrendPoint[];
@@ -557,6 +570,7 @@ export type SettingsValues = {
   }[];
   large_out: string;
   large_in: string;
+  large_window: string;
   merge_enabled: boolean;
   merge_balanced: boolean;
   merge_window_hours: string;

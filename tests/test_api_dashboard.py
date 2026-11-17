@@ -241,6 +241,86 @@ def test_a_large_expense_stays_out_of_the_dashboard(client, book, tmp_path):
     assert [row["display_cents"] for row in body["singles"]] == [1000]
 
 
+def test_large_spending_gets_its_own_rolling_summary(client, book, tmp_path):
+    """大额不进合计，但首页单独给一块「最近 N 天折算成一个月」。
+
+    折算是整数算术：日均 × 当前月天数，服务端给的最小单位，前端不再乘除。
+    """
+    (tmp_path / "settings.toml").write_text(
+        'timezone = "Asia/Shanghai"\n\n[currency]\ndisplay = "CNY"\nrates = {}\n'
+        "\n[large]\nout = 500\nin = 3000\nwindow_days = 90\n",
+        encoding="utf-8",
+    )
+    now = today()
+    book(
+        [
+            {
+                "occurred_at": f"{now.isoformat()} 09:00:00",
+                "direction": "out",
+                "amount_cents": 60000,
+            },
+            {
+                "occurred_at": f"{now.isoformat()} 10:00:00",
+                "direction": "in",
+                "amount_cents": 300000,
+            },
+            {
+                # 窗口外的那一笔不该被摊进「最近 90 天」。
+                "occurred_at": f"{(now - timedelta(days=120)).isoformat()} 12:00:00",
+                "direction": "out",
+                "amount_cents": 90000,
+            },
+        ]
+    )
+    large = dashboard(client)["large"]
+    month_days = calendar.monthrange(now.year, now.month)[1]
+    assert large["window_days"] == 90
+    assert large["days"] == 90, "账本比窗口长，窗口就是整 90 天"
+    assert large["start"] == (now - timedelta(days=89)).isoformat()
+    assert large["end"] == now.isoformat()
+    assert large["expense"] == 60000
+    assert large["income"] == 300000
+    assert large["count"] == 2
+    assert large["expense_monthly"] == (60000 * month_days + 45) // 90
+    assert large["income_monthly"] == (300000 * month_days + 45) // 90
+    # 合计口径没被这块影响：大额还是不进日常支出与收入。
+    stats = dashboard(client)["stats"]
+    assert stats["expense"] == 0
+    assert stats["income"] == 0
+    assert stats["large_expense"] == 60000
+    assert stats["large_income"] == 300000
+
+
+def test_the_large_window_is_clipped_to_the_ledger(client, book, tmp_path):
+    """账本只有几天时按实际天数折算，别拿空窗口把月均压下去。"""
+    (tmp_path / "settings.toml").write_text(
+        'timezone = "Asia/Shanghai"\n\n[currency]\ndisplay = "CNY"\nrates = {}\n'
+        "\n[large]\nout = 500\nin = 0\nwindow_days = 90\n",
+        encoding="utf-8",
+    )
+    now = today()
+    book(
+        [
+            {
+                "occurred_at": f"{(now - timedelta(days=9)).isoformat()} 09:00:00",
+                "direction": "out",
+                "amount_cents": 1000,
+            },
+            {
+                "occurred_at": f"{now.isoformat()} 09:00:00",
+                "direction": "out",
+                "amount_cents": 60000,
+            },
+        ]
+    )
+    large = dashboard(client)["large"]
+    month_days = calendar.monthrange(now.year, now.month)[1]
+    assert large["window_days"] == 90
+    assert large["days"] == 10
+    assert large["expense"] == 60000
+    assert large["expense_monthly"] == (60000 * month_days + 5) // 10
+
+
 def test_the_dashboard_never_mixes_currencies(client, book, tmp_path):
     (tmp_path / "settings.toml").write_text(
         'timezone = "Asia/Shanghai"\n\n[currency]\ndisplay = "CNY"\nrates = {}\n'
