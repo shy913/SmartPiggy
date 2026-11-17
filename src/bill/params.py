@@ -183,6 +183,7 @@ def active_filter_labels(
     category="",
     counterparty="",
     hidden="",
+    condition="",
 ) -> list[str]:
     """当前生效的筛选条件，写成几个短标签。
 
@@ -218,6 +219,10 @@ def active_filter_labels(
         labels.append(word)
     if search:
         labels.append(f"搜「{search}」")
+    if condition:
+        # 条件可以写得很长；标签是一行摘要，太长就把后面截掉。
+        shown = condition if len(condition) <= 40 else condition[:39] + "…"
+        labels.append(f"条件「{shown}」")
     return labels
 
 
@@ -245,8 +250,14 @@ def list_query(source) -> dict:
         "start": clean_date(source.get("start")),
         "end": clean_date(source.get("end")),
     }
+    # 「SQL 条件」只收 WHERE 那一截。界面把 `SELECT * FROM transactions` 做成
+    # 固定前缀，用户可能照着写成 `WHERE …`，也有些人只写条件本身——两种都收。
+    condition = (source.get("where") or "").strip()
+    if condition[:5].lower() == "where":
+        condition = condition[5:].strip()
     return {
         **bounds,
+        "condition": condition,
         "direction": (source.get("direction") or "").strip(),
         "account_id": as_int(source.get("account") or ""),
         "search": (source.get("q") or "").strip(),

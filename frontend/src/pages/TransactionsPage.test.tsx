@@ -20,6 +20,7 @@ function listBody(overrides: Partial<TransactionList> = {}): TransactionList {
     offset: 0,
     remaining: 0,
     backwards: false,
+    condition_error: null,
     active_filters: [],
     filters: {
       start: "2026-10-01",
@@ -30,6 +31,7 @@ function listBody(overrides: Partial<TransactionList> = {}): TransactionList {
       category: "",
       counterparty: "",
       hidden: "0",
+      where: "",
     },
     accounts: [{ id: 1, name: "支付宝" }],
     categories: [],
@@ -179,6 +181,38 @@ describe("交易记录页", () => {
     expect(calls[calls.length - 1]).toContain(
       "category=%E9%A4%90%E9%A5%AE%E7%BE%8E%E9%A3%9F",
     );
+  });
+
+  it("SQL 条件只提交 WHERE 那一截，固定前缀不可改", async () => {
+    const user = userEvent.setup();
+    draw(listBody());
+
+    await waitFor(() => expect(screen.getByText("共 0 条。")).toBeInTheDocument());
+    await user.click(screen.getByText("筛选"));
+    expect(screen.getByText("SELECT * FROM transactions")).toBeInTheDocument();
+
+    await user.type(
+      screen.getByLabelText("SQL 条件"),
+      "WHERE amount_cents > 10000",
+    );
+    await user.click(screen.getByRole("button", { name: "查看" }));
+
+    await waitFor(() => expect(calls.length).toBeGreaterThan(1));
+    const url = new URL(calls[calls.length - 1], "http://x");
+    expect(url.searchParams.get("where")).toBe("WHERE amount_cents > 10000");
+  });
+
+  it("条件写坏了：原因挂在列表上方，页面其余部分照常显示", async () => {
+    draw(
+      listBody({
+        condition_error: "条件没跑通：no such column: nope",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText(/条件没跑通：no such column: nope/)).toBeInTheDocument(),
+    );
+    expect(screen.getByText("共 0 条。")).toBeInTheDocument();
   });
 
   it("对方筛选从首页带进来，原样留在筛选栏并继续生效", async () => {

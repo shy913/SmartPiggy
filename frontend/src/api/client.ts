@@ -18,7 +18,6 @@ import type {
   Meta,
   Preview,
   ProfilesPayload,
-  QueryResult,
   SessionState,
   SettingsPayload,
   Summary,
@@ -327,10 +326,3 @@ export const saveTheme = (style: string, mode: string) =>
   });
 
 export const getProfiles = () => request<ProfilesPayload>("/api/profiles");
-
-// --------------------------------------------------------------------------
-// 只读查询
-// --------------------------------------------------------------------------
-
-export const runQuery = (sql: string) =>
-  request<QueryResult>("/api/query", json({ sql }));

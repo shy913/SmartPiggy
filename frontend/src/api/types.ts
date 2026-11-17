@@ -304,6 +304,8 @@ export type ListFilters = {
   /** 精确匹配的对方名，从首页「对方汇总」点进来时带上。 */
   counterparty: string;
   hidden: string;
+  /** 用户自己写的 WHERE 条件（已经去掉开头的 WHERE）。 */
+  where: string;
 };
 
 /** 建议里展开看到的某一笔。金额仍是原币最小单位。 */
@@ -353,6 +355,8 @@ export type TransactionList = {
   remaining: number;
   /** 起止日期填反了。要说出来，不能长得像「这个月真没记账」。 */
   backwards: boolean;
+  /** 自定义条件没跑通时的原因；列表其余部分照常返回。 */
+  condition_error: string | null;
   active_filters: string[];
   filters: ListFilters;
   accounts: Account[];
@@ -585,16 +589,4 @@ export type ProfilesPayload = {
   staged: { token: string; filename: string } | null;
   user_dir: string;
   builtin_dir: string;
-};
-
-// --------------------------------------------------------------------------
-// 只读查询
-// --------------------------------------------------------------------------
-
-export type QueryResult = {
-  columns: string[];
-  /** 单元格原样取值：整数、字符串、NULL，REAL 以字符串发。 */
-  rows: (string | number | null)[][];
-  truncated: boolean;
-  elapsed_ms: number;
 };

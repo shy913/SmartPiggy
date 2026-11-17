@@ -245,6 +245,12 @@ export function TransactionsPage() {
         }}
       />
 
+      {data.condition_error ? (
+        <div className="mt-3">
+          <ErrorText>{data.condition_error}</ErrorText>
+        </div>
+      ) : null}
+
       {data.filters.counterparty && data.counterparty_scope?.total ? (
         <CounterpartyBatch
           // 换一个对方就重置表单：不能把上一个人的分类和备注带过来。
@@ -500,6 +506,7 @@ function FilterBar({
     category: string;
     counterparty: string;
     hidden: string;
+    where: string;
   };
   accounts: { id: number; name: string }[];
   categories: string[];
@@ -515,6 +522,7 @@ function FilterBar({
     category: filters.category,
     counterparty: filters.counterparty,
     hidden: filters.hidden,
+    where: filters.where,
   });
 
   return (
@@ -632,6 +640,21 @@ function FilterBar({
             ))}
           </datalist>
         </Field>
+        <Field label="SQL 条件" className="basis-full">
+          <div className="flex flex-wrap items-center gap-2 font-mono text-sm">
+            <span className="whitespace-nowrap text-muted">
+              SELECT * FROM transactions
+            </span>
+            <Input
+              type="text"
+              aria-label="SQL 条件"
+              placeholder="WHERE ..."
+              value={draft.where}
+              onChange={(event) => setDraft({ ...draft, where: event.target.value })}
+              className="min-w-48 flex-1 font-mono"
+            />
+          </div>
+        </Field>
         <Button type="submit" variant="outline">
           查看
         </Button>
@@ -648,6 +671,7 @@ function FilterBar({
               category: "",
               counterparty: "",
               hidden: "0",
+              where: "",
             });
             const next = new URLSearchParams();
             next.set("start", "");

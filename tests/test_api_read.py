@@ -390,6 +390,91 @@ def test_clearing_both_dates_lands_on_the_same_view(client, book):
     assert txns(client)["total"] == txns(client, start="", end="")["total"] == 2
 
 
+def test_a_sql_condition_filters_the_list(client, book):
+    """条件就是筛选栏里的一个字段：跟分页、合计同一遍查询。"""
+    book(
+        [
+            {
+                "occurred_at": "2026-01-05 12:00:00",
+                "direction": "out",
+                "amount_cents": 1000,
+                "counterparty": "便利店",
+            },
+            {
+                "occurred_at": "2026-01-06 12:00:00",
+                "direction": "out",
+                "amount_cents": 5000,
+                "counterparty": "家电城",
+            },
+        ]
+    )
+
+    body = txns(client, where="amount_cents > 2000")
+
+    assert body["total"] == 1
+    assert [row["counterparty"] for row in body["rows"]] == ["家电城"]
+    assert body["filters"]["where"] == "amount_cents > 2000"
+    assert "条件「amount_cents > 2000」" in body["active_filters"]
+
+
+def test_a_leading_where_is_optional(client, book):
+    book(
+        [
+            {"occurred_at": "2026-01-05 12:00:00", "direction": "out", "amount_cents": 1000},
+            {"occurred_at": "2026-01-06 12:00:00", "direction": "in", "amount_cents": 2000},
+        ]
+    )
+
+    body = txns(client, where="WHERE direction = 'out'")
+
+    assert body["total"] == 1
+    assert body["filters"]["where"] == "direction = 'out'"
+
+
+def test_a_broken_condition_leaves_the_page_standing(client, book):
+    """条件写坏不是 500：列表给空，原因挂在上面，筛选栏还能接着改。"""
+    book([{"direction": "out", "amount_cents": 1000}])
+
+    body = txns(client, where="nope = 1")
+
+    assert body["rows"] == []
+    assert body["total"] == 0
+    assert "no such column" in body["condition_error"]
+    assert body["accounts"], "筛选栏要用的账户照常返回"
+
+
+def test_a_condition_cannot_change_the_book(client, book):
+    book(
+        [
+            {"direction": "out", "amount_cents": 1000},
+            {"direction": "in", "amount_cents": 2000},
+        ]
+    )
+
+    body = txns(client, where="1 = 1; DELETE FROM transactions")
+
+    assert body["condition_error"]
+    assert txns(client)["total"] == 2
+
+
+def test_the_condition_sees_the_merged_net_row(client, conn, book):
+    """条件作用在列表里那一行上：合并组看到的是净额，不是锚点那笔原金额。"""
+    ids = book(
+        [
+            {"occurred_at": "2026-01-05 12:00:00", "direction": "out", "amount_cents": 12000},
+            {"occurred_at": "2026-01-05 13:00:00", "direction": "in", "amount_cents": 4000},
+            {"occurred_at": "2026-01-05 14:00:00", "direction": "in", "amount_cents": 4000},
+        ]
+    )
+    with conn:
+        repo.create_group(conn, origin="manual", transaction_ids=ids)
+
+    body = txns(client, where="amount_cents = 4000")
+
+    assert body["total"] == 1
+    assert body["rows"][0]["group_id"] is not None
+
+
 # --------------------------------------------------------------------------
 # 分类：两套体系归一
 # --------------------------------------------------------------------------

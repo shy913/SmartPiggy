@@ -1342,6 +1342,7 @@ def list_transactions(
     category: str | None = None,
     counterparty: str | None = None,
     hidden: str | None = None,
+    condition: str | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[sqlite3.Row]:
@@ -1353,7 +1354,7 @@ def list_transactions(
     conf = settings.load()
     where, params = _transaction_filters(
         start, end, account_id, direction, search, hidden, category,
-        counterparty=counterparty,
+        counterparty=counterparty, condition=condition,
     )
     cte, lead = _effective(
         conf, start=start, end=end, include_hidden=hidden != "0"
@@ -1398,13 +1399,14 @@ def count_transactions(
     category: str | None = None,
     counterparty: str | None = None,
     hidden: str | None = None,
+    condition: str | None = None,
 ) -> int:
     """跟 list_transactions 同源同过滤：一个合并组算一条。两处对不上的话，
     「共 N 条」和列表行数就会各说各话。"""
     conf = settings.load()
     where, params = _transaction_filters(
         start, end, account_id, direction, search, hidden, category,
-        counterparty=counterparty,
+        counterparty=counterparty, condition=condition,
     )
     cte, lead = _effective(
         conf, start=start, end=end, include_hidden=hidden != "0"
@@ -1427,6 +1429,7 @@ def _transaction_filters(
     hidden: str | None = None,
     category: str | None = None,
     counterparty: str | None = None,
+    condition: str | None = None,
 ) -> tuple[str, list]:
     clauses = ["1 = 1"]
     params: list = []
@@ -1471,6 +1474,12 @@ def _transaction_filters(
         )
         pattern = f"%{search}%"
         params.extend([pattern, pattern, pattern])
+    if condition:
+        # 用户自己写的条件，原样接在基本筛选之后。外面再包一层括号，免得
+        # `a OR b` 这种写法把前面那些条件也 OR 掉。这里只是一段 WHERE 表达式，
+        # 写坏了由 SQLite 报错（接口会把它变成页面上的提示），不会写库：
+        # 这条路径只跑 SELECT，且 execute 一次只接受一条语句。
+        clauses.append(f"({condition})")
     return " AND ".join(clauses), params
 
 
