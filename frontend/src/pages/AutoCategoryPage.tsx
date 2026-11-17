@@ -205,7 +205,7 @@ export function AutoCategoryPage() {
                         补全 {item.count} 笔
                       </Button>
                       <Button
-                        variant="ghost"
+                        variant="outline"
                         size="sm"
                         className="px-2"
                         disabled={busy}
@@ -217,7 +217,7 @@ export function AutoCategoryPage() {
                         以后都这样
                       </Button>
                       <Button
-                        variant="ghost"
+                        variant="outline"
                         size="sm"
                         className="px-2"
                         disabled={busy}
@@ -301,7 +301,7 @@ export function AutoCategoryPage() {
                         <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2 text-xs text-muted">
                           <span>另有 {extra} 笔已分类。</span>
                           <Button
-                            variant="ghost"
+                            variant="outline"
                             size="sm"
                             className="px-2"
                             disabled={busy}
@@ -367,9 +367,10 @@ export function AutoCategoryPage() {
                       <option value={rule.category}>{rule.category}</option>
                     ) : null}
                   </select>
-                  <button
-                    type="button"
-                    className="text-sm text-muted underline hover:text-text"
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="px-2"
                     disabled={busy}
                     onClick={() => {
                       setMessage("");
@@ -377,7 +378,7 @@ export function AutoCategoryPage() {
                     }}
                   >
                     取消
-                  </button>
+                  </Button>
                 </li>
               ))}
             </ul>
@@ -392,9 +393,10 @@ export function AutoCategoryPage() {
               {data.skips.map((item) => (
                 <li key={item.counterparty} className="flex items-center gap-2">
                   <span className="[overflow-wrap:anywhere]">「{item.counterparty}」</span>
-                  <button
-                    type="button"
-                    className="text-muted underline hover:text-text"
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="px-2"
                     disabled={busy}
                     onClick={() => {
                       setMessage("");
@@ -402,7 +404,7 @@ export function AutoCategoryPage() {
                     }}
                   >
                     恢复
-                  </button>
+                  </Button>
                 </li>
               ))}
             </ul>
