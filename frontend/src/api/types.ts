@@ -306,14 +306,29 @@ export type ListFilters = {
   hidden: string;
 };
 
+/** 建议里展开看到的某一笔。金额仍是原币最小单位。 */
+export type SuggestionTransaction = {
+  id: number;
+  occurred_at: string;
+  direction: Direction;
+  amount_cents: number;
+  currency: string;
+  description: string;
+  memo: string;
+  hidden: number;
+};
+
 /** 一条「未分类能一键归好」的建议。`count` 是未分类笔数；`scope` 是这个对方
- *  在全部时间里的总笔数（含已分类、含隐藏），点按钮会改到这么多笔。 */
+ *  在全部时间里的总笔数（含已分类、含隐藏），点按钮会改到这么多笔。
+ *  `transactions` 最多带 50 笔，`transactions_truncated` 说明还有更多。 */
 export type CategorySuggestion = {
   counterparty: string;
   category: string;
   count: number;
   hidden: number;
   scope: { total: number; hidden: number };
+  transactions: SuggestionTransaction[];
+  transactions_truncated: boolean;
 };
 
 export type CategorySuggestions = {

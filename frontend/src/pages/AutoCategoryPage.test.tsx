@@ -33,6 +33,19 @@ function body(overrides: Partial<CategorySuggestions> = {}): CategorySuggestions
         count: 12,
         hidden: 0,
         scope: { total: 14, hidden: 1 },
+        transactions: [
+          {
+            id: 1,
+            occurred_at: "2026-11-05 16:31:00",
+            direction: "out",
+            amount_cents: 1200,
+            currency: "CNY",
+            description: "超市购物",
+            memo: "",
+            hidden: 0,
+          },
+        ],
+        transactions_truncated: true,
       },
     ],
     rules: [],
@@ -79,7 +92,18 @@ describe("自动识别页", () => {
     expect(item).toHaveTextContent("12 笔未分类");
     expect(item).toHaveTextContent("日用百货");
     expect(screen.getByRole("button", { name: "补全 12 笔" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "全部 14 笔" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /查看明细/ })).toBeInTheDocument();
+  });
+
+  it("点开建议能看到具体是哪几笔", async () => {
+    const user = userEvent.setup();
+    draw(body());
+
+    await user.click(await screen.findByRole("button", { name: /查看明细/ }));
+    expect(screen.getByText("超市购物")).toBeInTheDocument();
+    expect(screen.getByText("-12.00 CNY")).toBeInTheDocument();
+    expect(screen.getByText(/只列前 1 笔，还有 11 笔未列/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "全部 14 笔一起改" })).toBeInTheDocument();
   });
 
   it("补全只动未分类；全部要确认后才覆盖", async () => {
@@ -97,7 +121,8 @@ describe("自动识别页", () => {
       });
     });
 
-    await user.click(screen.getByRole("button", { name: "全部 14 笔" }));
+    await user.click(screen.getByRole("button", { name: /查看明细/ }));
+    await user.click(screen.getByRole("button", { name: "全部 14 笔一起改" }));
     await waitFor(() => {
       const sent = requests.filter((item) => item.url.includes("/by-counterparty")).at(-1);
       expect(JSON.parse(String(sent!.init?.body))).toEqual({

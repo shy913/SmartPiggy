@@ -431,15 +431,15 @@ def test_skipping_a_suggestion_keeps_the_row_uncategorized(client, book):
         ]
     )
     body = suggestions(client)
-    assert body["suggestions"] == [
-        {
-            "counterparty": "金枝叶",
-            "category": "转账红包",
-            "count": 1,
-            "hidden": 0,
-            "scope": {"total": 1, "hidden": 0},
-        }
-    ]
+    assert len(body["suggestions"]) == 1
+    item = body["suggestions"][0]
+    assert item["counterparty"] == "金枝叶"
+    assert item["category"] == "转账红包"
+    assert item["count"] == 1
+    assert item["hidden"] == 0
+    assert item["scope"] == {"total": 1, "hidden": 0}
+    assert [row["description"] for row in item["transactions"]] == ["微信转账"]
+    assert item["transactions_truncated"] is False
 
     response = client.post(
         "/api/transactions/category-suggestions/skip",

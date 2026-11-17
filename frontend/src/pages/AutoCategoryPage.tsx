@@ -14,7 +14,8 @@ import {
 import type { CategorySuggestion } from "../api/types";
 import { Button } from "../components/ui/button";
 import { Card, Section } from "../components/ui/card";
-import { Empty, ErrorText, Hint } from "../components/ui/bits";
+import { Empty, ErrorText, Hint, Tag } from "../components/ui/bits";
+import { formatAmount, minute } from "../lib/format";
 
 /**
  * 自动识别。
@@ -36,6 +37,14 @@ export function AutoCategoryPage() {
 
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [open, setOpen] = useState<Set<string>>(() => new Set());
+  const toggle = (name: string) =>
+    setOpen((current) => {
+      const next = new Set(current);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
 
   const refresh = () => {
     client.invalidateQueries({ queryKey: ["category-suggestions"] });
@@ -151,105 +160,168 @@ export function AutoCategoryPage() {
           <ul className="m-0 mt-3 list-none divide-y divide-border">
             {data.suggestions.map((item) => {
               const extra = item.scope.total - item.count;
+              const isOpen = open.has(item.counterparty);
               return (
-                <li
-                  key={item.counterparty}
-                  className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3"
-                >
-                  <div className="w-full min-w-0 sm:w-auto sm:flex-1">
-                    <div className="text-sm">
-                      「<span className="[overflow-wrap:anywhere]">{item.counterparty}</span>」
-                      <span className="tabular ml-2 text-muted">{item.count} 笔未分类</span>
-                      <span className="mx-1 text-muted">→</span>
-                      <span className="font-medium">{item.category}</span>
-                    </div>
-                    {item.hidden || extra > 0 ? (
-                      <div className="mt-0.5 text-xs text-muted">
-                        {item.hidden ? `其中 ${item.hidden} 笔已隐藏` : ""}
-                        {item.hidden && extra > 0 ? "，" : ""}
-                        {extra > 0
-                          ? `全部 ${item.scope.total} 笔，其中 ${extra} 笔已分类`
-                          : ""}
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={busy}
-                      onClick={() => {
-                        setMessage("");
-                        fill.mutate(item);
-                      }}
+                <li key={item.counterparty} className="py-3">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                    <button
+                      type="button"
+                      className="w-full min-w-0 text-left sm:w-auto sm:flex-1"
+                      aria-expanded={isOpen}
+                      onClick={() => toggle(item.counterparty)}
                     >
-                      补全 {item.count} 笔
-                    </Button>
-                    {extra > 0 ? (
+                      <span className="text-sm">
+                        「<span className="[overflow-wrap:anywhere]">{item.counterparty}</span>」
+                        <span className="tabular ml-2 text-muted">
+                          {item.count} 笔未分类
+                        </span>
+                        <span className="mx-1 text-muted">→</span>
+                        <span className="font-medium">{item.category}</span>
+                        <span className="ml-2 text-xs text-muted">
+                          {isOpen ? "收起" : "查看明细"}
+                        </span>
+                      </span>
+                      {item.hidden || extra > 0 ? (
+                        <span className="mt-0.5 block text-xs text-muted">
+                          {item.hidden ? `其中 ${item.hidden} 笔已隐藏` : ""}
+                          {item.hidden && extra > 0 ? "，" : ""}
+                          {extra > 0
+                            ? `全部 ${item.scope.total} 笔，其中 ${extra} 笔已分类`
+                            : ""}
+                        </span>
+                      ) : null}
+                    </button>
+                    <div className="flex flex-nowrap items-center gap-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="px-2"
+                        disabled={busy}
+                        onClick={() => {
+                          setMessage("");
+                          fill.mutate(item);
+                        }}
+                      >
+                        补全 {item.count} 笔
+                      </Button>
                       <Button
                         variant="ghost"
                         size="sm"
+                        className="px-2"
                         disabled={busy}
-                        title={`连同已经分类的 ${extra} 笔一起改`}
                         onClick={() => {
-                          if (
-                            confirm(
-                              `将把与「${item.counterparty}」往来的全部 ${item.scope.total} 笔交易改成「${item.category}」，其中 ${extra} 笔已有分类也会一并覆盖。继续？`,
-                            )
-                          ) {
-                            setMessage("");
-                            applyAll.mutate(item);
-                          }
+                          setMessage("");
+                          always.mutate(item);
                         }}
                       >
-                        全部 {item.scope.total} 笔
+                        以后都这样
                       </Button>
-                    ) : null}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={busy}
-                      onClick={() => {
-                        setMessage("");
-                        always.mutate(item);
-                      }}
-                    >
-                      以后都这样
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={busy}
-                      onClick={() => {
-                        setMessage("");
-                        skip.mutate(item);
-                      }}
-                    >
-                      跳过
-                    </Button>
-                    <select
-                      aria-label={`「${item.counterparty}」改为其他分类`}
-                      className="h-8 rounded border border-border bg-bg px-1 text-xs text-muted"
-                      value=""
-                      disabled={busy}
-                      onChange={(event) => {
-                        const category = event.target.value;
-                        if (!category) return;
-                        setMessage("");
-                        change.mutate({
-                          counterparty: item.counterparty,
-                          category,
-                        });
-                      }}
-                    >
-                      <option value="">改为…</option>
-                      {categories.map((name) => (
-                        <option key={name} value={name}>
-                          {name}
-                        </option>
-                      ))}
-                    </select>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="px-2"
+                        disabled={busy}
+                        onClick={() => {
+                          setMessage("");
+                          skip.mutate(item);
+                        }}
+                      >
+                        跳过
+                      </Button>
+                      <select
+                        aria-label={`「${item.counterparty}」改为其他分类`}
+                        className="h-8 rounded border border-border bg-bg px-1 text-xs text-muted"
+                        value=""
+                        disabled={busy}
+                        onChange={(event) => {
+                          const category = event.target.value;
+                          if (!category) return;
+                          setMessage("");
+                          change.mutate({
+                            counterparty: item.counterparty,
+                            category,
+                          });
+                        }}
+                      >
+                        <option value="">改为…</option>
+                        {categories.map((name) => (
+                          <option key={name} value={name}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
+
+                  {isOpen ? (
+                    <div className="mt-2 rounded-md border border-border bg-bg/50 px-3 py-2">
+                      <ul className="m-0 list-none divide-y divide-border">
+                        {item.transactions.map((tx) => {
+                          const sign =
+                            tx.direction === "out"
+                              ? "-"
+                              : tx.direction === "in"
+                                ? "+"
+                                : "";
+                          return (
+                            <li
+                              key={tx.id}
+                              className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-1 text-xs"
+                            >
+                              <span className="tabular text-muted">
+                                {minute(tx.occurred_at)}
+                              </span>
+                              <span
+                                className={
+                                  tx.direction === "in"
+                                    ? "tabular text-in"
+                                    : tx.direction === "neutral"
+                                      ? "tabular text-muted"
+                                      : "tabular text-out"
+                                }
+                              >
+                                {sign}
+                                {formatAmount(tx.amount_cents)} {tx.currency}
+                              </span>
+                              <span className="min-w-0 [overflow-wrap:anywhere]">
+                                {tx.description || tx.memo || "—"}
+                              </span>
+                              {tx.hidden ? <Tag>已隐藏</Tag> : null}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                      {item.transactions_truncated ? (
+                        <div className="mt-1 text-xs text-muted">
+                          只列前 {item.transactions.length} 笔，还有{" "}
+                          {item.count - item.transactions.length} 笔未列。
+                        </div>
+                      ) : null}
+                      {extra > 0 ? (
+                        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2 text-xs text-muted">
+                          <span>另有 {extra} 笔已分类。</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="px-2"
+                            disabled={busy}
+                            onClick={() => {
+                              if (
+                                confirm(
+                                  `将把与「${item.counterparty}」往来的全部 ${item.scope.total} 笔交易改成「${item.category}」，其中 ${extra} 笔已有分类也会一并覆盖。继续？`,
+                                )
+                              ) {
+                                setMessage("");
+                                applyAll.mutate(item);
+                              }
+                            }}
+                          >
+                            全部 {item.scope.total} 笔一起改
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </li>
               );
             })}

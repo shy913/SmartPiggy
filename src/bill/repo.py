@@ -1693,6 +1693,11 @@ def reclassify(
     return cursor.rowcount
 
 
+# 每条建议最多带多少笔明细。有人一个月在 Tesco 刷上百笔，全塞进响应没有意义；
+# 界面会写「还有 N 笔」，总数仍以 count 为准。
+_SUGGESTION_DETAIL_LIMIT = 50
+
+
 def uncategorized_suggestions(
     connection: sqlite3.Connection, *, limit: int = 50
 ) -> dict:
@@ -1785,6 +1790,50 @@ def uncategorized_suggestions(
             item["counterparty"],
             {"total": item["count"], "hidden": item["hidden"]},
         )
+
+    # 点开建议要看得到具体是哪几笔。每人最多带 50 条，按时间倒序；
+    # 结果里的 count 仍是总数，界面据此说「还有 N 笔」。
+    details: dict[str, list[dict]] = {}
+    if names:
+        marks = ", ".join("?" * len(names))
+        for row in connection.execute(
+            f"""
+            SELECT id, counterparty, occurred_at, direction, amount_cents,
+                   currency, description, memo, hidden
+            FROM (
+              SELECT t.id, TRIM(t.counterparty) AS counterparty, t.occurred_at,
+                     t.direction, t.amount_cents, t.currency, t.description,
+                     t.memo, t.hidden,
+                     ROW_NUMBER() OVER (
+                       PARTITION BY TRIM(t.counterparty)
+                       ORDER BY t.occurred_at DESC, t.id DESC
+                     ) AS rn
+              FROM transactions t
+              WHERE TRIM(t.category) = '' AND TRIM(t.source_category) = ''
+                AND TRIM(t.counterparty) IN ({marks})
+            )
+            WHERE rn <= ?
+            ORDER BY counterparty, occurred_at DESC, id DESC
+            """,
+            [*names, _SUGGESTION_DETAIL_LIMIT],
+        ):
+            details.setdefault(row["counterparty"], []).append(
+                {
+                    "id": row["id"],
+                    "occurred_at": row["occurred_at"],
+                    "direction": row["direction"],
+                    "amount_cents": row["amount_cents"],
+                    "currency": row["currency"],
+                    "description": row["description"],
+                    "memo": row["memo"],
+                    "hidden": row["hidden"],
+                }
+            )
+
+    for item in candidates:
+        rows = details.get(item["counterparty"], [])
+        item["transactions"] = rows
+        item["transactions_truncated"] = item["count"] > len(rows)
 
     rules = [
         {"counterparty": row["counterparty"], "category": row["category"]}
