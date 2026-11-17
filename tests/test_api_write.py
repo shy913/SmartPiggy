@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from bill import repo
 
-from .api import assert_no_floats, confirm, payload, txns, upload
+from .api import assert_no_floats, confirm, payload, suggestions, txns, upload
 from .factories import alipay_csv, wechat_xlsx
 
 TZ = ZoneInfo("Asia/Shanghai")
@@ -340,7 +340,7 @@ def test_a_rule_categorizes_current_empty_rows_and_future_imports(client, book):
     assert detail["effective_category"] == "转账红包"
     detail = payload(client.get(f"/api/transactions/{ids[1]}"))["transaction"]
     assert detail["effective_category"] == "餐饮美食", "账单自带的分类优先"
-    assert txns(client, start="", end="")["category_suggestions"]["rules"] == [
+    assert suggestions(client)["rules"] == [
         {"counterparty": "金枝叶", "category": "转账红包"}
     ]
 
@@ -399,7 +399,7 @@ def test_deleting_a_rule_stops_future_imports_but_keeps_old_categories(client, b
         "/api/transactions/category-rules", json={"counterparty": "金枝叶"}
     )
     assert response.status_code == 204
-    assert txns(client, start="", end="")["category_suggestions"]["rules"] == []
+    assert suggestions(client)["rules"] == []
     # 已经落下的分类不因为取消规则而回滚。
     assert payload(client.get(f"/api/transactions/{ids[0]}"))["transaction"][
         "effective_category"
@@ -430,8 +430,8 @@ def test_skipping_a_suggestion_keeps_the_row_uncategorized(client, book):
              "amount_cents": 57303, "counterparty": "金枝叶", "description": "微信转账"},
         ]
     )
-    body = txns(client, start="", end="")
-    assert body["category_suggestions"]["suggestions"] == [
+    body = suggestions(client)
+    assert body["suggestions"] == [
         {
             "counterparty": "金枝叶",
             "category": "转账红包",
@@ -447,9 +447,9 @@ def test_skipping_a_suggestion_keeps_the_row_uncategorized(client, book):
     )
     assert payload(response)["skipped"] is True
 
-    body = txns(client, start="", end="")
-    assert body["category_suggestions"]["suggestions"] == []
-    assert body["category_suggestions"]["skips"] == [{"counterparty": "金枝叶"}]
+    body = suggestions(client)
+    assert body["suggestions"] == []
+    assert body["skips"] == [{"counterparty": "金枝叶"}]
     detail = payload(client.get(f"/api/transactions/{ids[0]}"))["transaction"]
     assert detail["effective_category"] == "", "跳过不改交易，保留未分类"
 
@@ -458,8 +458,8 @@ def test_skipping_a_suggestion_keeps_the_row_uncategorized(client, book):
         json={"counterparty": "金枝叶"},
     )
     assert response.status_code == 204
-    body = txns(client, start="", end="")
-    assert [item["counterparty"] for item in body["category_suggestions"]["suggestions"]] == [
+    body = suggestions(client)
+    assert [item["counterparty"] for item in body["suggestions"]] == [
         "金枝叶"
     ], "恢复之后建议要回来"
 

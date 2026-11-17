@@ -7,6 +7,7 @@ import { SummaryPage } from "./pages/SummaryPage";
 import { LoginPage } from "./pages/LoginPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { TransactionsPage } from "./pages/TransactionsPage";
+import { AutoCategoryPage } from "./pages/AutoCategoryPage";
 import { TransactionDetailPage } from "./pages/TransactionDetailPage";
 import { TransactionFormPage } from "./pages/TransactionFormPage";
 import { GroupsPage } from "./pages/GroupsPage";
@@ -31,6 +32,7 @@ import { cn } from "./lib/utils";
 const NAV = [
   { to: "/", label: "汇总" },
   { to: "/transactions", label: "交易记录" },
+  { to: "/auto-category", label: "自动识别" },
   { to: "/query", label: "查询" },
   { to: "/import", label: "导入" },
   { to: "/settings", label: "设置" },
@@ -200,6 +202,7 @@ export function App() {
           {/* 老地址指回首页。旧界面那边是 301，SPA 里换成前端跳转。 */}
           <Route path="/summary" element={<Navigate to="/" replace />} />
           <Route path="/transactions" element={<TransactionsPage />} />
+          <Route path="/auto-category" element={<AutoCategoryPage />} />
           <Route path="/transactions/new" element={<TransactionFormPage />} />
           <Route path="/transactions/:id" element={<TransactionDetailPage />} />
           <Route path="/transactions/:id/edit" element={<TransactionFormPage />} />

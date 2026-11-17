@@ -9,6 +9,7 @@
 //    跨站的 `<form>` 发不出这个类型。忘了带，接口会回 415。
 
 import type {
+  CategorySuggestions,
   Dashboard,
   FormPayload,
   GroupsPayload,
@@ -121,6 +122,10 @@ export const getDashboard = (params: Query = {}) =>
 
 export const listTransactions = (params: Query = {}) =>
   request<TransactionList>(`/api/transactions${queryString(params)}`);
+
+/** 未分类交易的归类建议、已立规则和跳过的对方。 */
+export const getCategorySuggestions = () =>
+  request<CategorySuggestions>("/api/transactions/category-suggestions");
 
 export const getTransaction = (id: number) =>
   request<TransactionDetail>(`/api/transactions/${id}`);

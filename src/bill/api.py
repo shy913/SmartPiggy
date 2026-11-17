@@ -527,10 +527,18 @@ def transaction_list():
         display_currency=conf.display_currency,
         # 没有对方筛选时是 null。有的话是 {total, hidden}，含隐藏记录。
         counterparty_scope=scope,
-        # 未分类交易的归类建议。跟当前筛选无关——这一批是「全部账本里还有
-        # 哪些能认」；点一下改的是那个对方的全部交易。
-        category_suggestions=repo.uncategorized_suggestions(connection),
     )
+
+
+@blueprint.get("/transactions/category-suggestions")
+def transaction_category_suggestions():
+    """未分类交易的归类建议、已立规则和跳过的对方。
+
+    单独一个接口给「自动识别」页用：交易记录页只留一个行内提示，不再为了
+    这一批数据把整页拖慢，页面上也不堆这些东西。
+    """
+    with get_conn() as connection:
+        return jsonify(repo.uncategorized_suggestions(connection))
 
 
 @blueprint.get("/transactions/<int:txn_id>")

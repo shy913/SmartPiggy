@@ -64,6 +64,10 @@ def txns(client, **filters) -> dict:
     return payload(client.get("/api/transactions", query_string=filters))
 
 
+def suggestions(client) -> dict:
+    return payload(client.get("/api/transactions/category-suggestions"))
+
+
 def meta(client) -> dict:
     return payload(client.get("/api/meta"))
 
