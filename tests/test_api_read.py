@@ -13,7 +13,7 @@ import pytest
 
 from bill import repo
 
-from .api import assert_no_floats, meta, payload, summary, txns
+from .api import assert_no_floats, meta, payload, suggestions, summary, txns
 
 TZ = ZoneInfo("Asia/Shanghai")
 
@@ -777,21 +777,24 @@ def test_uncategorized_rows_come_back_with_a_category_suggestion(client, book):
     assert rows[("Tesco", "Supermarket")]["suggested_category"] == "日用百货"
     assert rows[("Tesco", "Tesco Express")]["suggested_category"] == ""
     assert rows[("星巴克", "拿铁")]["suggested_category"] == "餐饮美食"
+    assert "category_suggestions" not in body, "建议列表单独一个接口，别塞进交易列表"
 
-    suggestions = {
-        item["counterparty"]: item for item in body["category_suggestions"]["suggestions"]
+    suggestion_body = suggestions(client)
+    by_name = {
+        item["counterparty"]: item for item in suggestion_body["suggestions"]
     }
-    assert body["category_suggestions"]["total_uncategorized"] == 4
-    assert set(suggestions) == {"Tesco", "星巴克"}
-    assert suggestions["Tesco"]["category"] == "日用百货"
-    assert suggestions["Tesco"]["count"] == 1
-    assert suggestions["Tesco"]["scope"] == {"total": 2, "hidden": 0}, (
+    assert suggestion_body["total_uncategorized"] == 4
+    assert set(by_name) == {"Tesco", "星巴克"}
+    assert by_name["Tesco"]["category"] == "日用百货"
+    assert by_name["Tesco"]["count"] == 1
+    assert by_name["Tesco"]["scope"] == {"total": 2, "hidden": 0}, (
         "scope 要数上已经分类的那笔——按钮改的是这个对方的全部交易"
     )
-    assert "老同学" not in suggestions, (
+    assert "老同学" not in by_name, (
         "同一个对方下有的认得出、有的认不出，就不出建议，免得一键把一半改错"
     )
     assert_no_floats(body, "transactions")
+    assert_no_floats(suggestion_body, "category-suggestions")
 
 
 def test_a_suggestion_scope_includes_hidden_rows(client, book):
@@ -806,7 +809,7 @@ def test_a_suggestion_scope_includes_hidden_rows(client, book):
              "source_category": "Groceries"},
         ]
     )
-    suggestion = txns(client, start="", end="")["category_suggestions"]["suggestions"][0]
+    suggestion = suggestions(client)["suggestions"][0]
     assert suggestion["counterparty"] == "Costco"
     assert suggestion["count"] == 2
     assert suggestion["hidden"] == 1
