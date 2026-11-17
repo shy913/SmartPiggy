@@ -246,7 +246,7 @@ describe("汇总页", () => {
     expect(localStorage.getItem("bill.summary.showLarge")).toBe("0");
   });
 
-  it("最近窗口里没有大额时不摆空块", async () => {
+  it("最近窗口里没有大额时说明一句，不摆两个 0", async () => {
     draw(
       summaryBody(),
       dashboardBody({
@@ -264,8 +264,10 @@ describe("汇总页", () => {
       }),
     );
     await waitFor(() => expect(screen.getByText("预计本月支出")).toBeInTheDocument());
-    expect(screen.queryByRole("switch", { name: "显示大额" })).toBeNull();
-    expect(screen.queryByText("大额月均")).toBeNull();
+    expect(screen.getByRole("switch", { name: "显示大额" })).toBeInTheDocument();
+    expect(screen.getByText("大额月均")).toBeInTheDocument();
+    expect(screen.getByText("最近 90 天没有大额支出或收入。")).toBeInTheDocument();
+    expect(screen.queryByText("大额支出")).toBeNull();
   });
 
   it("支出和收入两格整块可点，落到同一段区间的筛选结果", async () => {

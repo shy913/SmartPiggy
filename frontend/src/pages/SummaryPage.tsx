@@ -611,32 +611,30 @@ function Forecast({ data }: { data: Dashboard }) {
       <div className="flex items-baseline justify-between gap-2">
         <h2 className="text-base font-semibold">预测与平均</h2>
         <div className="flex items-center gap-3">
-          {hasLarge ? (
-            <button
-              type="button"
-              role="switch"
-              aria-checked={showLarge}
-              aria-label="显示大额"
-              className="flex items-center gap-1.5 text-xs text-muted transition-colors hover:text-text"
-              onClick={() => setShowLarge(!showLarge)}
+          <button
+            type="button"
+            role="switch"
+            aria-checked={showLarge}
+            aria-label="显示大额"
+            className="flex items-center gap-1.5 text-xs text-muted transition-colors hover:text-text"
+            onClick={() => setShowLarge(!showLarge)}
+          >
+            <span
+              aria-hidden
+              className={cn(
+                "relative inline-block h-4 w-7 rounded-full transition-colors",
+                showLarge ? "bg-accent" : "border border-border bg-panel-hover",
+              )}
             >
               <span
-                aria-hidden
                 className={cn(
-                  "relative inline-block h-4 w-7 rounded-full transition-colors",
-                  showLarge ? "bg-accent" : "border border-border bg-panel-hover",
+                  "absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full transition-all",
+                  showLarge ? "left-3.5 bg-on-accent" : "left-0.5 bg-muted",
                 )}
-              >
-                <span
-                  className={cn(
-                    "absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full transition-all",
-                    showLarge ? "left-3.5 bg-on-accent" : "left-0.5 bg-muted",
-                  )}
-                />
-              </span>
-              大额
-            </button>
-          ) : null}
+              />
+            </span>
+            大额
+          </button>
           <span className="text-xs text-muted">{data.currency}</span>
         </div>
       </div>
@@ -666,7 +664,7 @@ function Forecast({ data }: { data: Dashboard }) {
           </div>
         </div>
       ) : null}
-      {hasLarge && showLarge ? (
+      {showLarge ? (
         <div className="mt-4 border-t border-border pt-3">
           <div className="flex items-baseline justify-between gap-2">
             <span className="text-xs text-muted">大额月均</span>
@@ -674,26 +672,32 @@ function Forecast({ data }: { data: Dashboard }) {
               最近 {large.days} 天 · {large.count} 笔
             </span>
           </div>
-          <div className="mt-2 grid grid-cols-2 gap-3">
-            <div>
-              <div className="text-xs text-muted">大额支出</div>
-              <div className="tabular text-lg font-semibold text-out">
-                {formatAmount(large.expense_monthly)}
+          {hasLarge ? (
+            <div className="mt-2 grid grid-cols-2 gap-3">
+              <div>
+                <div className="text-xs text-muted">大额支出</div>
+                <div className="tabular text-lg font-semibold text-out">
+                  {formatAmount(large.expense_monthly)}
+                </div>
+                <div className="text-xs text-muted">
+                  最近 {large.days} 天合计 {formatAmount(large.expense)}
+                </div>
               </div>
-              <div className="text-xs text-muted">
-                最近 {large.days} 天合计 {formatAmount(large.expense)}
+              <div>
+                <div className="text-xs text-muted">大额收入</div>
+                <div className="tabular text-lg font-semibold text-in">
+                  {formatAmount(large.income_monthly)}
+                </div>
+                <div className="text-xs text-muted">
+                  最近 {large.days} 天合计 {formatAmount(large.income)}
+                </div>
               </div>
             </div>
-            <div>
-              <div className="text-xs text-muted">大额收入</div>
-              <div className="tabular text-lg font-semibold text-in">
-                {formatAmount(large.income_monthly)}
-              </div>
-              <div className="text-xs text-muted">
-                最近 {large.days} 天合计 {formatAmount(large.income)}
-              </div>
-            </div>
-          </div>
+          ) : (
+            <p className="mt-2 text-xs text-muted">
+              最近 {large.days} 天没有大额支出或收入。
+            </p>
+          )}
         </div>
       ) : null}
     </Card>
