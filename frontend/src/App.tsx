@@ -15,7 +15,6 @@ import { ImportPreviewPage } from "./pages/ImportPreviewPage";
 import { ImportDetailPage, ImportsPage } from "./pages/ImportsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ProfilesPage } from "./pages/ProfilesPage";
-import { SqlQueryPage } from "./pages/SqlQueryPage";
 import { Button } from "./components/ui/button";
 import {
   DEFAULT_MODE,
@@ -27,11 +26,10 @@ import {
 } from "./theme/themes";
 import { cn } from "./lib/utils";
 
-/** 顶部那几个区。前四个顺序跟旧界面一致，用户不用重新学。 */
+/** 顶部那四个区。顺序跟旧界面一致，用户不用重新学。 */
 const NAV = [
   { to: "/", label: "汇总" },
   { to: "/transactions", label: "交易记录" },
-  { to: "/query", label: "查询" },
   { to: "/import", label: "导入" },
   { to: "/settings", label: "设置" },
 ];
@@ -203,7 +201,6 @@ export function App() {
           <Route path="/transactions/new" element={<TransactionFormPage />} />
           <Route path="/transactions/:id" element={<TransactionDetailPage />} />
           <Route path="/transactions/:id/edit" element={<TransactionFormPage />} />
-          <Route path="/query" element={<SqlQueryPage />} />
           <Route path="/groups" element={<GroupsPage />} />
           <Route path="/import" element={<ImportPage />} />
           {/* 预览有自己的地址：刷新、后退、存书签都回得来。 */}

@@ -19,6 +19,8 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+import time
 from dataclasses import replace
 from datetime import date, datetime
 
@@ -36,7 +38,6 @@ from . import (
     params,
     repo,
     settings,
-    sqlquery,
     themes,
 )
 from .errors import BillError, ProfileError, UploadError
@@ -296,27 +297,6 @@ def meta():
 
 
 # --------------------------------------------------------------------------
-# 只读查询
-# --------------------------------------------------------------------------
-
-@blueprint.post("/query")
-def query():
-    """临时 SQL 查询：只放行单条 SELECT / WITH，只读、限行、限时。
-
-    写法（只认 WHERE 之后的条件、表名等）都由 SQLite 自己校验；这一层多做的
-    只是把「不能写」变成一进门就拒绝，而不是等改完了再报错。
-    """
-    sql = _body().get("sql")
-    if not isinstance(sql, str):
-        return _error("validation", "写一条 SELECT 查询。", 400)
-    try:
-        result = sqlquery.run(get_conn(), sql)
-    except sqlquery.QueryError as error:
-        return _error("query", str(error), 400)
-    return jsonify(result)
-
-
-# --------------------------------------------------------------------------
 # 汇总
 # --------------------------------------------------------------------------
 
@@ -440,6 +420,7 @@ def list_counts(connection, query) -> tuple[int, int]:
         "search": query["search"] or None,
         "category": query["category"] or None,
         "counterparty": query["counterparty"] or None,
+        "condition": query["condition"] or None,
     }
     total = repo.count_transactions(connection, **common, hidden=query["hidden"] or None)
     if query["hidden"] == "1":
@@ -449,27 +430,54 @@ def list_counts(connection, query) -> tuple[int, int]:
     return total, repo.count_transactions(connection, **common, hidden="1")
 
 
+#: 自由条件最多跑这么久。手写的子查询写歪了不该把整个列表页拖住。
+CONDITION_SECONDS = 2.0
+
+
+def _condition_error(message: str) -> str:
+    if "interrupted" in message:
+        return "条件跑得太慢，已中止。"
+    return f"条件没跑通：{message}"
+
+
 @blueprint.get("/transactions")
 def transaction_list():
     conf = settings.load()
     connection = get_conn()
     query = params.list_query(request.args)
-    total, hidden_total = list_counts(connection, query)
-
+    condition = query["condition"]
+    condition_error = None
     offset = max(request.args.get("offset", type=int) or 0, 0)
-    found = repo.list_transactions(
-        connection,
-        start=query["start"] or None,
-        end=query["end"] or None,
-        account_id=query["account_id"],
-        direction=query["direction"] or None,
-        search=query["search"] or None,
-        category=query["category"] or None,
-        counterparty=query["counterparty"] or None,
-        hidden=query["hidden"] or None,
-        limit=query["limit"],
-        offset=offset,
-    )
+    if condition:
+        deadline = time.monotonic() + CONDITION_SECONDS
+        connection.set_progress_handler(
+            lambda: 1 if time.monotonic() > deadline else 0, 10_000
+        )
+    try:
+        total, hidden_total = list_counts(connection, query)
+        found = repo.list_transactions(
+            connection,
+            start=query["start"] or None,
+            end=query["end"] or None,
+            account_id=query["account_id"],
+            direction=query["direction"] or None,
+            search=query["search"] or None,
+            category=query["category"] or None,
+            counterparty=query["counterparty"] or None,
+            hidden=query["hidden"] or None,
+            condition=condition or None,
+            limit=query["limit"],
+            offset=offset,
+        )
+    except sqlite3.DatabaseError as error:
+        # 条件写坏了不是 500：这一页的其他部分（筛选栏、账户、分类）还照常
+        # 返回，前端把原因挂在列表上方，用户改一下条件就能接着看。
+        condition_error = _condition_error(str(error))
+        total = hidden_total = 0
+        found = []
+    finally:
+        if condition:
+            connection.set_progress_handler(None, 0)
     # 合并行只带锚点那一笔的文字，要看全组成员得另外取——而且只取这一段用得到的组。
     members: dict[int, list] = {}
     for member in repo.group_members(
@@ -510,7 +518,9 @@ def transaction_list():
             category=query["category"],
             counterparty=query["counterparty"],
             hidden=query["hidden"],
+            condition=condition,
         ),
+        condition_error=condition_error,
         filters={
             "start": start,
             "end": end,
@@ -520,6 +530,7 @@ def transaction_list():
             "category": query["category"],
             "counterparty": query["counterparty"],
             "hidden": query["hidden"],
+            "where": condition,
         },
         accounts=_account_rows(connection),
         categories=repo.transaction_categories(connection),
