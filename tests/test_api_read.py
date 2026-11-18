@@ -564,6 +564,31 @@ def test_values_may_be_written_as_sql_strings(client, book):
     assert "条件「日期 ≥ 2026-02-01 且 对方 = 家电城」" in body["active_filters"]
 
 
+def test_any_number_of_conditions_can_be_stacked(client, book):
+    """条数不设上限：这里一次堆 12 条，仍然走同一段 WHERE。"""
+    book([{"direction": "out", "amount_cents": 1000}])
+    rows = [condition("amount_cents", ">=", "1000") for _ in range(12)]
+
+    body = txns(client, conds=conds(*rows))
+
+    assert body["total"] == 1
+    assert len(body["filters"]["conditions"]) == 12
+
+
+def test_currency_candidates_cover_original_and_display(client, book, tmp_path):
+    """币种下拉要能选到被换算掉的原币种，不能只列显示币种。"""
+    (tmp_path / "settings.toml").write_text(
+        'timezone = "Asia/Shanghai"\n\n[currency]\ndisplay = "GBP"\n'
+        "rates = { CNY = 8.9 }\n",
+        encoding="utf-8",
+    )
+    book([{"direction": "out", "amount_cents": 1000, "currency": "CNY"}])
+
+    body = txns(client)
+
+    assert body["currencies"] == ["CNY", "GBP"]
+
+
 def test_the_account_condition_shows_the_account_name(client, book):
     book([{"direction": "out", "amount_cents": 1000}])
 

@@ -544,7 +544,12 @@ def transaction_list():
         },
         accounts=_account_rows(connection),
         categories=repo.transaction_categories(connection),
-        currencies=repo.currencies(connection),
+        # 条件里的「币种」比的是行上的 currency：未入组的行是原币种，合并组是
+        # 显示币种。候选取这两者的并集，别只给显示币种——那样 CNY 这种被换算
+        # 掉的原始币种就选不到了。
+        currencies=sorted(
+            set(repo.transaction_currencies(connection)) | {conf.display_currency}
+        ),
         group_count=repo.count_groups(connection),
         display_currency=conf.display_currency,
         # 没有对方筛选时是 null。有的话是 {total, hidden}，含隐藏记录。

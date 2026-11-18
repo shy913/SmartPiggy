@@ -268,13 +268,39 @@ describe("交易记录页", () => {
 
     await waitFor(() => expect(calls.length).toBeGreaterThan(1));
     const url = new URL(calls[calls.length - 1], "http://x");
-    const conds = JSON.parse(url.searchParams.get("conds")!);
+    const conds: { column: string; connector: string }[] = JSON.parse(
+      url.searchParams.get("conds")!,
+    );
     expect(conds.map((row) => row.column)).toEqual([
       "counterparty",
       "amount_cents",
       "direction",
     ]);
     expect(conds.map((row) => row.connector)).toEqual(["AND", "AND", "OR"]);
+  });
+
+  it("条件可以一直加，没有条数上限", async () => {
+    const user = userEvent.setup();
+    draw(listBody());
+
+    await waitFor(() => expect(screen.getByText("共 0 条。")).toBeInTheDocument());
+    await user.click(screen.getByText("筛选"));
+
+    for (let index = 1; index <= 6; index += 1) {
+      await user.selectOptions(
+        screen.getByLabelText(`第 ${index} 行的列`),
+        "counterparty",
+      );
+      await user.type(screen.getByLabelText(`第 ${index} 行的值`), `商户${index}`);
+    }
+
+    await user.click(screen.getByRole("button", { name: "查看" }));
+
+    await waitFor(() => expect(calls.length).toBeGreaterThan(1));
+    const url = new URL(calls[calls.length - 1], "http://x");
+    const conds: { value: string }[] = JSON.parse(url.searchParams.get("conds")!);
+    expect(conds).toHaveLength(6);
+    expect(conds[5].value).toBe("商户6");
   });
 
   it("日期框已经被条件构造器取代", async () => {
