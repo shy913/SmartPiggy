@@ -2023,6 +2023,9 @@ def transaction_categories(connection: sqlite3.Connection) -> list[str]:
     先在内层对原始值去重，再套归类映射：分类是自由文本，但不同的值其实只有
     几十个。原先直接对十万行逐行算 CASE，再为 DISTINCT 建临时 B 树；改成
     「索引扫描去重 → 少量值做映射」之后，每次页面加载少掉两百多毫秒。
+
+    排序交给 ``categories.sort_key``：按统一体系的顺序，而不是 SQLite 的
+    码点序——几十个中文分类照码点排会显得毫无规律。
     """
     rows = connection.execute(
         f"""
@@ -2035,10 +2038,10 @@ def transaction_categories(connection: sqlite3.Connection) -> list[str]:
             SELECT DISTINCT source_category FROM transactions
             WHERE source_category <> ''
           )
-        ) ORDER BY name
+        )
         """
     ).fetchall()
-    return [row["name"] for row in rows]
+    return sorted((row["name"] for row in rows), key=categories.sort_key)
 
 
 def transaction_currencies(connection: sqlite3.Connection) -> list[str]:
