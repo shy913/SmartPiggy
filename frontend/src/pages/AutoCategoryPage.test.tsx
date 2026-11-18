@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { AutoCategoryPage } from "./AutoCategoryPage";
 import type { CategorySuggestions, Meta } from "../api/types";
+import { anchorKey } from "../lib/anchor";
 
 const META: Meta = {
   auth_enabled: false,
@@ -73,7 +74,7 @@ function draw(data: CategorySuggestions) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/auto-category"]}>
         <AutoCategoryPage />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -83,6 +84,7 @@ function draw(data: CategorySuggestions) {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  sessionStorage.clear();
 });
 
 describe("自动识别页", () => {
@@ -108,6 +110,35 @@ describe("自动识别页", () => {
     );
     expect(screen.getByText(/只列前 1 笔，还有 11 笔未列/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "全部 14 笔一起改" })).toBeInTheDocument();
+  });
+
+  it("点明细进详情之前，先记住当前位置和那一组建议", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "scrollY", "get").mockReturnValue(321);
+    draw(body());
+
+    await user.click(await screen.findByRole("button", { name: /查看明细/ }));
+    await user.click(screen.getByRole("link", { name: /超市购物/ }));
+
+    const saved = JSON.parse(
+      sessionStorage.getItem(anchorKey("/auto-category", ""))!,
+    );
+    expect(saved.y).toBe(321);
+    expect(saved.target).toBe("suggestion-Tesco");
+  });
+
+  it("从详情回来会滚回原位、展开那一组并闪一下", async () => {
+    sessionStorage.setItem(
+      anchorKey("/auto-category", ""),
+      JSON.stringify({ y: 480, target: "suggestion-Tesco", at: Date.now() }),
+    );
+    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    draw(body());
+
+    const item = (await screen.findByText("Tesco")).closest("li")!;
+    await waitFor(() => expect(item).toHaveAttribute("data-flash", "1"));
+    expect(scrollTo).toHaveBeenCalledWith(0, 480);
+    expect(screen.getByText("超市购物")).toBeInTheDocument();
   });
 
   it("补全只动未分类；全部要确认后才覆盖", async () => {

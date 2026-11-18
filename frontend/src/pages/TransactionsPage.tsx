@@ -12,6 +12,7 @@ import {
   updateCounterpartyTransactions,
 } from "../api/client";
 import type { MemberRow, TransactionRow } from "../api/types";
+import { AnchorLink } from "../components/AnchorLink";
 import { BackLink } from "../components/BackLink";
 import { CategoryMark } from "../components/CategoryMark";
 import { MemberAmount } from "../components/MemberAmount";
@@ -760,8 +761,6 @@ function Row({
   const location = useLocation();
   const nav = location.state as BackState;
   const back = `${location.pathname}${location.search}`;
-  const remember = () =>
-    saveAnchor(anchorKey(location.pathname, location.search), `txn-${row.id}`);
   // 这一行换算过没有，看服务端给的 display_currency；没配汇率的币种它等于原币种。
   const converted = row.display_currency !== row.currency;
   const original =
@@ -792,14 +791,14 @@ function Row({
         {row.id === null ? (
           <When value={row.occurred_at} />
         ) : (
-          <Link
+          <AnchorLink
+            target={`txn-${row.id}`}
             className="text-accent underline"
             to={`/transactions/${row.id}`}
             state={{ from: back, backLabel: "交易记录", up: nav }}
-            onClick={remember}
           >
             <When value={row.occurred_at} />
-          </Link>
+          </AnchorLink>
         )}
       </TD>
       <NumTD
@@ -831,16 +830,16 @@ function Row({
             不会一起消失。 */}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           {row.counterparty ? (
-            <Link
+            <AnchorLink
+              target={`txn-${row.id}`}
               className="line-clamp-2 min-w-0 text-accent underline [overflow-wrap:anywhere]"
               title={row.counterparty}
               to={`/transactions/${row.id}`}
               state={{ from: back, backLabel: "交易记录", up: nav }}
-              onClick={remember}
             >
               <CategoryMark category={row.effective_category} emoji={row.emoji} />{" "}
               {row.counterparty}
-            </Link>
+            </AnchorLink>
           ) : (
             <CategoryMark category={row.effective_category} emoji={row.emoji} />
           )}
@@ -854,15 +853,15 @@ function Row({
       {/* 空间不够时整列收起：手机上两列平分剩下的宽度，谁都读不完整。 */}
       <TD className="hidden sm:table-cell">
         {row.description ? (
-          <Link
+          <AnchorLink
+            target={`txn-${row.id}`}
             className="line-clamp-3 min-w-0 text-accent underline [overflow-wrap:anywhere]"
             title={row.description}
             to={`/transactions/${row.id}`}
             state={{ from: back, backLabel: "交易记录", up: nav }}
-            onClick={remember}
           >
             {row.description}
-          </Link>
+          </AnchorLink>
         ) : null}
       </TD>
       <TD className={cn("text-right", STICKY, highlighted && "bg-warn/20")}>
@@ -897,8 +896,6 @@ function GroupRow({
   const location = useLocation();
   const nav = location.state as BackState;
   const target = `group-${row.group_id}`;
-  const remember = () =>
-    saveAnchor(anchorKey(location.pathname, location.search), target);
   return (
     <>
       <TR
@@ -953,7 +950,8 @@ function GroupRow({
         >
           {/* 合并行不是一条记录，进不了详情页——它只能去合并组页取消合并。
               带上 group 参数，组页才落得到这一组。 */}
-          <Link
+          <AnchorLink
+            target={target}
             className="text-accent underline"
             to={`/groups?group=${row.group_id}`}
             state={{
@@ -961,10 +959,9 @@ function GroupRow({
               backLabel: "交易记录",
               up: nav,
             }}
-            onClick={remember}
           >
             管理
-          </Link>
+          </AnchorLink>
         </TD>
       </TR>
       <tr className="border-b border-border last:border-0">

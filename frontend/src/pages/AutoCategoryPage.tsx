@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -13,10 +12,13 @@ import {
   updateCounterpartyTransactions,
 } from "../api/client";
 import type { CategorySuggestion } from "../api/types";
+import { AnchorLink } from "../components/AnchorLink";
 import { Button } from "../components/ui/button";
 import { Card, Section } from "../components/ui/card";
 import { Empty, ErrorText, Hint, Tag } from "../components/ui/bits";
 import { formatAmount, minute } from "../lib/format";
+import { useReturnAnchor } from "../lib/useReturnAnchor";
+import { cn } from "../lib/utils";
 
 /**
  * 自动识别。
@@ -46,6 +48,13 @@ export function AutoCategoryPage() {
       else next.add(name);
       return next;
     });
+
+  // 从这一页点进详情再回来：滚回原位，并把刚才那一组建议重新展开、闪一下。
+  const flashTarget = useReturnAnchor(!isPending && !!data, (anchor) => {
+    if (anchor.target?.startsWith("suggestion-")) {
+      setOpen(new Set([anchor.target.slice("suggestion-".length)]));
+    }
+  });
 
   const refresh = () => {
     client.invalidateQueries({ queryKey: ["category-suggestions"] });
@@ -162,8 +171,18 @@ export function AutoCategoryPage() {
             {data.suggestions.map((item) => {
               const extra = item.scope.total - item.count;
               const isOpen = open.has(item.counterparty);
+              const anchor = `suggestion-${item.counterparty}`;
+              const flashing = flashTarget === anchor;
               return (
-                <li key={item.counterparty} className="py-3">
+                <li
+                  key={item.counterparty}
+                  data-anchor-id={anchor}
+                  data-flash={flashing ? "1" : undefined}
+                  className={cn(
+                    "py-3 transition-colors duration-700",
+                    flashing && "bg-warn/20",
+                  )}
+                >
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                     <button
                       type="button"
@@ -266,7 +285,8 @@ export function AutoCategoryPage() {
                                 : "";
                           return (
                             <li key={tx.id}>
-                              <Link
+                              <AnchorLink
+                                target={anchor}
                                 className="-mx-1 flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded px-1 py-1 text-xs hover:bg-panel-hover"
                                 to={`/transactions/${tx.id}`}
                                 state={{ from: "/auto-category", backLabel: "自动识别" }}
@@ -290,7 +310,7 @@ export function AutoCategoryPage() {
                                   {tx.description || tx.memo || "—"}
                                 </span>
                                 {tx.hidden ? <Tag>已隐藏</Tag> : null}
-                              </Link>
+                              </AnchorLink>
                             </li>
                           );
                         })}
