@@ -701,15 +701,19 @@ function FilterBar({
                     />
                   );
                 } else if (column.kind === "date") {
+                  // 日期也收成普通文本框：可以直接敲 2026-11-22，
+                  // 也可以照 SQL 习惯带引号。用原生日期选择器的话，
+                  // 这些写法反而进不去。
                   value = (
                     <Input
                       aria-label={valueLabel}
-                      type="date"
+                      type="text"
+                      placeholder="2026-11-22"
                       value={row.value}
                       onChange={(event) =>
                         updateCondition(index, { value: event.target.value })
                       }
-                      className="min-w-36 flex-1"
+                      className="min-w-36 flex-1 font-mono"
                     />
                   );
                 } else if (column.kind === "number") {

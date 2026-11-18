@@ -66,6 +66,13 @@ def _text(row: dict, key: str) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
+def _unquote(value: str) -> str:
+    """去掉值两边成对的引号：照 SQL 习惯写成 ``'2026-11-22'`` 也认。"""
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1].strip()
+    return value
+
+
 def _bound_value(column: str, kind: str, operator: str, value: str):
     if kind == "number" or kind == "account":
         if not re.fullmatch(r"-?\d+", value):
@@ -90,7 +97,7 @@ def build(rows: list) -> tuple[str, list]:
             raise ConditionError("条件格式不对。")
         column = _text(row, "column")
         operator = _text(row, "operator")
-        value = _text(row, "value")
+        value = _unquote(_text(row, "value"))
         if not column and not operator and not value:
             continue  # 界面末尾那行还没填的空行
 
@@ -144,7 +151,7 @@ def describe(rows: list, accounts=()) -> str:
             continue
         column = _text(row, "column")
         operator = _text(row, "operator")
-        value = _text(row, "value")
+        value = _unquote(_text(row, "value"))
         if column not in COLUMNS or operator not in OPERATORS[COLUMNS[column][1]] or not value:
             continue
         label = COLUMNS[column][2]

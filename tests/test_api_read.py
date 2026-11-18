@@ -539,6 +539,31 @@ def test_date_conditions_replace_the_date_fields(client, book):
     assert "条件「日期 ≥ 2026-02-01 且 日期 ≤ 2026-02-28」" in body["active_filters"]
 
 
+def test_values_may_be_written_as_sql_strings(client, book):
+    """值两边成对的引号会去掉：照着 SQL 写 '2026-11-22' 也认。"""
+    book(
+        [
+            {
+                "occurred_at": "2026-02-05 12:00:00",
+                "direction": "out",
+                "amount_cents": 2000,
+                "counterparty": "家电城",
+            }
+        ]
+    )
+
+    body = txns(
+        client,
+        conds=conds(
+            condition("occurred_date", ">=", "'2026-02-01'"),
+            condition("counterparty", "=", '"家电城"'),
+        ),
+    )
+
+    assert body["total"] == 1
+    assert "条件「日期 ≥ 2026-02-01 且 对方 = 家电城」" in body["active_filters"]
+
+
 def test_the_account_condition_shows_the_account_name(client, book):
     book([{"direction": "out", "amount_cents": 1000}])
 
