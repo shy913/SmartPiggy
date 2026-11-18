@@ -246,6 +246,37 @@ describe("交易记录页", () => {
     ]);
   });
 
+  it("多条条件按 A AND B OR C 的顺序拼接", async () => {
+    const user = userEvent.setup();
+    draw(listBody());
+
+    await waitFor(() => expect(screen.getByText("共 0 条。")).toBeInTheDocument());
+    await user.click(screen.getByText("筛选"));
+
+    await user.selectOptions(screen.getByLabelText("第 1 行的列"), "counterparty");
+    await user.type(screen.getByLabelText("第 1 行的值"), "美团");
+
+    await user.selectOptions(screen.getByLabelText("第 2 行的列"), "amount_cents");
+    await user.selectOptions(screen.getByLabelText("第 2 行的判断"), ">");
+    await user.type(screen.getByLabelText("第 2 行的值"), "1000");
+
+    await user.selectOptions(screen.getByLabelText("第 3 行的连接"), "OR");
+    await user.selectOptions(screen.getByLabelText("第 3 行的列"), "direction");
+    await user.selectOptions(screen.getByLabelText("第 3 行的值"), "out");
+
+    await user.click(screen.getByRole("button", { name: "查看" }));
+
+    await waitFor(() => expect(calls.length).toBeGreaterThan(1));
+    const url = new URL(calls[calls.length - 1], "http://x");
+    const conds = JSON.parse(url.searchParams.get("conds")!);
+    expect(conds.map((row) => row.column)).toEqual([
+      "counterparty",
+      "amount_cents",
+      "direction",
+    ]);
+    expect(conds.map((row) => row.connector)).toEqual(["AND", "AND", "OR"]);
+  });
+
   it("日期框已经被条件构造器取代", async () => {
     const user = userEvent.setup();
     draw(listBody());
