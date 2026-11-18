@@ -566,30 +566,93 @@ function ExclusionHints({ data, back }: { data: Dashboard; back: string }) {
   );
 }
 
+/** 「含大额」记在本地：它决定预计值算不算大额，不改库里的任何口径。 */
+const INCLUDE_LARGE_KEY = "bill.summary.includeLarge";
+
+function readFlag(key: string, fallback: boolean): boolean {
+  try {
+    const value = globalThis.localStorage?.getItem(key);
+    return value ? value === "1" : fallback;
+  } catch {
+    return fallback; // 隐私模式或禁用了存储时，读不到就按默认算。
+  }
+}
+
+function useStoredFlag(
+  key: string,
+  fallback: boolean,
+): [boolean, (next: boolean) => void] {
+  const [on, setOn] = useState(() => readFlag(key, fallback));
+  const set = (next: boolean) => {
+    setOn(next);
+    try {
+      globalThis.localStorage?.setItem(key, next ? "1" : "0");
+    } catch {
+      // 存不下也不影响这一次的显示，刷新后回到默认而已。
+    }
+  };
+  return [on, set];
+}
+
 /**
- * 预测与平均。预测的支出里已经算上**大额月均**（最近 N 天滚动折算），
- * 所以下面始终摆一块大额明细：让「预计」这个大数里的人为分解看得见。
+ * 预测与平均。开关只管「预计值和进度条算不算大额月均」；下面那块大额明细
+ * 始终显示——它是原因，不该跟着开关一起消失。
  *
- * 滚动窗口的折算在服务端做（整数分交付）；这里只管显示。
+ * 滚动窗口的折算在服务端做（整数分交付）；这里只管显示和开关。
  */
 function Forecast({ data }: { data: Dashboard }) {
   const averages = data.averages;
   const large = data.large;
+  const [includeLarge, setIncludeLarge] = useStoredFlag(INCLUDE_LARGE_KEY, true);
   const hasLarge = large.count > 0;
 
   return (
     <Card>
       <div className="flex items-baseline justify-between gap-2">
         <h2 className="text-base font-semibold">预测与平均</h2>
-        <span className="text-xs text-muted">{data.currency}</span>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={includeLarge}
+            aria-label="预测含大额"
+            className="flex items-center gap-1.5 text-xs text-muted transition-colors hover:text-text"
+            onClick={() => setIncludeLarge(!includeLarge)}
+          >
+            <span
+              aria-hidden
+              className={cn(
+                "relative inline-block h-4 w-7 rounded-full transition-colors",
+                includeLarge ? "bg-accent" : "border border-border bg-panel-hover",
+              )}
+            >
+              <span
+                className={cn(
+                  "absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full transition-all",
+                  includeLarge ? "left-3.5 bg-on-accent" : "left-0.5 bg-muted",
+                )}
+              />
+            </span>
+            含大额
+          </button>
+          <span className="text-xs text-muted">{data.currency}</span>
+        </div>
       </div>
       <div className="mt-3 grid gap-4 sm:grid-cols-2">
         {/* 两个预测都是拿「今天所在的月 / 年」外推的。翻到已经过完的区间时，
             它们跟屏幕上这段日期没有关系，换成这段区间自己的支出和它跟平均的差距。 */}
         {data.range.current ? (
           <>
-            <ForecastItem label="预计本月支出" window={data.forecast.month} />
-            <ForecastItem label="预计本年支出" window={data.forecast.year} />
+            <ForecastItem
+              label="预计本月支出"
+              window={data.forecast.month}
+              includeLarge={includeLarge}
+            />
+            <ForecastItem
+              label="预计本年支出"
+              window={data.forecast.year}
+              includeLarge={includeLarge}
+            />
           </>
         ) : (
           <RangeTotal data={data} />
@@ -704,27 +767,32 @@ function RangeTotal({ data }: { data: Dashboard }) {
 function ForecastItem({
   label,
   window,
+  includeLarge,
 }: {
   label: string;
   window: Dashboard["forecast"]["month"];
+  includeLarge: boolean;
 }) {
+  // 开关关掉时退回「只算日常消费」：预计值和已花都减掉大额那部分，
+  // 进度条也跟着变成一条纯日常的进度。
+  const largeSpent = includeLarge ? window.large_spent : 0;
+  const spent = window.spent - (includeLarge ? 0 : window.large_spent);
+  const projected = window.projected - (includeLarge ? 0 : window.large_projected);
   // 进度条按**金额**走：整条是预测总额，已花填到哪儿就是走到哪儿。
   // 已花里的大额单独一段颜色，跟旁边那句「（大额 …）」是同一个数。
   const percent =
-    window.projected > 0
-      ? Math.min(Math.round((window.spent / window.projected) * 100), 100)
-      : 0;
-  const largeShare = window.spent > 0 ? window.large_spent / window.spent : 0;
+    projected > 0 ? Math.min(Math.round((spent / projected) * 100), 100) : 0;
+  const largeShare = spent > 0 ? largeSpent / spent : 0;
   const largePercent = percent * largeShare;
   const everydayPercent = percent - largePercent;
   return (
     <div>
       <div className="text-xs text-muted">{label}</div>
-      <div className="tabular mt-0.5 text-2xl font-semibold">{formatAmount(window.projected)}</div>
+      <div className="tabular mt-0.5 text-2xl font-semibold">{formatAmount(projected)}</div>
       <div className="mt-1 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs text-muted">
         <span>
-          已花 {formatAmount(window.spent)}
-          {window.large_spent > 0 ? `（大额 ${formatAmount(window.large_spent)}）` : ""}
+          已花 {formatAmount(spent)}
+          {largeSpent > 0 ? `（大额 ${formatAmount(largeSpent)}）` : ""}
         </span>
         <span className="tabular">
           {window.elapsed_days}/{window.total_days} 天

@@ -224,7 +224,11 @@ function calledUrls(): string[] {
   );
 }
 
-beforeEach(() => vi.unstubAllGlobals());
+beforeEach(() => {
+  vi.unstubAllGlobals();
+  // 「含大额」开关记在 localStorage，上一个用例关掉不能影响下一个。
+  localStorage.clear();
+});
 afterEach(() => vi.unstubAllGlobals());
 
 describe("汇总页", () => {
@@ -240,16 +244,28 @@ describe("汇总页", () => {
     expect(screen.getByText("折线")).toBeInTheDocument();
   });
 
-  it("大额月均始终显示，预测和已花里都算上大额", async () => {
+  it("「含大额」开关控制预计口径，大额明细始终显示", async () => {
+    const user = userEvent.setup();
     draw(summaryBody());
     await waitFor(() => expect(screen.getByText("大额月均")).toBeInTheDocument());
     expect(screen.getByText("最近 90 天 · 2 笔")).toBeInTheDocument();
     expect(screen.getByText("413.33")).toBeInTheDocument();
     expect(screen.getByText("最近 90 天合计 1,200.00")).toBeInTheDocument();
-    // 预计值已经含大额月均；已花也一样，并把大额单独写出来。
+
+    const toggle = screen.getByRole("switch", { name: "预测含大额" });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    // 预计值含大额月均；已花也一样，并把大额单独写出来。
     expect(screen.getByText("6,681.48")).toBeInTheDocument();
     expect(screen.getByText("已花 4,000.00（大额 1,280.85）")).toBeInTheDocument();
-    expect(screen.queryByRole("switch")).toBeNull();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    // 只算日常消费：预计值、已花都减去大额；明细块不跟着消失。
+    expect(screen.getByText("5,756.55")).toBeInTheDocument();
+    expect(screen.getByText("已花 2,719.15")).toBeInTheDocument();
+    expect(screen.queryByText(/（大额 /)).toBeNull();
+    expect(screen.getByText("大额月均")).toBeInTheDocument();
+    expect(localStorage.getItem("bill.summary.includeLarge")).toBe("0");
   });
 
   it("最近窗口里没有大额时说明一句，不摆两个 0", async () => {
