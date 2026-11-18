@@ -170,6 +170,8 @@ def test_the_forecast_uses_the_daily_pace_of_this_month(client, book):
     days = calendar.monthrange(now.year, now.month)[1]
     assert body["forecast"]["month"] == {
         "spent": 1000,
+        "large_spent": 0,
+        "large_projected": 0,
         "projected": (1000 * days + now.day // 2) // now.day,
         "elapsed_days": now.day,
         "total_days": days,
@@ -178,7 +180,50 @@ def test_the_forecast_uses_the_daily_pace_of_this_month(client, book):
     year_days = 366 if calendar.isleap(now.year) else 365
     elapsed = now.timetuple().tm_yday
     assert body["forecast"]["year"]["spent"] == 1000
+    assert body["forecast"]["year"]["large_spent"] == 0
+    assert body["forecast"]["year"]["large_projected"] == 0
     assert body["forecast"]["year"]["projected"] == (1000 * year_days + elapsed // 2) // elapsed
+
+
+def test_the_forecast_adds_the_large_monthly_average(client, book, tmp_path):
+    """预测 = 日常日均外推 + 大额月均；已花也含已经发生的大额。"""
+    (tmp_path / "settings.toml").write_text(
+        'timezone = "Asia/Shanghai"\n\n[currency]\ndisplay = "CNY"\nrates = {}\n'
+        "\n[large]\nout = 500\nin = 0\nwindow_days = 90\n",
+        encoding="utf-8",
+    )
+    now = today()
+    book(
+        [
+            {
+                "occurred_at": f"{(now - timedelta(days=89)).isoformat()} 09:00:00",
+                "direction": "out",
+                "amount_cents": 1000,
+            },
+            {
+                "occurred_at": f"{now.isoformat()} 09:00:00",
+                "direction": "out",
+                "amount_cents": 1000,
+            },
+            {
+                "occurred_at": f"{now.isoformat()} 10:00:00",
+                "direction": "out",
+                "amount_cents": 60000,
+            },
+        ]
+    )
+    body = dashboard(client)
+    month_days = calendar.monthrange(now.year, now.month)[1]
+    large_monthly = (60000 * month_days + 45) // 90
+    month = body["forecast"]["month"]
+    assert month["spent"] == 61000, "已花含已经发生的大额"
+    assert month["large_spent"] == 60000
+    assert month["large_projected"] == large_monthly, "预测里加上大额月均"
+    assert month["projected"] == (
+        (1000 * month_days + now.day // 2) // now.day + large_monthly
+    )
+    # 本年按同一份月均 × 12。
+    assert body["forecast"]["year"]["large_projected"] == large_monthly * 12
 
 
 def test_the_averages_only_count_complete_months(client, book):
