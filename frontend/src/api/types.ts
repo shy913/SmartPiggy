@@ -307,6 +307,14 @@ export type MemberRow = {
   suggested_category?: string;
 };
 
+/** 条件构造器的一行。`connector` 是这一行跟上一行之间的关系。 */
+export type ConditionRow = {
+  column: string;
+  operator: string;
+  value: string;
+  connector: "AND" | "OR";
+};
+
 export type ListFilters = {
   start: string;
   end: string;
@@ -317,8 +325,8 @@ export type ListFilters = {
   /** 精确匹配的对方名，从首页「对方汇总」点进来时带上。 */
   counterparty: string;
   hidden: string;
-  /** 用户自己写的 WHERE 条件（已经去掉开头的 WHERE）。 */
-  where: string;
+  /** 构造器里那几行条件，按顺序从左到右结合。 */
+  conditions: ConditionRow[];
 };
 
 /** 建议里展开看到的某一笔。金额仍是原币最小单位。 */
@@ -374,6 +382,8 @@ export type TransactionList = {
   filters: ListFilters;
   accounts: Account[];
   categories: string[];
+  /** 账本里出现过的币种，条件构造器的「币种」下拉用。 */
+  currencies: string[];
   group_count: number;
   display_currency: string;
   /** 对方筛选生效时，跟这个对方往来的全部原始交易有几笔、其中几笔隐藏；

@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -11,7 +18,7 @@ import {
   unhideTransaction,
   updateCounterpartyTransactions,
 } from "../api/client";
-import type { MemberRow, TransactionRow } from "../api/types";
+import type { ConditionRow, MemberRow, TransactionRow } from "../api/types";
 import { AnchorLink } from "../components/AnchorLink";
 import { BackLink } from "../components/BackLink";
 import { CategoryMark } from "../components/CategoryMark";
@@ -20,6 +27,15 @@ import { Button, buttonStyles } from "../components/ui/button";
 import { ErrorText, Field, Hint, Input, Tag } from "../components/ui/bits";
 import { NumTD, NumTH, Table, TableScroll, TBody, TD, TH, THead, TR } from "../components/ui/table";
 import { anchorKey, saveAnchor } from "../lib/anchor";
+import {
+  BUILDER_COLUMNS,
+  OPERATOR_LABELS,
+  columnFor,
+  emptyCondition,
+  initialConditions,
+  isComplete,
+  packConditions,
+} from "../lib/conditions";
 import { formatSigned, minute } from "../lib/format";
 import { useFlash } from "../lib/useFlash";
 import { useReturnAnchor } from "../lib/useReturnAnchor";
@@ -39,6 +55,9 @@ const STEP = 200;
  * 背后透出来。
  */
 const STICKY = "sticky right-0 bg-bg";
+
+/** 条件构造器里那几个下拉框共用的尺寸。 */
+const SELECT_CLASS = "h-9 rounded-md border border-border bg-bg px-2 text-sm";
 
 /**
  * 说明列在 `sm` 以下整列收起，合并组下面那条展开行也得跟着少跨一列。
@@ -239,6 +258,7 @@ export function TransactionsPage() {
         filters={data.filters}
         accounts={data.accounts}
         categories={data.categories}
+        currencies={data.currencies}
         active={data.active_filters}
         onChange={(next) => {
           setSelected([]);
@@ -265,7 +285,7 @@ export function TransactionsPage() {
       <Hint>{data.hint}</Hint>
       {data.backwards ? (
         <div className="mt-2">
-          <ErrorText>开始时间比结束时间晚，这个区间里一条都挑不出来。</ErrorText>
+          <ErrorText>开始日期比结束日期晚，这个区间里一条都挑不出来。</ErrorText>
         </div>
       ) : null}
       {error ? (
@@ -495,6 +515,7 @@ function FilterBar({
   filters,
   accounts,
   categories,
+  currencies,
   active,
   onChange,
 }: {
@@ -507,24 +528,53 @@ function FilterBar({
     category: string;
     counterparty: string;
     hidden: string;
-    where: string;
+    conditions: ConditionRow[];
   };
   accounts: { id: number; name: string }[];
   categories: string[];
+  currencies: string[];
   active: string[];
   onChange: (params: URLSearchParams) => void;
 }) {
-  const [draft, setDraft] = useState({
-    start: filters.start,
-    end: filters.end,
+  const [draft, setDraft] = useState(() => ({
     direction: filters.direction,
     account: filters.account ? String(filters.account) : "",
     q: filters.q,
     category: filters.category,
     counterparty: filters.counterparty,
     hidden: filters.hidden,
-    where: filters.where,
-  });
+    conditions: initialConditions(filters),
+  }));
+
+  const updateCondition = (index: number, patch: Partial<ConditionRow>) => {
+    setDraft((current) => {
+      const rows = current.conditions.map((row, i) => {
+        if (i !== index) return row;
+        if ("column" in patch) {
+          const column = patch.column ? columnFor(patch.column) : undefined;
+          return {
+            ...row,
+            column: patch.column ?? "",
+            operator: column?.operators[0] ?? "",
+            value: "",
+          };
+        }
+        return { ...row, ...patch };
+      });
+      // 填完最后一行就自动长出一行新的：填一个，生成下一个。
+      if (isComplete(rows[rows.length - 1])) rows.push(emptyCondition());
+      return { ...current, conditions: rows };
+    });
+  };
+
+  const removeCondition = (index: number) => {
+    setDraft((current) => {
+      const rows = current.conditions.filter((_, i) => i !== index);
+      if (!rows.length) rows.push(emptyCondition());
+      else if (isComplete(rows[rows.length - 1])) rows.push(emptyCondition());
+      return { ...current, conditions: rows };
+    });
+  };
 
   return (
     <details className="rounded-lg border border-border bg-panel" open={active.length > 0}>
@@ -536,28 +586,17 @@ function FilterBar({
         onSubmit={(event) => {
           event.preventDefault();
           const next = new URLSearchParams();
-          for (const [key, value] of Object.entries(draft)) if (value) next.set(key, value);
-          // 起止日期一律带上，空串也带：空串是「这一端不限」，跟「压根没这个参数」
-          // （＝落回当月）是两回事。丢掉的话，把区间清空之后回来的这一屏会自己缩回当月。
-          next.set("start", draft.start);
-          next.set("end", draft.end);
+          const { conditions, ...plain } = draft;
+          for (const [key, value] of Object.entries(plain)) {
+            if (value) next.set(key, value);
+          }
+          // 日期框已经换成构造器里的「日期」条件，这里不再带 start/end：
+          // 汇总页深链接带进来的区间，在初始化时已经变成两行条件。
+          const packed = packConditions(conditions);
+          if (packed.length) next.set("conds", JSON.stringify(packed));
           onChange(next);
         }}
       >
-        <Field label="开始时间">
-          <Input
-            type="date"
-            value={draft.start}
-            onChange={(event) => setDraft({ ...draft, start: event.target.value })}
-          />
-        </Field>
-        <Field label="结束时间">
-          <Input
-            type="date"
-            value={draft.end}
-            onChange={(event) => setDraft({ ...draft, end: event.target.value })}
-          />
-        </Field>
         <Field label="收支">
           <select
             className="h-9 rounded-md border border-border bg-bg px-2 text-sm"
@@ -642,18 +681,209 @@ function FilterBar({
           </datalist>
         </Field>
         <Field label="SQL 条件" className="basis-full">
-          <div className="flex flex-wrap items-center gap-2 font-mono text-sm">
-            <span className="whitespace-nowrap text-muted">
+          <div className="w-full rounded-md border border-border bg-bg px-3 py-2">
+            <div className="mb-2 font-mono text-xs text-muted">
               SELECT * FROM transactions
-            </span>
-            <Input
-              type="text"
-              aria-label="SQL 条件"
-              placeholder="WHERE ..."
-              value={draft.where}
-              onChange={(event) => setDraft({ ...draft, where: event.target.value })}
-              className="min-w-48 flex-1 font-mono"
-            />
+            </div>
+            <div className="flex flex-col gap-2">
+              {draft.conditions.map((row, index) => {
+                const column = columnFor(row.column);
+                const valueLabel = `第 ${index + 1} 行的值`;
+                let value: ReactNode;
+                if (!column) {
+                  value = (
+                    <Input
+                      aria-label={valueLabel}
+                      value=""
+                      disabled
+                      placeholder="值"
+                      className="min-w-36 flex-1"
+                    />
+                  );
+                } else if (column.kind === "date") {
+                  value = (
+                    <Input
+                      aria-label={valueLabel}
+                      type="date"
+                      value={row.value}
+                      onChange={(event) =>
+                        updateCondition(index, { value: event.target.value })
+                      }
+                      className="min-w-36 flex-1"
+                    />
+                  );
+                } else if (column.kind === "number") {
+                  value = (
+                    <Input
+                      aria-label={valueLabel}
+                      type="number"
+                      inputMode="numeric"
+                      step="1"
+                      placeholder="整数（分）"
+                      value={row.value}
+                      onChange={(event) =>
+                        updateCondition(index, { value: event.target.value })
+                      }
+                      className="min-w-36 flex-1"
+                    />
+                  );
+                } else if (column.kind === "account") {
+                  value = (
+                    <select
+                      aria-label={valueLabel}
+                      className={SELECT_CLASS + " min-w-36 flex-1"}
+                      value={row.value}
+                      onChange={(event) =>
+                        updateCondition(index, { value: event.target.value })
+                      }
+                    >
+                      <option value="">账户…</option>
+                      {accounts.map((account) => (
+                        <option key={account.id} value={account.id}>
+                          {account.name}
+                        </option>
+                      ))}
+                    </select>
+                  );
+                } else if (column.key === "direction") {
+                  value = (
+                    <select
+                      aria-label={valueLabel}
+                      className={SELECT_CLASS + " min-w-36 flex-1"}
+                      value={row.value}
+                      onChange={(event) =>
+                        updateCondition(index, { value: event.target.value })
+                      }
+                    >
+                      <option value="">收支…</option>
+                      <option value="in">收入</option>
+                      <option value="out">支出</option>
+                      <option value="neutral">中性</option>
+                    </select>
+                  );
+                } else if (column.key === "category") {
+                  value = (
+                    <select
+                      aria-label={valueLabel}
+                      className={SELECT_CLASS + " min-w-36 flex-1"}
+                      value={row.value}
+                      onChange={(event) =>
+                        updateCondition(index, { value: event.target.value })
+                      }
+                    >
+                      <option value="">分类…</option>
+                      {Array.from(new Set([...categories, "未分类"])).map((item) => (
+                        <option key={item} value={item}>
+                          {item}
+                        </option>
+                      ))}
+                    </select>
+                  );
+                } else if (column.key === "currency") {
+                  value = (
+                    <select
+                      aria-label={valueLabel}
+                      className={SELECT_CLASS + " min-w-36 flex-1"}
+                      value={row.value}
+                      onChange={(event) =>
+                        updateCondition(index, { value: event.target.value })
+                      }
+                    >
+                      <option value="">币种…</option>
+                      {currencies.map((item) => (
+                        <option key={item} value={item}>
+                          {item}
+                        </option>
+                      ))}
+                    </select>
+                  );
+                } else {
+                  value = (
+                    <Input
+                      aria-label={valueLabel}
+                      type="text"
+                      placeholder={row.operator.includes("LIKE") ? "包含…" : "值"}
+                      value={row.value}
+                      onChange={(event) =>
+                        updateCondition(index, { value: event.target.value })
+                      }
+                      className="min-w-36 flex-1"
+                    />
+                  );
+                }
+                // 末尾那行空行是「下一条」的入口，不提供删除按钮。
+                const removable = !(
+                  index === draft.conditions.length - 1 && !isComplete(row)
+                );
+                return (
+                  <div key={index} className="flex flex-wrap items-center gap-2">
+                    {index === 0 ? (
+                      <span className="w-16 font-mono text-xs text-muted">WHERE</span>
+                    ) : (
+                      <select
+                        aria-label={`第 ${index + 1} 行的连接`}
+                        className={SELECT_CLASS + " w-16 font-mono"}
+                        value={row.connector}
+                        onChange={(event) =>
+                          updateCondition(index, {
+                            connector: event.target.value as "AND" | "OR",
+                          })
+                        }
+                      >
+                        <option value="AND">AND</option>
+                        <option value="OR">OR</option>
+                      </select>
+                    )}
+                    <select
+                      aria-label={`第 ${index + 1} 行的列`}
+                      className={SELECT_CLASS + " w-28"}
+                      value={row.column}
+                      onChange={(event) =>
+                        updateCondition(index, { column: event.target.value })
+                      }
+                    >
+                      <option value="">列</option>
+                      {BUILDER_COLUMNS.map((item) => (
+                        <option key={item.key} value={item.key}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      aria-label={`第 ${index + 1} 行的判断`}
+                      className={SELECT_CLASS + " w-20"}
+                      value={row.operator}
+                      disabled={!column}
+                      onChange={(event) =>
+                        updateCondition(index, { operator: event.target.value })
+                      }
+                    >
+                      {column ? (
+                        column.operators.map((operator) => (
+                          <option key={operator} value={operator}>
+                            {OPERATOR_LABELS[operator] ?? operator}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="">判断</option>
+                      )}
+                    </select>
+                    {value}
+                    {removable ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`删除第 ${index + 1} 条条件`}
+                        onClick={() => removeCondition(index)}
+                      >
+                        ×
+                      </Button>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </Field>
         <Button type="submit" variant="outline">
@@ -664,20 +894,15 @@ function FilterBar({
           variant="ghost"
           onClick={() => {
             setDraft({
-              start: "",
-              end: "",
               direction: "",
               account: "",
               q: "",
               category: "",
               counterparty: "",
               hidden: "0",
-              where: "",
+              conditions: [emptyCondition()],
             });
-            const next = new URLSearchParams();
-            next.set("start", "");
-            next.set("end", "");
-            onChange(next);
+            onChange(new URLSearchParams());
           }}
         >
           清空

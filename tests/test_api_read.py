@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -390,8 +391,21 @@ def test_clearing_both_dates_lands_on_the_same_view(client, book):
     assert txns(client)["total"] == txns(client, start="", end="")["total"] == 2
 
 
-def test_a_sql_condition_filters_the_list(client, book):
-    """条件就是筛选栏里的一个字段：跟分页、合计同一遍查询。"""
+def condition(column: str, operator: str, value: str, connector: str = "AND") -> dict:
+    return {
+        "column": column,
+        "operator": operator,
+        "value": value,
+        "connector": connector,
+    }
+
+
+def conds(*rows: dict) -> str:
+    return json.dumps(list(rows))
+
+
+def test_a_condition_row_filters_the_list(client, book):
+    """条件跟分页、合计同一遍查询；筛选栏里的行后端也原样回执。"""
     book(
         [
             {
@@ -408,42 +422,131 @@ def test_a_sql_condition_filters_the_list(client, book):
             },
         ]
     )
+    rows = [condition("amount_cents", ">", "2000")]
 
-    body = txns(client, where="amount_cents > 2000")
+    body = txns(client, conds=conds(*rows))
 
     assert body["total"] == 1
     assert [row["counterparty"] for row in body["rows"]] == ["家电城"]
-    assert body["filters"]["where"] == "amount_cents > 2000"
-    assert "条件「amount_cents > 2000」" in body["active_filters"]
+    assert body["filters"]["conditions"] == rows
+    assert "条件「金额 > 2000」" in body["active_filters"]
 
 
-def test_a_leading_where_is_optional(client, book):
+def test_conditions_combine_left_to_right(client, book):
     book(
         [
-            {"occurred_at": "2026-01-05 12:00:00", "direction": "out", "amount_cents": 1000},
-            {"occurred_at": "2026-01-06 12:00:00", "direction": "in", "amount_cents": 2000},
+            {"occurred_at": "2026-01-05 12:00:00", "direction": "out",
+             "amount_cents": 1000, "counterparty": "便利店"},
+            {"occurred_at": "2026-01-06 12:00:00", "direction": "out",
+             "amount_cents": 5000, "counterparty": "家电城"},
+            {"occurred_at": "2026-01-07 12:00:00", "direction": "out",
+             "amount_cents": 9000, "counterparty": "超市"},
         ]
     )
 
-    body = txns(client, where="WHERE direction = 'out'")
+    body = txns(
+        client,
+        conds=conds(
+            condition("counterparty", "=", "便利店"),
+            condition("amount_cents", ">", "5000", connector="OR"),
+        ),
+    )
+
+    assert body["total"] == 2
+    assert {row["counterparty"] for row in body["rows"]} == {"便利店", "超市"}
+
+
+def test_and_binds_left_to_right_not_by_sql_precedence(client, book):
+    """界面从上往下读，A OR B AND C 就是 (A OR B) AND C，不按 SQL 的优先级。"""
+    book(
+        [
+            {"direction": "out", "amount_cents": 1000, "counterparty": "便利店"},
+            {"direction": "out", "amount_cents": 9000, "counterparty": "超市"},
+            {"direction": "in", "amount_cents": 1000, "counterparty": "便利店"},
+            {"direction": "in", "amount_cents": 9000, "counterparty": "家电城"},
+        ]
+    )
+
+    body = txns(
+        client,
+        conds=conds(
+            condition("counterparty", "=", "便利店"),
+            condition("amount_cents", ">", "5000", connector="OR"),
+            condition("direction", "=", "in", connector="AND"),
+        ),
+    )
+
+    assert body["total"] == 2
+
+
+def test_like_matches_contains_without_writing_percent(client, book):
+    book(
+        [
+            {"direction": "out", "amount_cents": 1000, "counterparty": "家电城"},
+            {"direction": "out", "amount_cents": 2000, "counterparty": "便利店"},
+        ]
+    )
+
+    body = txns(client, conds=conds(condition("counterparty", "LIKE", "家电")))
 
     assert body["total"] == 1
-    assert body["filters"]["where"] == "direction = 'out'"
+    assert body["rows"][0]["counterparty"] == "家电城"
 
 
-def test_a_broken_condition_leaves_the_page_standing(client, book):
-    """条件写坏不是 500：列表给空，原因挂在上面，筛选栏还能接着改。"""
+def test_date_conditions_replace_the_date_fields(client, book):
+    book(
+        [
+            {"occurred_at": "2026-01-05 12:00:00", "direction": "out", "amount_cents": 1000},
+            {"occurred_at": "2026-02-05 12:00:00", "direction": "out", "amount_cents": 2000},
+        ]
+    )
+
+    body = txns(
+        client,
+        conds=conds(
+            condition("occurred_date", ">=", "2026-02-01"),
+            condition("occurred_date", "<=", "2026-02-28"),
+        ),
+    )
+
+    assert body["total"] == 1
+    assert body["rows"][0]["amount_cents"] == 2000
+    assert "条件「日期 ≥ 2026-02-01 且 日期 ≤ 2026-02-28」" in body["active_filters"]
+
+
+def test_the_account_condition_shows_the_account_name(client, book):
     book([{"direction": "out", "amount_cents": 1000}])
 
-    body = txns(client, where="nope = 1")
+    body = txns(client, conds=conds(condition("account_id", "=", "1")))
+
+    assert body["total"] == 1
+    assert "条件「账户 = 支付宝」" in body["active_filters"]
+
+
+def test_a_bad_condition_leaves_the_page_standing(client, book):
+    """条件写坏不是 500：列表给空，原因挂在上面，筛选栏还能接着改。"""
+    book([{"direction": "out", "amount_cents": 1000}])
+    rows = [condition("nope", "=", "1")]
+
+    body = txns(client, conds=conds(*rows))
 
     assert body["rows"] == []
     assert body["total"] == 0
-    assert "no such column" in body["condition_error"]
+    assert "没有「nope」这一列" in body["condition_error"]
+    assert body["filters"]["conditions"] == rows, "回执要能让用户改回去"
     assert body["accounts"], "筛选栏要用的账户照常返回"
 
 
-def test_a_condition_cannot_change_the_book(client, book):
+def test_a_bad_json_condition_leaves_the_page_standing(client, book):
+    book([{"direction": "out", "amount_cents": 1000}])
+
+    body = txns(client, conds="{not json")
+
+    assert body["rows"] == []
+    assert "条件格式不对" in body["condition_error"]
+
+
+def test_a_bad_value_cannot_change_the_book(client, book):
     book(
         [
             {"direction": "out", "amount_cents": 1000},
@@ -451,9 +554,12 @@ def test_a_condition_cannot_change_the_book(client, book):
         ]
     )
 
-    body = txns(client, where="1 = 1; DELETE FROM transactions")
+    body = txns(
+        client,
+        conds=conds(condition("amount_cents", ">", "1; DELETE FROM transactions")),
+    )
 
-    assert body["condition_error"]
+    assert "金额要填整数" in body["condition_error"]
     assert txns(client)["total"] == 2
 
 
@@ -469,7 +575,7 @@ def test_the_condition_sees_the_merged_net_row(client, conn, book):
     with conn:
         repo.create_group(conn, origin="manual", transaction_ids=ids)
 
-    body = txns(client, where="amount_cents = 4000")
+    body = txns(client, conds=conds(condition("amount_cents", "=", "4000")))
 
     assert body["total"] == 1
     assert body["rows"][0]["group_id"] is not None

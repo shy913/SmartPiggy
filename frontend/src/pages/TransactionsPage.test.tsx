@@ -23,18 +23,19 @@ function listBody(overrides: Partial<TransactionList> = {}): TransactionList {
     condition_error: null,
     active_filters: [],
     filters: {
-      start: "2026-10-01",
-      end: "2026-10-31",
+      start: "",
+      end: "",
       direction: "",
       account: null,
       q: "",
       category: "",
       counterparty: "",
       hidden: "0",
-      where: "",
+      conditions: [],
     },
     accounts: [{ id: 1, name: "支付宝" }],
     categories: [],
+    currencies: ["CNY"],
     group_count: 0,
     display_currency: "CNY",
     counterparty_scope: null,
@@ -150,22 +151,36 @@ describe("交易记录页", () => {
 
   it("区间填反了要说出来，不能长得像「这个月真没记账」", async () => {
     draw(listBody({ backwards: true }));
-    await waitFor(() => expect(screen.getByText(/开始时间比结束时间晚/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/开始日期比结束日期晚/)).toBeInTheDocument());
   });
 
-  it("清空筛选之后，两端是**空串**而不是「没有这个参数」", async () => {
-    // 这是最容易搬错的一条：`?start=&end=` 是「不限」，压根没给这个参数才是
-    // 「落回当月」。丢掉空串的话，清空区间之后回来的这一屏会自己缩回当月。
+  it("清空筛选之后回到不限的视图，连条件一起清掉", async () => {
     const user = userEvent.setup();
-    draw(listBody());
+    const packed = encodeURIComponent(
+      JSON.stringify([
+        { column: "amount_cents", operator: ">", value: "1000", connector: "AND" },
+      ]),
+    );
+    draw(
+      listBody({
+        filters: {
+          ...listBody().filters,
+          conditions: [
+            { column: "amount_cents", operator: ">", value: "1000", connector: "AND" },
+          ],
+        },
+      }),
+      `/transactions?conds=${packed}`,
+    );
 
     await waitFor(() => expect(screen.getByText("共 0 条。")).toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: "清空" }));
 
     await waitFor(() => expect(calls.length).toBeGreaterThan(1));
-    const last = calls[calls.length - 1];
-    expect(last).toContain("start=");
-    expect(last).toContain("end=");
+    const url = new URL(calls[calls.length - 1], "http://x");
+    expect(url.searchParams.get("conds")).toBeNull();
+    expect(url.searchParams.get("start")).toBeNull();
+    expect(url.searchParams.get("end")).toBeNull();
   });
 
   it("分类筛选原样进地址栏——首页排行点进来靠的就是它", async () => {
@@ -183,7 +198,7 @@ describe("交易记录页", () => {
     );
   });
 
-  it("SQL 条件只提交 WHERE 那一截，固定前缀不可改", async () => {
+  it("条件构造器：选列、判断符、值，填完自动长下一行", async () => {
     const user = userEvent.setup();
     draw(listBody());
 
@@ -191,15 +206,80 @@ describe("交易记录页", () => {
     await user.click(screen.getByText("筛选"));
     expect(screen.getByText("SELECT * FROM transactions")).toBeInTheDocument();
 
-    await user.type(
-      screen.getByLabelText("SQL 条件"),
-      "WHERE amount_cents > 10000",
-    );
+    await user.selectOptions(screen.getByLabelText("第 1 行的列"), "amount_cents");
+    await user.selectOptions(screen.getByLabelText("第 1 行的判断"), ">");
+    await user.type(screen.getByLabelText("第 1 行的值"), "10000");
+
+    // 第一行填完，下一行自己出现。
+    expect(screen.getByLabelText("第 2 行的列")).toBeInTheDocument();
+
     await user.click(screen.getByRole("button", { name: "查看" }));
 
     await waitFor(() => expect(calls.length).toBeGreaterThan(1));
     const url = new URL(calls[calls.length - 1], "http://x");
-    expect(url.searchParams.get("where")).toBe("WHERE amount_cents > 10000");
+    expect(JSON.parse(url.searchParams.get("conds")!)).toEqual([
+      { column: "amount_cents", operator: ">", value: "10000", connector: "AND" },
+    ]);
+  });
+
+  it("两行条件之间可以选 OR", async () => {
+    const user = userEvent.setup();
+    draw(listBody());
+
+    await waitFor(() => expect(screen.getByText("共 0 条。")).toBeInTheDocument());
+    await user.click(screen.getByText("筛选"));
+
+    await user.selectOptions(screen.getByLabelText("第 1 行的列"), "counterparty");
+    await user.type(screen.getByLabelText("第 1 行的值"), "美团");
+    await user.selectOptions(screen.getByLabelText("第 2 行的连接"), "OR");
+    await user.selectOptions(screen.getByLabelText("第 2 行的列"), "amount_cents");
+    await user.selectOptions(screen.getByLabelText("第 2 行的判断"), ">");
+    await user.type(screen.getByLabelText("第 2 行的值"), "20000");
+
+    await user.click(screen.getByRole("button", { name: "查看" }));
+
+    await waitFor(() => expect(calls.length).toBeGreaterThan(1));
+    const url = new URL(calls[calls.length - 1], "http://x");
+    expect(JSON.parse(url.searchParams.get("conds")!)).toEqual([
+      { column: "counterparty", operator: "=", value: "美团", connector: "AND" },
+      { column: "amount_cents", operator: ">", value: "20000", connector: "OR" },
+    ]);
+  });
+
+  it("日期框已经被条件构造器取代", async () => {
+    const user = userEvent.setup();
+    draw(listBody());
+
+    await waitFor(() => expect(screen.getByText("共 0 条。")).toBeInTheDocument());
+    await user.click(screen.getByText("筛选"));
+
+    expect(screen.queryByLabelText("开始时间")).toBeNull();
+    expect(screen.queryByLabelText("结束时间")).toBeNull();
+    expect(screen.getByLabelText("第 1 行的列")).toHaveValue("");
+  });
+
+  it("汇总页带进来的区间变成两行日期条件", async () => {
+    const user = userEvent.setup();
+    draw(
+      listBody({
+        filters: {
+          ...listBody().filters,
+          start: "2026-10-01",
+          end: "2026-10-31",
+        },
+      }),
+      "/transactions?start=2026-10-01&end=2026-10-31",
+    );
+
+    await waitFor(() => expect(screen.getByText("共 0 条。")).toBeInTheDocument());
+    await user.click(screen.getByText("筛选"));
+
+    expect(screen.getByLabelText("第 1 行的列")).toHaveValue("occurred_date");
+    expect(screen.getByLabelText("第 1 行的判断")).toHaveValue(">=");
+    expect(screen.getByLabelText("第 1 行的值")).toHaveValue("2026-10-01");
+    expect(screen.getByLabelText("第 2 行的列")).toHaveValue("occurred_date");
+    expect(screen.getByLabelText("第 2 行的判断")).toHaveValue("<=");
+    expect(screen.getByLabelText("第 2 行的值")).toHaveValue("2026-10-31");
   });
 
   it("条件写坏了：原因挂在列表上方，页面其余部分照常显示", async () => {

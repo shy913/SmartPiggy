@@ -9,9 +9,10 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timedelta
 
-from . import dates
+from . import conditions as condition_rules, dates
 
 # 交易记录页一次列多少条。这一页不分页——「下一页」会把人从刚才那一屏拽走，
 # 而账目是要一路翻着看的。改成一次给一段，底下挂一个「继续下滑加载更多」，
@@ -183,7 +184,7 @@ def active_filter_labels(
     category="",
     counterparty="",
     hidden="",
-    condition="",
+    conditions=(),
 ) -> list[str]:
     """当前生效的筛选条件，写成几个短标签。
 
@@ -219,10 +220,8 @@ def active_filter_labels(
         labels.append(word)
     if search:
         labels.append(f"搜「{search}」")
-    if condition:
-        # 条件可以写得很长；标签是一行摘要，太长就把后面截掉。
-        shown = condition if len(condition) <= 40 else condition[:39] + "…"
-        labels.append(f"条件「{shown}」")
+    if text := condition_rules.describe(conditions, accounts):
+        labels.append(f"条件「{text}」")
     return labels
 
 
@@ -238,26 +237,32 @@ def list_query(source) -> dict:
     hidden = (source.get("hidden") or "").strip()
     if hidden not in ("all", "1"):
         hidden = "0"
-    # 起止日期就是原来那个「月份」筛选，只是把一头拆成两头。
-    #
-    # **默认看全部**：打开交易记录就是整本账，想看某一段再自己筛。区间默认缩在
-    # 当月的话，翻上个月的账要先改一次日期——而「翻账」正是这一页的主要用途。
-    # （汇总页不一样，那边默认当月：那一页问的是「最近花得怎么样」。）
-    #
-    # 空值和「没给」在这里是同一件事，都表示不限。所以清空两个输入框跟一开始
-    # 打开这一页得到的是同一个视图，不会出现「清空之后反而缩回了某个月」。
+    # start / end 留着接汇总页「更多」这类深链接；筛选栏里不再有日期输入框，
+    # 日期改由条件构造器的「日期」列表达。空值和「没给」都表示不限。
     bounds = {
         "start": clean_date(source.get("start")),
         "end": clean_date(source.get("end")),
     }
-    # 「SQL 条件」只收 WHERE 那一截。界面把 `SELECT * FROM transactions` 做成
-    # 固定前缀，用户可能照着写成 `WHERE …`，也有些人只写条件本身——两种都收。
-    condition = (source.get("where") or "").strip()
-    if condition[:5].lower() == "where":
-        condition = condition[5:].strip()
+    # 条件构造器把每一行打包成 JSON 放在 conds 里。只认列表；坏 JSON 不猜，
+    # 交给接口给页面一句能看懂的提示。
+    raw_conditions = source.get("conds")
+    conditions: list = []
+    conditions_error = ""
+    if raw_conditions:
+        try:
+            parsed = json.loads(raw_conditions)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, list):
+            conditions = [item for item in parsed if isinstance(item, dict)]
+            if len(conditions) != len(parsed):
+                conditions_error = "条件格式不对。"
+        else:
+            conditions_error = "条件格式不对。"
     return {
         **bounds,
-        "condition": condition,
+        "conditions": conditions,
+        "conditions_error": conditions_error,
         "direction": (source.get("direction") or "").strip(),
         "account_id": as_int(source.get("account") or ""),
         "search": (source.get("q") or "").strip(),
