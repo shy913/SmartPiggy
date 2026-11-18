@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -264,29 +265,32 @@ export function AutoCategoryPage() {
                                 ? "+"
                                 : "";
                           return (
-                            <li
-                              key={tx.id}
-                              className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-1 text-xs"
-                            >
-                              <span className="tabular text-muted">
-                                {minute(tx.occurred_at)}
-                              </span>
-                              <span
-                                className={
-                                  tx.direction === "in"
-                                    ? "tabular text-in"
-                                    : tx.direction === "neutral"
-                                      ? "tabular text-muted"
-                                      : "tabular text-out"
-                                }
+                            <li key={tx.id}>
+                              <Link
+                                className="-mx-1 flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded px-1 py-1 text-xs hover:bg-panel-hover"
+                                to={`/transactions/${tx.id}`}
+                                state={{ from: "/auto-category", backLabel: "自动识别" }}
                               >
-                                {sign}
-                                {formatAmount(tx.amount_cents)} {tx.currency}
-                              </span>
-                              <span className="min-w-0 [overflow-wrap:anywhere]">
-                                {tx.description || tx.memo || "—"}
-                              </span>
-                              {tx.hidden ? <Tag>已隐藏</Tag> : null}
+                                <span className="tabular text-muted">
+                                  {minute(tx.occurred_at)}
+                                </span>
+                                <span
+                                  className={
+                                    tx.direction === "in"
+                                      ? "tabular text-in"
+                                      : tx.direction === "neutral"
+                                        ? "tabular text-muted"
+                                        : "tabular text-out"
+                                  }
+                                >
+                                  {sign}
+                                  {formatAmount(tx.amount_cents)} {tx.currency}
+                                </span>
+                                <span className="min-w-0 text-accent underline [overflow-wrap:anywhere]">
+                                  {tx.description || tx.memo || "—"}
+                                </span>
+                                {tx.hidden ? <Tag>已隐藏</Tag> : null}
+                              </Link>
                             </li>
                           );
                         })}

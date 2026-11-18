@@ -102,6 +102,10 @@ describe("自动识别页", () => {
     await user.click(await screen.findByRole("button", { name: /查看明细/ }));
     expect(screen.getByText("超市购物")).toBeInTheDocument();
     expect(screen.getByText("-12.00 CNY")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /超市购物/ })).toHaveAttribute(
+      "href",
+      "/transactions/1",
+    );
     expect(screen.getByText(/只列前 1 笔，还有 11 笔未列/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "全部 14 笔一起改" })).toBeInTheDocument();
   });
