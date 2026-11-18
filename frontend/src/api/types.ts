@@ -109,7 +109,12 @@ export type DashboardRange = SummaryRange & {
 };
 
 export type ForecastWindow = {
+  /** 已花：日常消费 + 已经发生的大额。 */
   spent: number;
+  /** 已花里的大额部分，进度条上单独一段颜色。 */
+  large_spent: number;
+  /** 预测里加进去的大额月均（整年那格是月均 × 12）。 */
+  large_projected: number;
   projected: number;
   elapsed_days: number;
   total_days: number;
