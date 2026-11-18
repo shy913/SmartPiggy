@@ -138,8 +138,22 @@ function dashboardBody(overrides: Partial<Dashboard> = {}): Dashboard {
       expense: 2000,
     },
     forecast: {
-      month: { spent: 3250, projected: 5597, elapsed_days: 18, total_days: 31 },
-      year: { spent: 3250, projected: 4072, elapsed_days: 291, total_days: 365 },
+      month: {
+        spent: 400000,
+        large_spent: 128085,
+        large_projected: 92493,
+        projected: 668148,
+        elapsed_days: 18,
+        total_days: 30,
+      },
+      year: {
+        spent: 2000000,
+        large_spent: 500000,
+        large_projected: 1109916,
+        projected: 7548404,
+        elapsed_days: 322,
+        total_days: 365,
+      },
     },
     averages: {
       monthly: 2800,
@@ -212,7 +226,7 @@ function calledUrls(): string[] {
 
 beforeEach(() => {
   vi.unstubAllGlobals();
-  // 「大额」开关记在 localStorage，上一个用例关掉不能影响下一个。
+  // 「含大额」开关记在 localStorage，上一个用例关掉不能影响下一个。
   localStorage.clear();
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -230,7 +244,7 @@ describe("汇总页", () => {
     expect(screen.getByText("折线")).toBeInTheDocument();
   });
 
-  it("预测与平均里单列大额，并可用开关隐藏且记住选择", async () => {
+  it("「含大额」开关控制预计口径，大额明细始终显示", async () => {
     const user = userEvent.setup();
     draw(summaryBody());
     await waitFor(() => expect(screen.getByText("大额月均")).toBeInTheDocument());
@@ -238,12 +252,20 @@ describe("汇总页", () => {
     expect(screen.getByText("413.33")).toBeInTheDocument();
     expect(screen.getByText("最近 90 天合计 1,200.00")).toBeInTheDocument();
 
-    const toggle = screen.getByRole("switch", { name: "显示大额" });
+    const toggle = screen.getByRole("switch", { name: "预测含大额" });
     expect(toggle).toHaveAttribute("aria-checked", "true");
+    // 预计值含大额月均；已花也一样，并把大额单独写出来。
+    expect(screen.getByText("6,681.48")).toBeInTheDocument();
+    expect(screen.getByText("已花 4,000.00（大额 1,280.85）")).toBeInTheDocument();
+
     await user.click(toggle);
     expect(toggle).toHaveAttribute("aria-checked", "false");
-    expect(screen.queryByText("大额月均")).toBeNull();
-    expect(localStorage.getItem("bill.summary.showLarge")).toBe("0");
+    // 只算日常消费：预计值、已花都减去大额；明细块不跟着消失。
+    expect(screen.getByText("5,756.55")).toBeInTheDocument();
+    expect(screen.getByText("已花 2,719.15")).toBeInTheDocument();
+    expect(screen.queryByText(/（大额 /)).toBeNull();
+    expect(screen.getByText("大额月均")).toBeInTheDocument();
+    expect(localStorage.getItem("bill.summary.includeLarge")).toBe("0");
   });
 
   it("最近窗口里没有大额时说明一句，不摆两个 0", async () => {
@@ -264,7 +286,6 @@ describe("汇总页", () => {
       }),
     );
     await waitFor(() => expect(screen.getByText("预计本月支出")).toBeInTheDocument());
-    expect(screen.getByRole("switch", { name: "显示大额" })).toBeInTheDocument();
     expect(screen.getByText("大额月均")).toBeInTheDocument();
     expect(screen.getByText("最近 90 天没有大额支出或收入。")).toBeInTheDocument();
     expect(screen.queryByText("大额支出")).toBeNull();

@@ -64,6 +64,31 @@ def test_meta_carries_what_the_forms_need(client, book):
     }
 
 
+def test_category_candidates_are_ordered_by_the_taxonomy(client, book):
+    """下拉顺序照体系走，不照码点：餐饮 → 交通 → 酒店，自定义的垫底。
+
+    照 Unicode 排的话「交通出行」会跑到最前、「餐饮美食」落最后，同一个账本
+    每次打开都像没整理过。
+    """
+    book(
+        [
+            {
+                "occurred_at": f"{today()} 12:00:00",
+                "direction": "out",
+                "amount_cents": 100,
+                "source_category": name,
+            }
+            for name in ("酒店旅游", "餐饮美食", "超市采购", "交通出行")
+        ]
+    )
+    assert meta(client)["categories"] == [
+        "餐饮美食",
+        "交通出行",
+        "酒店旅游",
+        "超市采购",
+    ]
+
+
 # --------------------------------------------------------------------------
 # 汇总：区间
 # --------------------------------------------------------------------------

@@ -14,6 +14,7 @@ from bill.categories import (
     canonical,
     detect,
     emoji,
+    sort_key,
 )
 
 
@@ -142,3 +143,20 @@ def test_the_same_rule_is_not_listed_twice():
     """重复条目本身不致命，但说明顺序被人手滑改过，值得当场拦下来。"""
     keywords = [keyword for keyword, _ in _AUTO_RULES]
     assert len(keywords) == len(set(keywords))
+
+
+def test_the_list_order_follows_the_taxonomy_not_unicode():
+    """下拉里的顺序照体系走：餐饮在日用前，交通在酒店前。
+
+    照码点排的话「交通出行」会跑到最前面、「餐饮美食」掉到最后，同一个账本
+    每次打开都像没整理过。
+    """
+    assert sort_key("餐饮美食") < sort_key("日用百货") < sort_key("交通出行")
+    assert sort_key("交通出行") < sort_key("酒店旅游")
+
+
+def test_categories_outside_the_taxonomy_go_last_in_a_stable_order():
+    """自定义分类没有「第几个」这一说，但也不能插进体系中间。"""
+    assert sort_key("餐饮美食") < sort_key("超市采购")
+    assert sort_key(CANONICAL[-1]) < sort_key("超市采购")
+    assert sort_key("超市采购") == sort_key("超市采购")

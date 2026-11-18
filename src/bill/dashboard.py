@@ -130,26 +130,36 @@ def _previous_span(mode: str, span: dict, today: date) -> dict | None:
     return None
 
 
-def _forecast(total: dict, today: date) -> dict:
+def _forecast(total: dict, today: date, large_monthly: int) -> dict:
     """按今年/本月到目前为止的日均，外推整月、整年。
 
     只外推**支出**：收入常常是一笔一笔来的（工资、报销），把一次工资按天摊到
     年底会得出一个没有意义的数。支出是连续发生的，日均外推至少是可信的。
+
+    日均只覆盖日常消费——大额不是连续发生的，按天摊到年底没有意义。大额另加
+    一笔**月均**（最近 N 天的滚动折算，见 ``_large_summary``），整年就是月均
+    × 12。已花也一样算上已经发生的大额，跟上面那个数、跟进度条同一个口径。
     """
     month_days = calendar.monthrange(today.year, today.month)[1]
     year_days = 366 if calendar.isleap(today.year) else 365
-    spent_month = total["expense_month"]
-    spent_year = total["expense_year"]
+    everyday_month = _round_divide(total["expense_month"] * month_days, today.day)
+    everyday_year = _round_divide(
+        total["expense_year"] * year_days, today.timetuple().tm_yday
+    )
     return {
         "month": {
-            "spent": spent_month,
-            "projected": _round_divide(spent_month * month_days, today.day),
+            "spent": total["expense_month"] + total["large_expense_month"],
+            "large_spent": total["large_expense_month"],
+            "large_projected": large_monthly,
+            "projected": everyday_month + large_monthly,
             "elapsed_days": today.day,
             "total_days": month_days,
         },
         "year": {
-            "spent": spent_year,
-            "projected": _round_divide(spent_year * year_days, today.timetuple().tm_yday),
+            "spent": total["expense_year"] + total["large_expense_year"],
+            "large_spent": total["large_expense_year"],
+            "large_projected": large_monthly * 12,
+            "projected": everyday_year + large_monthly * 12,
             "elapsed_days": today.timetuple().tm_yday,
             "total_days": year_days,
         },
@@ -368,7 +378,12 @@ def build(connection, conf, source) -> dict:
         **_empty_total(code),
         "expense_month": _total_of(month_scope, code)["expense"],
         "expense_year": _total_of(year_scope, code)["expense"],
+        "large_expense_month": _total_of(month_scope, code)["large_expense"],
+        "large_expense_year": _total_of(year_scope, code)["large_expense"],
     }
+
+    # 大额月均既要单独摆一块，也要并进上面的预测，所以先算出来。
+    large_summary = _large_summary(connection, conf, code, today, first_day)
 
     previous = _previous_span(mode, span, today)
     previous_expense = None
@@ -467,9 +482,11 @@ def build(connection, conf, source) -> dict:
             if previous and previous_expense is not None
             else None
         ),
-        "forecast": _forecast(forecast_input, today),
+        "forecast": _forecast(
+            forecast_input, today, large_summary["expense_monthly"]
+        ),
         "averages": _averages(connection, code, today, cover),
-        "large": _large_summary(connection, conf, code, today, first_day),
+        "large": large_summary,
         "trend": _trend(connection, code, mode, trend_start, trend_end, today),
         "categories": ranked_categories,
         "singles": ranked,

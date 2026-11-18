@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-__all__ = ["CANONICAL", "canonical", "canonical_sql", "detect", "emoji"]
+__all__ = ["CANONICAL", "canonical", "canonical_sql", "detect", "emoji", "sort_key"]
 
 # --------------------------------------------------------------------------
 # 统一分类体系
@@ -113,6 +113,20 @@ def canonical(category: str | None) -> str:
     if not text:
         return ""
     return _ALIASES.get(text.lower(), text)
+
+
+_ORDER = {name: index for index, name in enumerate(CANONICAL)}
+
+
+def sort_key(category: str) -> tuple[int, str]:
+    """分类在清单里的排法：先按统一体系的顺序，认不出的排在后面按名字。
+
+    体系顺序（餐饮、日用、交通……）是用户按账单位置记得住的顺序；照 Unicode
+    码点排的话，中文分类会随机散开，同一个下拉每次看起来都像没整理过。
+    体系外的自定义分类没有「该在第几个」这一说，统一吊在末尾，彼此按名字，
+    至少每次的顺序都一样。
+    """
+    return (_ORDER.get(category, len(CANONICAL)), category)
 
 
 def _sql_literal(text: str) -> str:
